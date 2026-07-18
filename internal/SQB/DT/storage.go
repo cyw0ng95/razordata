@@ -418,6 +418,146 @@ func MaintainIndexesOnUpdate(store Store, table string, schema *StoreSchema, old
 	return nil
 }
 
+// MaintainIndexesOnUpdateBatch performs secondary-index maintenance
+// for a contiguous batch of (oldRow, newRow, pk) pairs in a single
+// amortised pass. For each registered index, the helper collects all
+// (oldKey, newKey) diffs across the batch into two slices and routes
+// them through BatchDeleteStore.DeleteBatch (or per-row Delete as a
+// fallback) and BatchStore.WriteBatch (or per-row Insert as a
+// fallback). The closed.Load / ShouldFlush atomic checks are paid
+// once per index instead of once per row.
+//
+// REQ001576: amortises secondary-index maintenance across N rows for
+// chunked UPDATE. The pks slice must be parallel to oldRows/newRows;
+// it is the caller's responsibility (TableHandle.UpdateRowBatch) to
+// extract each row's PK exactly once and pass it through, avoiding
+// the duplicate ExtractPKForUpdate call that REQ001577 surfaces.
+//
+// Per-row error semantics are preserved: the first failed index
+// write short-circuits and surfaces a wrapped error pointing at the
+// failing index name.
+func MaintainIndexesOnUpdateBatch(store Store, table string, schema *StoreSchema, oldRows, newRows []Row, pks []any) error {
+	if len(oldRows) != len(newRows) || len(oldRows) != len(pks) {
+		return fmt.Errorf("DT: MaintainIndexesOnUpdateBatch length mismatch: old=%d new=%d pks=%d", len(oldRows), len(newRows), len(pks))
+	}
+	if len(oldRows) == 0 {
+		return nil
+	}
+	indexes := GetRegisteredIndexes(table)
+	if len(indexes) == 0 {
+		return nil
+	}
+	tableID, ok := TableIDFor(table)
+	if !ok {
+		return nil
+	}
+
+	// For each index, accumulate per-row old/new key diffs.
+	for _, idx := range indexes {
+		oldFull := make([][]byte, 0, len(oldRows))
+		newFull := make([][]byte, 0, len(oldRows))
+		newVals := make([][]byte, 0, len(oldRows))
+		for i := range oldRows {
+			oldKey := indexValueFor(schema, oldRows[i], idx.Columns)
+			newKey := indexValueFor(schema, newRows[i], idx.Columns)
+			if oldKey == nil || newKey == nil {
+				continue
+			}
+			oldIdxFull := BuildIndexKey(tableID, idx.Name, oldKey)
+			newIdxFull := BuildIndexKey(tableID, idx.Name, newKey)
+			if bytes.Equal(oldIdxFull, newIdxFull) {
+				continue
+			}
+			oldFull = append(oldFull, oldIdxFull)
+			newFull = append(newFull, newIdxFull)
+			pkBytes, perr := pkToBytes(pks[i])
+			if perr != nil {
+				return fmt.Errorf("DT: index %q update batch pk encode row %d: %w", idx.Name, i, perr)
+			}
+			newVals = append(newVals, pkBytes)
+		}
+		if len(oldFull) == 0 {
+			continue
+		}
+		// Delete old index entries — amortised when BatchDeleteStore is available.
+		if bds, ok := store.(BatchDeleteStore); ok {
+			if derr := bds.DeleteBatch(oldFull); derr != nil {
+				return fmt.Errorf("DT: index %q update batch delete: %w", idx.Name, derr)
+			}
+		} else {
+			for _, k := range oldFull {
+				if derr := store.Delete(k); derr != nil {
+					return fmt.Errorf("DT: index %q update batch delete: %w", idx.Name, derr)
+				}
+			}
+		}
+		// Insert new index entries — amortised when BatchStore is available.
+		if bs, ok := store.(BatchStore); ok {
+			if ierr := bs.WriteBatch(newFull, newVals); ierr != nil {
+				return fmt.Errorf("DT: index %q update batch insert: %w", idx.Name, ierr)
+			}
+		} else {
+			for i, k := range newFull {
+				if ierr := store.Insert(k, newVals[i]); ierr != nil {
+					return fmt.Errorf("DT: index %q update batch insert: %w", idx.Name, ierr)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// MaintainIndexesOnDeleteBatch removes secondary-index entries for
+// a contiguous batch of deleted rows in a single amortised pass.
+// For each registered index, all keys are collected into a single
+// slice and routed through BatchDeleteStore.DeleteBatch (or per-row
+// Delete as a fallback).
+//
+// REQ001556 follow-up: deletes were already batched at the heap-row
+// level (REQ001556 DeleteRowBatch) but each row's secondary-index
+// entries were still removed one-by-one. This helper closes that
+// gap so the entire delete path — heap rows + secondary indexes —
+// pays the closed.Load / ShouldFlush atomic costs O(1) times per
+// batch instead of O(N).
+func MaintainIndexesOnDeleteBatch(store Store, table string, schema *StoreSchema, rows []Row) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	indexes := GetRegisteredIndexes(table)
+	if len(indexes) == 0 {
+		return nil
+	}
+	tableID, ok := TableIDFor(table)
+	if !ok {
+		return nil
+	}
+	for _, idx := range indexes {
+		keys := make([][]byte, 0, len(rows))
+		for i := range rows {
+			key := indexValueFor(schema, rows[i], idx.Columns)
+			if key == nil {
+				continue
+			}
+			keys = append(keys, BuildIndexKey(tableID, idx.Name, key))
+		}
+		if len(keys) == 0 {
+			continue
+		}
+		if bds, ok := store.(BatchDeleteStore); ok {
+			if derr := bds.DeleteBatch(keys); derr != nil {
+				return fmt.Errorf("DT: index %q delete batch: %w", idx.Name, derr)
+			}
+		} else {
+			for _, k := range keys {
+				if derr := store.Delete(k); derr != nil {
+					return fmt.Errorf("DT: index %q delete batch: %w", idx.Name, derr)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // pkToBytes encodes a primary-key value as bytes (big-endian
 // for int, raw for string/bytes). Used to populate the value
 // side of an index entry.
@@ -797,6 +937,12 @@ func (h *TableHandle) UpdateRowBatch(oldRows, newRows []Row) (keys [][]byte, buf
 	if n == 0 {
 		return nil, nil, nil
 	}
+	// REQ001577: extract each row's PK exactly once and reuse it for
+	// both the heap-row key construction (line 814) and the
+	// batched secondary-index maintenance pass (line 836). Previously
+	// ExtractPKForUpdate was called twice per row — once for the row
+	// key and again inside the per-row MaintainIndexesOnUpdate loop.
+	pks := make([]any, n)
 	keys = make([][]byte, n)
 	bufs = make([][]byte, n)
 	for i := 0; i < n; i++ {
@@ -804,6 +950,7 @@ func (h *TableHandle) UpdateRowBatch(oldRows, newRows []Row) (keys [][]byte, buf
 		if perr != nil {
 			return nil, nil, perr
 		}
+		pks[i] = pk
 		buf, eerr := EncodeRow(h.Schema, newRows[i])
 		if eerr != nil {
 			return nil, nil, eerr
@@ -822,14 +969,11 @@ func (h *TableHandle) UpdateRowBatch(oldRows, newRows []Row) (keys [][]byte, buf
 			}
 		}
 	}
-	for i := 0; i < n; i++ {
-		pk, perr := ExtractPKForUpdate(h.Schema, oldRows[i], h.prefix)
-		if perr != nil {
-			return nil, nil, perr
-		}
-		if merr := MaintainIndexesOnUpdate(h.Store, h.Table, h.Schema, oldRows[i], newRows[i], pk); merr != nil {
-			return nil, nil, merr
-		}
+	// REQ001576: batched secondary-index maintenance. Replaces the
+	// previous per-row MaintainIndexesOnUpdate loop (which did N
+	// store.Delete + store.Insert per index for a batch of N rows).
+	if merr := MaintainIndexesOnUpdateBatch(h.Store, h.Table, h.Schema, oldRows, newRows, pks); merr != nil {
+		return nil, nil, merr
 	}
 	return keys, bufs, nil
 }
@@ -875,13 +1019,18 @@ func (h *TableHandle) DeleteRowBatch(rows []Row) (keys [][]byte, err error) {
 			}
 		}
 	}
-	for i := 0; i < n; i++ {
-		if merr := MaintainIndexesOnDelete(h.Store, h.Table, h.Schema, rows[i]); merr != nil {
-			return nil, merr
-		}
+	// REQ001556 follow-up: amortised secondary-index delete. Replaces
+	// the previous per-row MaintainIndexesOnDelete loop with a single
+	// BatchDeleteStore.DeleteBatch per registered index.
+	if merr := MaintainIndexesOnDeleteBatch(h.Store, h.Table, h.Schema, rows); merr != nil {
+		return nil, merr
 	}
 	return keys, nil
 }
+
+// (per-row MaintainIndexesOnDelete is kept as the public API for
+// single-row paths; DeleteRowBatch delegates to
+// MaintainIndexesOnDeleteBatch for the amortised path.)
 
 // GetRow reads the encoded row bytes for `pk` and decodes them.
 // Returns (Row{}, false, nil) if the key is not present.

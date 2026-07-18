@@ -245,6 +245,15 @@ func RegisterIndexWithID(table string, idx RegisteredIndex) {
 	RegisteredIndexes[table] = append(RegisteredIndexes[table], idx)
 }
 
+// UnregisterTableIndexes removes all secondary-index entries for the
+// given table. Primarily a test-cleanup helper — production paths
+// never drop indexes while a table is alive.
+func UnregisterTableIndexes(table string) {
+	StoreMu.Lock()
+	defer StoreMu.Unlock()
+	delete(RegisteredIndexes, table)
+}
+
 // GetRegisteredIndexes returns a copy of the index list for a table.
 func GetRegisteredIndexes(table string) []RegisteredIndex {
 	StoreMu.Lock()

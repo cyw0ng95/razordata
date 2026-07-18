@@ -404,3 +404,214 @@ func TestBatchDeleteStore_KeyShapes(t *testing.T) {
 		t.Errorf("DeleteRowBatch key %x != RowKey() %x", keys[0], wantKey)
 	}
 }
+
+// TestMaintainIndexesOnUpdateBatch_Basic verifies REQ001576: when an
+// UPDATE batch touches a registered secondary index, all (oldKey,
+// newKey) diffs across the batch are collected and routed through a
+// single BatchDeleteStore.DeleteBatch + BatchStore.WriteBatch per
+// index (instead of N per-row Delete+Insert pairs).
+//
+// The test registers a table with a secondary index on column "v",
+// inserts 50 rows, then issues an UPDATE batch that changes every v.
+// After the batch, the index keyspace must contain exactly the 50
+// new index entries (no stale old entries), and the heap-row
+// keyspace must hold the updated payloads.
+func TestMaintainIndexesOnUpdateBatch_Basic(t *testing.T) {
+	store := newBatchMemStore()
+	registerTestTable(t, "idx_upd_batch", []string{"id", "v"}, "id")
+	defer UnregisterTable("idx_upd_batch")
+	RegisterIndexWithID("idx_upd_batch", RegisteredIndex{Name: "v_idx", Columns: []string{"v"}})
+	defer UnregisterTableIndexes("idx_upd_batch")
+
+	ss := mustSchemaFor(t, "idx_upd_batch")
+	tableID, ok := TableIDFor("idx_upd_batch")
+	if !ok {
+		t.Fatalf("TableIDFor(idx_upd_batch) failed")
+	}
+	h, err := OpenTable(store, "idx_upd_batch")
+	if err != nil {
+		t.Fatalf("OpenTable: %v", err)
+	}
+
+	const n = 50
+	oldRows := make([]Row, n)
+	newRows := make([]Row, n)
+	for i := 0; i < n; i++ {
+		oldRows[i] = Row{
+			Cols: []string{"id", "v"},
+			Data: []Value{NewIntValue(int64(i + 1)), NewIntValue(int64(i))},
+		}
+		newRows[i] = Row{
+			Cols: []string{"id", "v"},
+			Data: []Value{NewIntValue(int64(i + 1)), NewIntValue(int64(i + 1000))},
+		}
+		if _, _, err := h.InsertRow(oldRows[i]); err != nil {
+			t.Fatalf("InsertRow[%d]: %v", i, err)
+		}
+	}
+
+	// Snapshot store metrics so the post-batch assertion is meaningful
+	// (InsertRow uses per-row Insert, not WriteBatch, so we expect
+	// writeBatches to still be 0 here — UpdateRowBatch will be the
+	// one to drive the index-side DeleteBatch + WriteBatch counts).
+	beforeDeleteBatches := store.deleteBatches
+
+	if _, _, err := h.UpdateRowBatch(oldRows, newRows); err != nil {
+		t.Fatalf("UpdateRowBatch: %v", err)
+	}
+
+	// After UpdateRowBatch: index keyspace must reflect the NEW values,
+	// not the OLD ones. The old index entries must be gone.
+	for i := 0; i < n; i++ {
+		newIdxKey := BuildIndexKey(tableID, "v_idx", mustIndexValue(t, ss, newRows[i], "v"))
+		if _, ok := store.rows[string(newIdxKey)]; !ok {
+			t.Errorf("row[%d]: new index key %x missing after UpdateRowBatch", i, newIdxKey)
+		}
+		oldIdxKey := BuildIndexKey(tableID, "v_idx", mustIndexValue(t, ss, oldRows[i], "v"))
+		if _, ok := store.rows[string(oldIdxKey)]; ok {
+			t.Errorf("row[%d]: stale old index key %x still present after UpdateRowBatch", i, oldIdxKey)
+		}
+	}
+
+	// UpdateRowBatch must have used at least one DeleteBatch + one
+	// WriteBatch for index maintenance (separate from the heap-row
+	// batch already counted in beforeInsertBatches).
+	if store.deleteBatches <= beforeDeleteBatches {
+		t.Errorf("UpdateRowBatch did not increase DeleteBatch count: before=%d after=%d", beforeDeleteBatches, store.deleteBatches)
+	}
+}
+
+
+// TestMaintainIndexesOnUpdateBatch_EmptyNoop verifies a zero-length
+// batch is a clean no-op (no error, no Store calls).
+func TestMaintainIndexesOnUpdateBatch_EmptyNoop(t *testing.T) {
+	store := newBatchMemStore()
+	registerTestTable(t, "idx_empty", []string{"id", "v"}, "id")
+	defer UnregisterTable("idx_empty")
+
+	ss := mustSchemaFor(t, "idx_empty")
+	beforeDelete := store.deleteBatches
+	if err := MaintainIndexesOnUpdateBatch(store, "idx_empty", ss, nil, nil, nil); err != nil {
+		t.Errorf("MaintainIndexesOnUpdateBatch(nil, nil, nil): %v", err)
+	}
+	if store.deleteBatches != beforeDelete {
+		t.Errorf("empty batch incremented DeleteBatch: before=%d after=%d", beforeDelete, store.deleteBatches)
+	}
+}
+
+// TestMaintainIndexesOnUpdateBatch_LengthMismatch verifies that
+// mismatched slice lengths surface an error instead of panicking.
+func TestMaintainIndexesOnUpdateBatch_LengthMismatch(t *testing.T) {
+	store := newBatchMemStore()
+	registerTestTable(t, "idx_mm", []string{"id", "v"}, "id")
+	defer UnregisterTable("idx_mm")
+
+	ss := mustSchemaFor(t, "idx_mm")
+	old := []Row{{Cols: []string{"id", "v"}, Data: []Value{NewIntValue(1), NewIntValue(1)}}}
+	if err := MaintainIndexesOnUpdateBatch(store, "idx_mm", ss, old, nil, nil); err == nil {
+		t.Errorf("MaintainIndexesOnUpdateBatch with mismatched lengths = nil error, want error")
+	}
+}
+
+// TestMaintainIndexesOnDeleteBatch_Basic verifies the REQ001556
+// follow-up: when a DELETE batch touches a registered secondary
+// index, all index keys are collected and removed in a single
+// BatchDeleteStore.DeleteBatch call per index.
+func TestMaintainIndexesOnDeleteBatch_Basic(t *testing.T) {
+	store := newBatchMemStore()
+	registerTestTable(t, "idx_del_batch", []string{"id", "v"}, "id")
+	defer UnregisterTable("idx_del_batch")
+	RegisterIndexWithID("idx_del_batch", RegisteredIndex{Name: "v_idx", Columns: []string{"v"}})
+	defer UnregisterTableIndexes("idx_del_batch")
+
+	ss := mustSchemaFor(t, "idx_del_batch")
+	tableID, ok := TableIDFor("idx_del_batch")
+	if !ok {
+		t.Fatalf("TableIDFor(idx_del_batch) failed")
+	}
+	h, err := OpenTable(store, "idx_del_batch")
+	if err != nil {
+		t.Fatalf("OpenTable: %v", err)
+	}
+	const n = 30
+	rows := make([]Row, n)
+	for i := 0; i < n; i++ {
+		rows[i] = Row{
+			Cols: []string{"id", "v"},
+			Data: []Value{NewIntValue(int64(i + 1)), NewIntValue(int64(i * 3))},
+		}
+		if _, _, err := h.InsertRow(rows[i]); err != nil {
+			t.Fatalf("InsertRow[%d]: %v", i, err)
+		}
+	}
+	// Capture every row's index key for the post-delete assertion.
+	indexKeysBefore := make(map[string]bool)
+	for i := 0; i < n; i++ {
+		idxKey := BuildIndexKey(tableID, "v_idx", mustIndexValue(t, ss, rows[i], "v"))
+		indexKeysBefore[string(idxKey)] = true
+		if _, ok := store.rows[string(idxKey)]; !ok {
+			t.Fatalf("row[%d]: index key %x missing pre-delete", i, idxKey)
+		}
+	}
+
+	beforeDeleteBatches := store.deleteBatches
+	if _, err := h.DeleteRowBatch(rows); err != nil {
+		t.Fatalf("DeleteRowBatch: %v", err)
+	}
+	if store.deleteBatches <= beforeDeleteBatches {
+		t.Errorf("DeleteRowBatch did not increase DeleteBatch count: before=%d after=%d", beforeDeleteBatches, store.deleteBatches)
+	}
+	for k := range indexKeysBefore {
+		if _, ok := store.rows[k]; ok {
+			t.Errorf("index key %x still present after DeleteRowBatch", k)
+		}
+	}
+}
+
+// TestMaintainIndexesOnDeleteBatch_EmptyNoop verifies a zero-length
+// DELETE batch is a clean no-op for index maintenance.
+func TestMaintainIndexesOnDeleteBatch_EmptyNoop(t *testing.T) {
+	store := newBatchMemStore()
+	registerTestTable(t, "idx_del_empty", []string{"id", "v"}, "id")
+	defer UnregisterTable("idx_del_empty")
+
+	ss := mustSchemaFor(t, "idx_del_empty")
+	before := store.deleteBatches
+	if err := MaintainIndexesOnDeleteBatch(store, "idx_del_empty", ss, nil); err != nil {
+		t.Errorf("MaintainIndexesOnDeleteBatch(nil): %v", err)
+	}
+	if store.deleteBatches != before {
+		t.Errorf("empty batch incremented DeleteBatch: before=%d after=%d", before, store.deleteBatches)
+	}
+}
+
+// mustSchemaFor returns the registered StoreSchema for `table` by
+// name, failing the test if it can't be found. The naive
+// `StoreSchemas[0]` approach is order-dependent (other tests share
+// the global slice), so we look up by Table name.
+func mustSchemaFor(t *testing.T, table string) *StoreSchema {
+	t.Helper()
+	ss, ok := SchemaFor(table)
+	if !ok {
+		t.Fatalf("SchemaFor(%q) failed", table)
+	}
+	return ss
+}
+
+// mustIndexValue is a small helper that returns the bytes-encoded
+// value of `col` in `row` (per the schema's column ordering), failing
+// the test if the column is missing or the encoding fails.
+func mustIndexValue(t *testing.T, schema *StoreSchema, row Row, col string) []byte {
+	t.Helper()
+	for j, sc := range schema.Cols {
+		if sc == col && j < len(row.Data) {
+			b, err := pkToBytes(row.Data[j])
+			if err != nil {
+				t.Fatalf("pkToBytes(%v): %v", row.Data[j], err)
+			}
+			return b
+		}
+	}
+	t.Fatalf("column %q not found in schema %v", col, schema.Cols)
+	return nil
+}
