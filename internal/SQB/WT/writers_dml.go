@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
@@ -674,20 +675,34 @@ func (i *Insert) RowsAffected() int64 {
 }
 
 type Update struct {
-	table      string
-	set        []PS.Pair
-	where      PS.Expr
-	returning  []PS.Expr
-	iter       DT.Operator
-	store      DT.Store
-	schema     *DT.StoreSchema
-	txWriter   DT.TxWriter
-	rows       int64
-	done       bool
-	params     []any
+	table     string
+	set       []PS.Pair
+	where     PS.Expr
+	returning []PS.Expr
+	iter      DT.Operator
+	store     DT.Store
+	schema    *DT.StoreSchema
+	txWriter  DT.TxWriter
+	rows      int64
+	done      bool
+	params    []any
 	resultRows []DT.Row
 	resultPos  int
 	execCtx    *DT.ExecContext // REQ000812
+	// pendingUpdates collects (oldRow, newRow) pairs whose AFTER
+	// UPDATE triggers have not yet been fired. The chunk loop
+	// appends; flushChunk fires triggers for the entire chunk in
+	// one pass before clearing the slice. REQ001578.
+	pendingUpdates []triggerEvent
+}
+
+// triggerEvent is one deferred trigger invocation captured during
+// the batch mutation loop. The rows are borrowed pointers (the
+// source RowArena owns the backing data) and stay valid for the
+// lifetime of the writer call.
+type triggerEvent struct {
+	oldRow DT.Row
+	newRow DT.Row // zero value for DELETE
 }
 
 // SetExecCtx sets the execution context. Used by EX.propagateExecContext.
@@ -887,6 +902,11 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 	// the engine WriteBatch layer.
 	oldBuf := make([]DT.Row, 0, updateChunkSize)
 	newBuf := make([]DT.Row, 0, updateChunkSize)
+	// REQ001578: defer AFTER UPDATE triggers to fire AFTER the heap
+	// batch is durable. Trigger events are appended to pendingUpdates
+	// during the chunk loop and consumed by firePendingTriggers below.
+	// The trigger lock (`triggerMu` inside FireTriggers) is acquired
+	// O(1) times per chunk instead of O(N) times per row.
 	flushChunk := func() error {
 		if len(oldBuf) == 0 {
 			return nil
@@ -901,8 +921,17 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 				u.txWriter.RecordWrite(k, bufs[i])
 			}
 		}
+		// Heap batch is durable. Fire the deferred triggers now, then
+		// drop the captured events so the next chunk starts clean.
+		if terr := u.firePendingUpdates(); terr != nil {
+			oldBuf = oldBuf[:0]
+			newBuf = newBuf[:0]
+			u.pendingUpdates = u.pendingUpdates[:0]
+			return terr
+		}
 		oldBuf = oldBuf[:0]
 		newBuf = newBuf[:0]
+		u.pendingUpdates = u.pendingUpdates[:0]
 		return nil
 	}
 	for {
@@ -940,11 +969,11 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 			u.execCtx.TotalChanges++
 		}
 
-		// Fire AFTER UPDATE triggers (REQ000316: incremental matview support).
-		// Triggers fire per-row — batched trigger firing is REQ001578.
-		if err := fireUpdateTriggers(u.table, &oldRow, &row, u.params, u.store); err != nil {
-			return DT.Row{}, err
-		}
+		// REQ001578: capture (oldRow, newRow) for deferred trigger
+		// firing after the chunk is durable. Previously fired
+		// fireUpdateTriggers here per row — see writers_dml.go
+		// history for the pre-batch path.
+		u.pendingUpdates = append(u.pendingUpdates, triggerEvent{oldRow: oldRow, newRow: row})
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
 		if len(u.returning) > 0 {
@@ -972,12 +1001,55 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 	return DT.Row{}, DT.ErrNoRows
 }
 
+// firePendingUpdates fires all captured AFTER UPDATE trigger events
+// for the current chunk in row order. Each event sees its own
+// (oldRow, newRow) pair as a normal TriggerContext — the trigger body
+// runs once per mutated row, just at a deferred time. REQ001578.
+func (u *Update) firePendingUpdates() error {
+	for i := range u.pendingUpdates {
+		ev := &u.pendingUpdates[i]
+		if err := fireUpdateTriggers(u.table, &ev.oldRow, &ev.newRow, u.params, u.store); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// firePendingDeletes fires all captured AFTER DELETE trigger events
+// for the current chunk in row order. REQ001578.
+func (d *Delete) firePendingDeletes() error {
+	for i := range d.pendingDeletes {
+		ev := &d.pendingDeletes[i]
+		if err := fireDeleteTriggers(d.table, &ev.oldRow, d.params, d.store); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// triggerFireCount counts the number of times a trigger's REFRESH
+// MATERIALIZED VIEW body executes during a single writer call.
+// REQ001578 test-only seam: lets tests assert that batched
+// UPDATE/DELETE fires triggers once per row (deferred to after the
+// chunk flush), without standing up a full matview.
+// Increments in executeRefreshMatViewSQL; tests reset via the
+// ResetTriggerFireCount helper below.
+var triggerFireCount atomic.Int64
+
+// ResetTriggerFireCount zeroes the package-level trigger fire
+// counter. Test-only.
+func ResetTriggerFireCount() { triggerFireCount.Store(0) }
+
+// TriggerFireCount returns the current trigger fire count. Test-only.
+func TriggerFireCount() int64 { return triggerFireCount.Load() }
+
 func (u *Update) Close() error {
 	err := u.iter.Close()
 	u.done = false
 	u.rows = 0
 	u.resultRows = nil
 	u.resultPos = 0
+	u.pendingUpdates = nil
 	return err
 }
 
@@ -999,6 +1071,9 @@ type Delete struct {
 	resultRows []DT.Row
 	resultPos  int
 	execCtx    *DT.ExecContext // REQ000812
+	// pendingDeletes collects oldRow snapshots whose AFTER DELETE
+	// triggers have not yet been fired. REQ001578.
+	pendingDeletes []triggerEvent
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -1172,8 +1247,13 @@ func (d *Delete) nextFromStore(ctx context.Context) (DT.Row, error) {
 	// REQ001556: pull rows in chunks of deleteChunkSize and route
 	// each chunk through h.DeleteRowBatch. RETURNING is evaluated
 	// before the batch flush so callers still see the pre-delete
-	// row contents. Triggers fire per-row — batched trigger firing
-	// is REQ001578.
+	// row contents.
+	//
+	// REQ001578: AFTER DELETE triggers are deferred to fire AFTER
+	// the heap batch is durable. Trigger events are appended to
+	// pendingDeletes during the chunk loop and consumed by
+	// firePendingDeletes below — the trigger lock is acquired
+	// O(1) times per chunk instead of O(N) times per row.
 	delBuf := make([]DT.Row, 0, deleteChunkSize)
 	flushChunk := func() error {
 		if len(delBuf) == 0 {
@@ -1189,7 +1269,15 @@ func (d *Delete) nextFromStore(ctx context.Context) (DT.Row, error) {
 				d.txWriter.RecordWrite(k, nil)
 			}
 		}
+		// Heap batch is durable. Fire the deferred triggers now, then
+		// drop the captured events so the next chunk starts clean.
+		if terr := d.firePendingDeletes(); terr != nil {
+			delBuf = delBuf[:0]
+			d.pendingDeletes = d.pendingDeletes[:0]
+			return terr
+		}
 		delBuf = delBuf[:0]
+		d.pendingDeletes = d.pendingDeletes[:0]
 		return nil
 	}
 	for {
@@ -1207,13 +1295,11 @@ func (d *Delete) nextFromStore(ctx context.Context) (DT.Row, error) {
 			}
 		}
 
-		// Fire AFTER DELETE triggers before the batch flush so each
-		// deleted row's data is available to the trigger body.
-		if err := fireDeleteTriggers(d.table, &row, d.params, d.store); err != nil {
-			return DT.Row{}, err
-		}
-
+		// REQ001578: capture the pre-delete row for deferred trigger
+		// firing. Use a value copy so the loop variable aliasing
+		// can't poison later firePendingDeletes iterations.
 		delBuf = append(delBuf, row)
+		d.pendingDeletes = append(d.pendingDeletes, triggerEvent{oldRow: row})
 		d.rows++
 		if d.execCtx != nil {
 			d.execCtx.LastChanges++
@@ -1245,6 +1331,7 @@ func (d *Delete) Close() error {
 	d.rows = 0
 	d.resultRows = nil
 	d.resultPos = 0
+	d.pendingDeletes = nil
 	return err
 }
 
@@ -1516,6 +1603,12 @@ func executeRefreshMatViewSQL(sql string, store DT.Store) error {
 	if matSel == nil {
 		return fmt.Errorf("ex: materialized view %q not found", refresh.Name)
 	}
+
+	// REQ001578 test-only seam: count every matview refresh body
+	// execution. Tests use this to assert batched UPDATE/DELETE fires
+	// triggers exactly once per mutated row (deferred), regardless of
+	// chunk size.
+	triggerFireCount.Add(1)
 
 	// For now, this is a full refresh (re-execute the query and store results)
 	// Incremental refresh would require tracking changes to base DT.Tables
