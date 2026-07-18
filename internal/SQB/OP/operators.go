@@ -576,16 +576,6 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 		// REQ001080: prune unused columns from the output row.
 		if s.usedCols != nil && !s.shallow {
 			out = pruneRowCols(out, s.usedCols, s.usedColSet, s)
-			if len(out.Data) > 0 {
-				dst := make([]Value, len(out.Data))
-				copy(dst, out.Data)
-				out.Data = dst
-			}
-			if len(out.Cols) > 0 {
-				dst := make([]string, len(out.Cols))
-				copy(dst, out.Cols)
-				out.Cols = dst
-			}
 		}
 	}
 	if s.planner != nil {
