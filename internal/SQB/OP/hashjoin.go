@@ -52,7 +52,9 @@ type HashJoin struct {
 	leftInfos  []leftInfo
 	curLeftIdx  int
 	curRightIdx int
-	emitBuf     []pl.Value
+	emitBuf          []pl.Value
+	unmatchedLeftBuf  []pl.Value
+	unmatchedRightBuf []pl.Value
 	dataPerRow  int
 	leftLen     int // REQ001272: fixed left-side column count for emitUnmatchedRight
 	done        bool
@@ -341,17 +343,18 @@ func (j *HashJoin) nextMatched() (pl.Row, int, int, int, bool) {
 }
 
 // emitUnmatchedLeft produces a row with the left side's data and
-// NULL right columns. REQ001020. Returns a fresh Data slice so
-// the emitBuf backing array can be reused without aliasing.
+// NULL right columns. REQ001020. Uses emitBuf backing array;
+// caller must not retain row.Data across Next calls.
 func (j *HashJoin) emitUnmatchedLeft(li int) pl.Row {
 	out := pl.Row{
 		Cols:     j.sharedCols,
 		Types:    j.sharedTypes,
 		ColIndex: j.sharedColIndex,
-		Data:     make([]pl.Value, j.dataPerRow),
+		Data:     j.unmatchedLeftBuf[:j.dataPerRow],
 	}
 	leftData := j.leftRows[li].Data
 	copy(out.Data, leftData)
+	clear(out.Data[len(leftData):])
 	return out
 }
 
@@ -363,7 +366,7 @@ func (j *HashJoin) emitUnmatchedRight(bucketIdx, rowInBucket int) pl.Row {
 		Cols:     j.sharedCols,
 		Types:    j.sharedTypes,
 		ColIndex: j.sharedColIndex,
-		Data:     make([]pl.Value, j.dataPerRow),
+		Data:     j.unmatchedRightBuf[:j.dataPerRow],
 	}
 	right := j.buckets[bucketIdx].rightRows[rowInBucket]
 	leftLen := j.leftLen
@@ -380,6 +383,8 @@ func (j *HashJoin) Close() error {
 	j.leftRows = nil
 	j.leftInfos = nil
 	j.emitBuf = nil
+	j.unmatchedLeftBuf = nil
+	j.unmatchedRightBuf = nil
 	j.dataPerRow = 0
 	j.curLeftIdx = 0
 	j.curRightIdx = 0
@@ -616,6 +621,15 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		j.emitBuf = make([]pl.Value, dataPerRow)
 	}
 
+	// REQ001561: allocate per-phase buffers so consecutive phase-0
+	// emits do not alias phase-1/2 rows and vice versa.
+	if j.kind == JoinKindLeft || j.kind == JoinKindFull {
+		j.unmatchedLeftBuf = make([]pl.Value, j.dataPerRow)
+	}
+	if j.kind == JoinKindRight || j.kind == JoinKindFull {
+		j.unmatchedRightBuf = make([]pl.Value, j.dataPerRow)
+	}
+
 	// REQ001020: allocate matched-state slices for outer joins.
 	// Both slices stay nil for INNER joins so the bookkeeping
 	// branches in Next() no-op cheaply.
@@ -645,6 +659,12 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		j.dataPerRow = width
 		j.leftLen = leftW // REQ001272: fixed left column count
 		j.emitBuf = make([]pl.Value, width)
+		if j.kind == JoinKindLeft || j.kind == JoinKindFull {
+			j.unmatchedLeftBuf = make([]pl.Value, width)
+		}
+		if j.kind == JoinKindRight || j.kind == JoinKindFull {
+			j.unmatchedRightBuf = make([]pl.Value, width)
+		}
 	}
 	return nil
 }

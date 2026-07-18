@@ -53,6 +53,11 @@ func collectHashJoin(t *testing.T, j *HashJoin) []pl.Row {
 		if err != nil {
 			t.Fatalf("Next: %v", err)
 		}
+		// Deep-copy Data — HashJoin reuses internal buffers and row.Data
+		// is only valid until the next Next() call.
+		cp := make([]pl.Value, len(row.Data))
+		copy(cp, row.Data)
+		row.Data = cp
 		out = append(out, row)
 	}
 	return out
