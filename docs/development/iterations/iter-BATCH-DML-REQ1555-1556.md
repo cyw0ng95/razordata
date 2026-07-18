@@ -41,6 +41,8 @@
 
 Until the adapter is extended (a small follow-up), the batch path activates only in tests using direct `BatchDeleteStore` implementations. This is intentional: the seam must be in place first, and the writer batching logic must be correct independent of the adapter wiring. Adapting `executorStoreAdapter` to forward the two methods is a separate change (will be tracked under a new REQ).
 
+**Resolved in REQ001581 follow-up:** `executorStoreAdapter` now forwards both `Engine.WriteBatch` and `Engine.DeleteBatch`. The adapter satisfies `DT.BatchStore` and `DT.BatchDeleteStore` at runtime; the type-assertion in `UpdateRowBatch`/`DeleteRowBatch` selects the batched path in production. Adapter-level interface-satisfaction test (`TestExecutorStoreAdapter_BatchInterfaceAssertion`) and e2e bulk UPDATE/DELETE test (`TestExecutorStoreAdapter_BatchPathActivate`) verify the wiring end-to-end.
+
 ## Verification
 
 ```bash

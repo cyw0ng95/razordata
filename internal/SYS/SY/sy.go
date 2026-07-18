@@ -426,6 +426,22 @@ type executorStoreAdapter struct {
 
 func (a *executorStoreAdapter) Insert(k, v []byte) error { return a.eng.Insert(k, v) }
 func (a *executorStoreAdapter) Delete(k []byte) error    { return a.eng.Delete(k) }
+// WriteBatch forwards REQ001421's amortised batched inserts. Adding
+// this method makes the adapter satisfy DT.BatchStore so the
+// executor's chunked mutation path (REQ001555 UpdateRowBatch,
+// REQ001421 InsertRowBatch) type-asserts to WriteBatch instead of
+// falling back to per-row Insert.
+func (a *executorStoreAdapter) WriteBatch(keys, values [][]byte) error {
+	return a.eng.WriteBatch(keys, values)
+}
+// DeleteBatch forwards REQ001556's amortised batched tombstone writes.
+// Adding this method makes the adapter satisfy DT.BatchDeleteStore so
+// the executor's chunked DELETE path (REQ001556 DeleteRowBatch)
+// type-asserts to DeleteBatch instead of falling back to per-row
+// Delete.
+func (a *executorStoreAdapter) DeleteBatch(keys [][]byte) error {
+	return a.eng.DeleteBatch(keys)
+}
 func (a *executorStoreAdapter) Get(k []byte) ([]byte, bool, error) {
 	v, err := a.eng.Get(k)
 	if err != nil {
