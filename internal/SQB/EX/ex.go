@@ -1286,10 +1286,11 @@ func isDDLStmt(stmt PS.Stmt) bool {
 // For DML and other exec-only statements, op is set with the writer op.
 // REQ001422.
 type CompiledPlan struct {
-	stmt  PS.Stmt
-	isDML bool
-	plan  *pl.PlanResult
-	op    DT.Operator
+	stmt         PS.Stmt
+	isDML        bool
+	plan         *pl.PlanResult
+	op           DT.Operator
+	isVectorized bool // REQ001604: whether CompilePlan applied tryVectorizePlan
 }
 
 // Close releases the operator tree in the CompiledPlan. Safe to call
@@ -1331,7 +1332,15 @@ func (e *Executor) CompilePlan(sql string) (*CompiledPlan, error) {
 			return nil, errors.New("ex: CompilePlan: plan produced no root")
 		}
 		ResolvePlanSlots(plan.Root)
-		return &CompiledPlan{stmt: stmt, plan: plan}, nil
+		// REQ001604: apply vectorization to compiled plans so that
+		// ExecCompiled and QueryStreamCompiled reuse the vectorized
+		// tree instead of the row-based one.
+		isVec := false
+		if plan.Root != nil {
+			plan.Root = tryVectorizePlan(plan.Root)
+			isVec = UT.IsBatchProducer(plan.Root)
+		}
+		return &CompiledPlan{stmt: stmt, plan: plan, isVectorized: isVec}, nil
 
 	default:
 		// DML, DDL, PRAGMA, etc.
@@ -1398,6 +1407,13 @@ func (e *Executor) ExecCompiled(ctx context.Context, cp *CompiledPlan, args ...a
 	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(plan.Root, execCtx)
 	defer plan.Root.Close()
+	// REQ001604: use vectorized drain path when available.
+	if cp.isVectorized {
+		if bp, ok := plan.Root.(UT.BatchProducer); ok {
+			_, err := drainBatchProducer(ctx, bp, execCtx)
+			return Result{}, err
+		}
+	}
 	if _, err := plan.Root.Next(ctx); err != nil && err != DT.ErrNoRows {
 		return Result{}, err
 	}

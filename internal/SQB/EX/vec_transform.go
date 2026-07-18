@@ -27,6 +27,10 @@ func tryVectorizePlan(root DT.Operator) DT.Operator {
 }
 
 // isEligible checks whether the operator tree can be vectorized.
+// REQ001602: expanded eligibility — sub-components that are not yet
+// vectorized are acceptable; they will be wrapped in
+// ScalarBatchProducer at runtime. This turns vectorization from a
+// strict white-list into a best-effort optimization.
 func isEligible(root DT.Operator) bool {
 	var check func(op DT.Operator) bool
 	check = func(op DT.Operator) bool {
@@ -37,25 +41,15 @@ func isEligible(root DT.Operator) bool {
 		case *OP.SeqScan:
 			return true
 		case *OP.IndexScan:
-			return o.Covering()
+			// Non-covering IndexScan: still eligible; the scalar
+			// path will be wrapped in ScalarBatchProducer.
+			return true
+		case *OP.BitmapHeapScan:
+			return true
 		case *OP.Filter:
-			return isScanLeaf(o.Child()) || isRowAgg(o.Child())
+			return check(o.Child())
 		case *OP.Project:
-			child := o.Child()
-			if isScanLeaf(child) {
-				return true
-			}
-			// Project(Filter(Scan)) shape
-			f, isFilt := child.(*OP.Filter)
-			if isFilt {
-				return isScanLeaf(f.Child())
-			}
-			// Project(Aggregate(Scan)) shape
-			_, isAgg := child.(*AG.Aggregate)
-			if isAgg {
-				return true
-			}
-			return false
+			return check(o.Child())
 		case *AG.Aggregate:
 			if len(o.GroupCols()) > 0 {
 				for _, gc := range o.GroupCols() {
@@ -64,42 +58,7 @@ func isEligible(root DT.Operator) bool {
 					}
 				}
 			}
-			child := o.Child()
-			if isScanLeaf(child) {
-				return true
-			}
-			// Filter(Scan) shape
-			f, isFilt := child.(*OP.Filter)
-			if isFilt {
-				return isScanLeaf(f.Child())
-			}
-			return false
-		case *OP.HashJoin:
-			_, leftIsSeq := o.LeftChild().(*OP.SeqScan)
-			if !leftIsSeq {
-				return false
-			}
-			_, rightIsSeq := o.RightChild().(*OP.SeqScan)
-			if !rightIsSeq {
-				return false
-			}
-			if len(o.LeftKeys()) != 1 || len(o.RightKeys()) != 1 {
-				return false
-			}
-			return true
-		case *OP.NestedLoopJoin:
-			return true
-		case *OP.Distinct:
-			return true
-		case *OP.CompoundOp:
-			return o.CompoundOpType() == PS.CompoundUnionAll ||
-				o.CompoundOpType() == PS.CompoundUnion ||
-				o.CompoundOpType() == PS.CompoundExcept ||
-				o.CompoundOpType() == PS.CompoundIntersect
-		case *OP.Sort:
-			return isEligible(o.Child())
-		case *OP.Limit:
-			return isEligible(o.Child())
+			return check(o.Child())
 		case *AG.HashAggregate:
 			if len(o.GroupCols()) > 0 {
 				for _, gc := range o.GroupCols() {
@@ -109,6 +68,31 @@ func isEligible(root DT.Operator) bool {
 				}
 			}
 			return true
+		case *OP.HashJoin:
+			// HashJoin requires single-column equi-join keys for the
+			// current VectorizedHashJoin implementation. Multi-key joins
+			// fall back to scalar via ScalarBatchProducer.
+			if len(o.LeftKeys()) != 1 || len(o.RightKeys()) != 1 {
+				return false
+			}
+			return check(o.LeftChild()) && check(o.RightChild())
+		case *OP.NestedLoopJoin:
+			return check(o.LeftChild()) && check(o.RightChild())
+		case *OP.MergeJoin:
+			return check(o.LeftChild()) && check(o.RightChild())
+		case *OP.HashCrossJoin:
+			return check(o.LeftChild()) && check(o.RightChild())
+		case *OP.Distinct:
+			return check(o.Child())
+		case *OP.CompoundOp:
+			return o.CompoundOpType() == PS.CompoundUnionAll ||
+				o.CompoundOpType() == PS.CompoundUnion ||
+				o.CompoundOpType() == PS.CompoundExcept ||
+				o.CompoundOpType() == PS.CompoundIntersect
+		case *OP.Sort:
+			return check(o.Child())
+		case *OP.Limit:
+			return check(o.Child())
 		default:
 			return false
 		}
