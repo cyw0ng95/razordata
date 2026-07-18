@@ -1188,8 +1188,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 			propagateParams(plan.Root, args)
 			propagatePlanner(plan.Root, e.planner)
 			defer plan.Root.Close()
-			out, err := e.drainPlan(ctx, plan)
-			return out, err
+			return e.drainPlanExecCtx(ctx, plan, propEctx)
 		}
 	}
 
@@ -1214,7 +1213,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 			execCtx.RowArena = e.ensureArena()
 			propagateExecContext(plan.Root, execCtx)
 			defer plan.Root.Close()
-			return e.drainPlan(ctx, plan)
+			return e.drainPlanExecCtx(ctx, plan, execCtx)
 		}
 	}
 
@@ -1250,13 +1249,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(plan.Root, execCtx)
 	defer plan.Root.Close()
-	return e.drainPlan(ctx, plan)
-}
-
-// drainPlan drains all rows from a plan result into a slice.
-// REQ001464: extracted from QueryAll for reuse in textPlanCache hit path.
-func (e *Executor) drainPlan(ctx context.Context, plan *pl.PlanResult) ([]DT.Row, error) {
-	return drainBatch(ctx, plan.Root)
+	return e.drainPlanExecCtx(ctx, plan, execCtx)
 }
 
 // clearTextPlanCache drops all entries from the text cache. REQ001464.

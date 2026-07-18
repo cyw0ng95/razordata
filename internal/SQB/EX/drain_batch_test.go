@@ -13,7 +13,7 @@ import (
 
 // TestDrainBatch_NilRoot verifies drainBatch returns error for nil root.
 func TestDrainBatch_NilRoot(t *testing.T) {
-	_, err := drainBatch(context.Background(), nil)
+	_, err := drainBatch(context.Background(), nil, nil)
 	if err == nil {
 		t.Error("expected error for nil root")
 	}
@@ -77,7 +77,7 @@ func TestDrainBatch_BatchProducer_singleBatch(t *testing.T) {
 	batch := makeIntBatch([]int64{1, 2, 3})
 	fb := &fakeBatch{batches: []*UT.Batch{batch}}
 
-	rows, err := drainBatch(context.Background(), fb)
+	rows, err := drainBatch(context.Background(), fb, nil)
 	if err != nil {
 		t.Fatalf("drainBatch: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestDrainBatch_BatchProducer_multipleBatches(t *testing.T) {
 	b2 := makeIntBatch([]int64{30})
 	fb := &fakeBatch{batches: []*UT.Batch{b1, b2}}
 
-	rows, err := drainBatch(context.Background(), fb)
+	rows, err := drainBatch(context.Background(), fb, nil)
 	if err != nil {
 		t.Fatalf("drainBatch: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestDrainBatch_BatchProducer_multipleBatches(t *testing.T) {
 func TestDrainBatch_BatchProducer_empty(t *testing.T) {
 	fb := &fakeBatch{batches: nil}
 
-	rows, err := drainBatch(context.Background(), fb)
+	rows, err := drainBatch(context.Background(), fb, nil)
 	if err != nil {
 		t.Fatalf("drainBatch: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestDrainBatch_BatchProducer_multiColumn(t *testing.T) {
 	batch := makeMultiColBatch([]int64{42, 99}, []string{"hello", "world"})
 	fb := &fakeBatch{batches: []*UT.Batch{batch}}
 
-	rows, err := drainBatch(context.Background(), fb)
+	rows, err := drainBatch(context.Background(), fb, nil)
 	if err != nil {
 		t.Fatalf("drainBatch: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestDrainBatch_OperatorFallback(t *testing.T) {
 		},
 	}
 
-	rows, err := drainBatch(context.Background(), fo)
+	rows, err := drainBatch(context.Background(), fo, nil)
 	if err != nil {
 		t.Fatalf("drainBatch: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestDrainBatch_OperatorFallback(t *testing.T) {
 func TestDrainBatch_OperatorFallback_empty(t *testing.T) {
 	fo := &fakeRowOp{}
 
-	rows, err := drainBatch(context.Background(), fo)
+	rows, err := drainBatch(context.Background(), fo, nil)
 	if err != nil {
 		t.Fatalf("drainBatch: %v", err)
 	}
