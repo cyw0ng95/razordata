@@ -164,12 +164,17 @@ func (i *Insert) Next(ctx context.Context) (DT.Row, error) {
 		}
 		colIdx[ci] = idx
 	}
+	// REQ001565: pre-allocate Data buffer for DEFAULT VALUES path (mirrors REQ001426 store path).
+	var defaultBuf []DT.Value
+	if i.defaultValues && len(schema) > 0 {
+		defaultBuf = make([]DT.Value, len(schema))
+	}
 	for _, row := range iterValues {
 		var out DT.Row
 		var err error
 		if row == nil && i.defaultValues {
 			out = DT.Row{Cols: schema}
-			out.Data = make([]DT.Value, len(schema))
+			out.Data = defaultBuf
 		} else {
 			out, err = BuildInsertRow(schema, i.cols, colIdx, row, i.params, nil)
 			if err != nil {
