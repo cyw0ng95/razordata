@@ -443,7 +443,20 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 				row.Cols = s.prefixedCols
 				row.ColIndex = s.prefixedColIndex
 			} else {
-				row = prefixRowCols(row, s.alias)
+				prefix := s.alias + "."
+				n := len(row.Cols)
+				s.prefixedCols = make([]string, n)
+				s.prefixedColIndex = make(map[string]int, n*2)
+				for i, c := range row.Cols {
+					pc := prefix + c
+					s.prefixedCols[i] = pc
+					s.prefixedColIndex[pc] = i
+					if _, exists := s.prefixedColIndex[c]; !exists {
+						s.prefixedColIndex[c] = i
+					}
+				}
+				row.Cols = s.prefixedCols
+				row.ColIndex = s.prefixedColIndex
 			}
 			row.TableName = s.alias
 		}
@@ -583,7 +596,22 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 			out.Cols = s.prefixedCols
 			out.ColIndex = s.prefixedColIndex
 		} else {
-			out = prefixRowCols(out, s.alias)
+			// Lazy compute prefixedCols from the row's column names.
+			// REQ001569: compute once, not per-row.
+			prefix := s.alias + "."
+			n := len(out.Cols)
+			s.prefixedCols = make([]string, n)
+			s.prefixedColIndex = make(map[string]int, n*2)
+			for i, c := range out.Cols {
+				pc := prefix + c
+				s.prefixedCols[i] = pc
+				s.prefixedColIndex[pc] = i
+				if _, exists := s.prefixedColIndex[c]; !exists {
+					s.prefixedColIndex[c] = i
+				}
+			}
+			out.Cols = s.prefixedCols
+			out.ColIndex = s.prefixedColIndex
 		}
 		out.TableName = s.alias
 	}
@@ -633,7 +661,20 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 				row.Cols = s.prefixedCols
 				row.ColIndex = s.prefixedColIndex
 			} else {
-				row = prefixRowCols(row, s.alias)
+				prefix := s.alias + "."
+				n := len(row.Cols)
+				s.prefixedCols = make([]string, n)
+				s.prefixedColIndex = make(map[string]int, n*2)
+				for i, c := range row.Cols {
+					pc := prefix + c
+					s.prefixedCols[i] = pc
+					s.prefixedColIndex[pc] = i
+					if _, exists := s.prefixedColIndex[c]; !exists {
+						s.prefixedColIndex[c] = i
+					}
+				}
+				row.Cols = s.prefixedCols
+				row.ColIndex = s.prefixedColIndex
 			}
 			row.TableName = s.alias
 		}
