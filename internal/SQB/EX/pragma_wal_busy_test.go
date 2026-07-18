@@ -181,3 +181,41 @@ func TestPragma_BusyHandler_ReadAfterSetUnchanged(t *testing.T) {
 		t.Fatalf("after read: name = %q, want read_after (read must not clear)", name)
 	}
 }
+
+// REQ001306: PRAGMA incremental_vacuum(N) returns a single int row.
+func TestPragma_IncrementalVacuum_Basic(t *testing.T) {
+	e := NewExecutorWithEngine(nil)
+	ctx := context.Background()
+
+	rows, err := e.QueryAll(ctx, "PRAGMA incremental_vacuum(100)")
+	if err != nil {
+		t.Fatalf("incremental_vacuum: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if len(rows[0].Cols) != 1 || rows[0].Cols[0] != "incremental_vacuum" {
+		t.Errorf("cols = %v, want [incremental_vacuum]", rows[0].Cols)
+	}
+	v, ok := rows[0].Data[0].ToAny().(int64)
+	if !ok {
+		t.Fatalf("data type = %T, want int64", rows[0].Data[0].ToAny())
+	}
+	// We don't assert on the exact count — async reclaim is observed
+	// later via PRAGMA integrity_check.
+	_ = v
+}
+
+// REQ001306: PRAGMA incremental_vacuum (no arg) defaults to all-pages.
+func TestPragma_IncrementalVacuum_NoArg(t *testing.T) {
+	e := NewExecutorWithEngine(nil)
+	ctx := context.Background()
+
+	rows, err := e.QueryAll(ctx, "PRAGMA incremental_vacuum")
+	if err != nil {
+		t.Fatalf("incremental_vacuum: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+}

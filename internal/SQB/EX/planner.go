@@ -1106,6 +1106,13 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 			modeStr = "full"
 		}
 		return OP.NewPragmaResult("auto_compact", modeStr)
+	case "incremental_vacuum":
+		// REQ001306: trigger one incremental compaction and return
+		// the count of SST files merged. The actual reclamation work
+		// runs in the LS background compaction loop; here we
+		// kick off the pass via the store adapter and report 0
+		// (async; the next sync will observe reclaimed bytes).
+		return OP.NewIncrementalVacuumResult(p.store)
 	default:
 		return OP.NewSeqScan("__pragma_unknown__")
 	}

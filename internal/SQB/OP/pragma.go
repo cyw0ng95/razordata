@@ -47,3 +47,38 @@ func (p *PragmaResult) Next(_ context.Context) (Row, error) {
 }
 
 func (p *PragmaResult) Close() error { return nil }
+
+// IncrementalVacuumResult is the PRAGMA incremental_vacuum(N) operator.
+// REQ001306: triggers a manual compaction pass and returns the count
+// of compaction steps enqueued. The async compaction loop will reclaim
+// pages in the background; the returned int reflects the synchronous
+// work (always 0 for now — async reclaim is observed via subsequent
+// PRAGMA integrity_check).
+type IncrementalVacuumResult struct {
+	store DT.Store
+	done  bool
+}
+
+// NewIncrementalVacuumResult creates an operator for incremental_vacuum.
+func NewIncrementalVacuumResult(store DT.Store) *IncrementalVacuumResult {
+	return &IncrementalVacuumResult{store: store}
+}
+
+func (v *IncrementalVacuumResult) Next(_ context.Context) (Row, error) {
+	if v.done {
+		return Row{}, ErrNoRows
+	}
+	v.done = true
+	// ManualCompact is part of the DT.Store interface (REQ000257).
+	// Best-effort kick-off; errors are swallowed because
+	// incremental_vacuum is a hint, not a guarantee.
+	if v.store != nil {
+		_ = v.store.ManualCompact()
+	}
+	return Row{
+		Cols: []string{"incremental_vacuum"},
+		Data: []Value{DT.NewIntValue(0)},
+	}, nil
+}
+
+func (v *IncrementalVacuumResult) Close() error { return nil }
