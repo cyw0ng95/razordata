@@ -187,6 +187,8 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		return transformHashJoin(o)
 	case *OP.NestedLoopJoin:
 		return transformNestedLoopJoin(o)
+	case *OP.MergeJoin:
+		return transformMergeJoin(o)
 	case *OP.Distinct:
 		return transformDistinct(o)
 	case *OP.CompoundOp:
@@ -432,6 +434,14 @@ func transformNestedLoopJoin(nlj *OP.NestedLoopJoin) UT.BatchProducer {
 		return nil
 	}
 	return OP.NewVectorizedNestedLoopJoin(left, right, nlj.OnFunc(), nlj.Kind())
+}
+
+// transformMergeJoin wraps a row-based MergeJoin as a BatchProducer.
+// The MergeJoin is left as-is (row-based); the wrapper reads rows
+// and batches them into columnar batches of up to BatchSize rows.
+// REQ001602.
+func transformMergeJoin(mj *OP.MergeJoin) UT.BatchProducer {
+	return OP.NewVectorizedMergeJoin(mj)
 }
 
 // transformDistinct converts a row Distinct to VectorizedDistinct.
