@@ -116,15 +116,12 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		}
 		return OP.NewVectorizedSeqScan(o, schema, types)
 	case *OP.IndexScan:
-		// REQ001602: non-covering IndexScan wraps in VectorizedIndexScan.
-		if o.Covering() {
-			return OP.NewVectorizedCoveringIndexScan(o)
-		}
-		return OP.NewVectorizedIndexScan(o)
+		// REQ001617/REQ001626: pure batch IndexScan — no row intermediary.
+		return OP.NewBatchIndexScan(o)
 	case *OP.BitmapHeapScan:
 		return transformBitmapHeapScan(o)
 	case *OP.IndexOnlyScan:
-		return OP.NewVectorizedIndexOnlyScan(o)
+		return OP.NewBatchIndexOnlyScan(o)
 	case *OP.Filter:
 		child := transformOp(o.Child())
 		if child == nil {
