@@ -588,6 +588,25 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 		}
 	}
 
+	// REQ001589: batch INSERT via InsertRowBatch for store-backed path.
+	const selChunkSize = 256
+	selBuf := make([]DT.Row, 0, selChunkSize)
+	flushSelBuf := func() error {
+		if len(selBuf) == 0 || hsel == nil {
+			return nil
+		}
+		keys, bufs, ierr := hsel.InsertRowBatch(selBuf)
+		if ierr != nil {
+			return ierr
+		}
+		if i.txWriter != nil {
+			for j, k := range keys {
+				i.txWriter.RecordWrite(k, bufs[j])
+			}
+		}
+		selBuf = selBuf[:0]
+		return nil
+	}
 	for _, row := range selectRows {
 		// Build insert row from SELECT result
 		out, err := buildInsertRowFromSelectWithMap(schema, i.cols, row, i.colIndexMap)
@@ -604,23 +623,26 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 			}
 			if err := CheckUnique(cschema, out, i.pending, DT.Row{}, AsUniqueLookup(lookup)); err != nil {
 				if i.conflictAction == PS.ConflictActionIgnore {
+					// Flush batch before skipping, then skip this row.
+					if err := flushSelBuf(); err != nil {
+						return DT.Row{}, err
+					}
 					continue
 				}
 				return DT.Row{}, err
 			}
 			// REQ001129: store-backed INSERT...SELECT must write to
 			// the store engine, not just the in-memory table map.
-			// REQ000987: route through TableHandle.InsertRow so the
+			// REQ000987: route through TableHandle.InsertRowBatch so the
 			// PK extract + REQ001128 rowid auto-fill + EncodeRow +
 			// Store.Insert + MaintainIndexesOnInsert sequence is
-			// encapsulated in a single call.
+			// encapsulated in a single batch call.
 			if hsel != nil {
-				key, buf, ierr := hsel.InsertRow(out)
-				if ierr != nil {
-					return DT.Row{}, ierr
-				}
-				if i.txWriter != nil {
-					i.txWriter.RecordWrite(key, buf)
+				selBuf = append(selBuf, out)
+				if len(selBuf) >= selChunkSize {
+					if err := flushSelBuf(); err != nil {
+						return DT.Row{}, err
+					}
 				}
 			}
 		}
@@ -638,6 +660,10 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 				return DT.Row{}, err
 			}
 		}
+	}
+	// Flush remaining batch.
+	if err := flushSelBuf(); err != nil {
+		return DT.Row{}, err
 	}
 	DT.Tables[i.table] = existing
 
