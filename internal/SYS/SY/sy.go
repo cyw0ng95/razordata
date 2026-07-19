@@ -365,9 +365,16 @@ func (e *Engine) Reset(ctx context.Context) error {
 	if e.rowArena != nil {
 		e.rowArena.Reset()
 	}
-	// REQ001497: reset the page cache to reclaim memory between resets.
+	// REQ001497 follow-up: drop all storage state between SLT corpus
+	// files. Previously only DT.Tables was cleared, leaving SST data
+	// on disk that was then mixed with subsequent files' data and
+	// produced 2× duplicated row counts. DropAll clears the LS engine
+	// state (memtable, manifest, page cache, mmap, SST files) so each
+	// file runs against a truly fresh engine.
 	if e.eng != nil {
-		e.eng.ResetPageCache()
+		if err := e.eng.DropAll(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

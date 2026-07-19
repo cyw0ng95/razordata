@@ -310,6 +310,23 @@ func (eng *Engine) ResetPageCache() {
 	eng.e.pageCache.Reset()
 }
 
+// DropAll resets the engine to a freshly-opened state without
+// closing it. Clears in-memory memtables, manifest state, page cache,
+// mmap cache, and removes all SST files from disk so the next query
+// sees an empty slate. This is the correct "drop everything between
+// test files" primitive — the previous approach (clearing only
+// DT.Tables + page cache) left SST data on disk and corrupted
+// subsequent SLT runs that shared the same driver instance.
+//
+// Called from Engine.Reset between SLT corpus files (REQ001454).
+// Idempotent.
+func (eng *Engine) DropAll() error {
+	if eng == nil || eng.e == nil {
+		return nil
+	}
+	return eng.e.DropAll()
+}
+
 // RangeIter is an iterator over a sorted range of keys.
 type RangeIter interface {
 	Next() bool

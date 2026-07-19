@@ -586,6 +586,16 @@ func (e *Executor) ClearPlanCache() {
 	e.planCache.entries = nil
 	e.planCache.lru = nil
 	e.clearTextPlanCache()
+	// REQ001497 follow-up: also clear the statement cache and the
+	// planner's memo so cached plans from the previous SLT file don't
+	// silently reused operator state (e.g. stale Iterators) against
+	// fresh tables.
+	e.clearStmtCache()
+	if e.planner != nil {
+		e.planner.mu.Lock()
+		e.planner.clearMemoLocked()
+		e.planner.mu.Unlock()
+	}
 }
 
 // initTextPlanCache initialises the text-based plan cache. REQ001464.

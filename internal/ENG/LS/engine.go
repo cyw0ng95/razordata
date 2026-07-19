@@ -6,9 +6,11 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 var (
@@ -569,5 +571,67 @@ func (e *engine) Close() error {
 		}
 	}
 	e.manifest = nil
+	return nil
+}
+
+// REQ001497 follow-up: DropAll resets the engine to a freshly-opened
+// state without closing it. Clears in-memory memtables, manifest
+// state, page/block caches, mmap cache, and removes all SST files
+// from disk so the next query sees an empty slate. This is the
+// correct "drop everything between test files" primitive — the
+// previous approach (clearing only DT.Tables + page cache) left
+// SST data on disk and corrupted subsequent SLT runs that shared
+// the same driver instance across files.
+//
+// Called from Engine.Reset between SLT corpus files (REQ001454).
+// Idempotent.
+func (e *engine) DropAll() error {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// 1. Unmap all mmap'd SST files.
+	e.unmapAll()
+
+	// 2. Clear in-memory state.
+	e.memtables = nil
+	e.activeMem = newShardedMemtable(e.opts.MemTableSize, e.opts.MemTableShards)
+	e.stats.MemtableHits.Store(0)
+	e.stats.SSTHits.Store(0)
+	e.stats.DiskReads.Store(0)
+
+	// 3. Reset manifest to an empty version (no SST files, no levels).
+	if e.manifest != nil {
+		emptyVersion := &Version{
+			num:     1,
+			levels:  make([][]SSTFileMeta, 0),
+			created: time.Now(),
+		}
+		e.manifest.current.Store(emptyVersion)
+		e.manifest.version.Store(1)
+		// Persist the empty manifest so reload-on-restart sees a clean slate.
+		// Best-effort: ignore errors here — the in-memory state is what
+		// matters for the current session.
+		_ = e.manifest.Apply(*emptyVersion)
+	}
+
+	// 4. Reset page cache.
+	if e.pageCache != nil {
+		e.pageCache.Reset()
+	}
+
+	// 5. Remove all SST files from disk so a subsequent Open() reload
+	//    starts from the same empty state.
+	sstDir := filepath.Join(e.dir, "sst")
+	if entries, err := os.ReadDir(sstDir); err == nil {
+		for _, ent := range entries {
+			if !ent.IsDir() {
+				_ = os.Remove(filepath.Join(sstDir, ent.Name()))
+			}
+		}
+	}
+
 	return nil
 }
