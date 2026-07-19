@@ -109,6 +109,17 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 	}
 	switch o := op.(type) {
 	case *OP.SeqScan:
+		// REQ001639: when the SeqScan has a store, use its native
+		// NextBatch method which reads directly from the store and
+		// decodes into columnar format — no row intermediary.
+		if o.Store() != nil {
+			if cols := o.GetRequestedCols(); len(cols) > 0 {
+				schema := extractSchema(o)
+				types := extractTypes(o)
+				return OP.NewVectorizedSeqScanWithCols(o, schema, types, cols)
+			}
+			return o
+		}
 		schema := extractSchema(o)
 		types := extractTypes(o)
 		if cols := o.GetRequestedCols(); len(cols) > 0 {

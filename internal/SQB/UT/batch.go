@@ -627,7 +627,6 @@ func (b *Batch) ToRows() []pl.Row {
 	}
 	logical := b.LogicalSize()
 	out := make([]pl.Row, 0, logical)
-	// Helper closure for the two variants.
 	for r := 0; r < logical; r++ {
 		phys := r
 		if b.Sel != nil {
@@ -643,4 +642,49 @@ func (b *Batch) ToRows() []pl.Row {
 		out = append(out, row)
 	}
 	return out
+}
+
+// ToRowsShared materializes a Batch to []pl.Row using a pre-allocated
+// shared buffer for the per-row Data slices. The buffer is a flat slab
+// where each row's Data is a sub-slice. Callers must not mutate the
+// returned Data slices across calls.
+//
+// Returns (rows, usedBuffer). The usedBuffer can be returned to a
+// sync.Pool for reuse. The buffer must have capacity >= logical * nCols.
+// If buffer is nil or too small, a new buffer is allocated.
+// REQ001638.
+func (b *Batch) ToRowsShared(buffer []pl.Value) ([]pl.Row, []pl.Value) {
+	if b == nil {
+		return nil, buffer
+	}
+	names := b.ColNames()
+	if len(names) == 0 {
+		return nil, buffer
+	}
+	logical := b.LogicalSize()
+	nCols := len(names)
+	needed := logical * nCols
+	if cap(buffer) < needed {
+		buffer = make([]pl.Value, needed)
+	} else {
+		buffer = buffer[:needed]
+	}
+
+	out := make([]pl.Row, 0, logical)
+	for r := 0; r < logical; r++ {
+		phys := r
+		if b.Sel != nil {
+			phys = int(b.Sel[r])
+		}
+		off := r * nCols
+		data := buffer[off : off+nCols : off+nCols]
+		for c := range names {
+			data[c] = ToValue(b.Cols[c], phys)
+		}
+		out = append(out, pl.Row{
+			Cols: names,
+			Data: data,
+		})
+	}
+	return out, buffer
 }
