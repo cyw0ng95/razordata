@@ -1516,9 +1516,7 @@ func evalCaseBatchExpr(caseExpr *PS.CaseExpr, batch *UT.Batch, params []any) UT.
 // evalRowFallbackColumn falls back to row-at-a-time evaluation for
 // expressions that don't have a vectorized kernel. Returns a
 // UT.Column with the batch-size results. REQ001460.
-// batch data to a Row, calls evalFallbackEvalValue, and writes the
-// resulting Value into the output column. The output type is determined
-// from the first non-null value.
+// REQ001612: uses a pre-allocated Row to avoid per-row allocation.
 func evalRowFallbackColumn(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
 	n := batch.LogicalSize()
 	if n == 0 {
@@ -1528,10 +1526,39 @@ func evalRowFallbackColumn(expr PS.Expr, batch *UT.Batch, params []any) UT.Colum
 	var out UT.Column
 	allocated := false
 
-	processRow := func(i int, row *Row) {
-		v, err := evalFallbackEvalValue(expr, row, params)
+	// Pre-allocate a reusable Row to avoid per-row make in batchToRow.
+	reusableRow := &Row{
+		Cols:    make([]string, len(batch.Cols)),
+		Data:    make([]Value, len(batch.Cols)),
+		ExecCtx: batch.ExecCtx,
+	}
+
+	processRow := func(i int, phys int) {
+		// Fill reusable Row from batch column data.
+		for c := range batch.Cols {
+			col := &batch.Cols[c]
+			reusableRow.Cols[c] = col.Name
+			if col.Nulls != nil && phys < len(col.Nulls) && col.Nulls[phys] {
+				reusableRow.Data[c] = DT.NullValue()
+				continue
+			}
+			d := col.Data
+			switch {
+			case d.Ints != nil && phys < len(d.Ints):
+				reusableRow.Data[c] = Value{Kind: KindInt, I64: d.Ints[phys]}
+			case d.Floats != nil && phys < len(d.Floats):
+				reusableRow.Data[c] = Value{Kind: KindFloat, F64: d.Floats[phys]}
+			case d.Strs != nil && phys < len(d.Strs):
+				reusableRow.Data[c] = Value{Kind: KindText, S: d.Strs[phys]}
+			case d.Bools != nil && phys < len(d.Bools):
+				reusableRow.Data[c] = Value{Kind: KindBool, Bo: d.Bools[phys]}
+			default:
+				reusableRow.Data[c] = DT.NullValue()
+			}
+		}
+
+		v, err := evalFallbackEvalValue(expr, reusableRow, params)
 		if err != nil {
-			// Error → NULL
 			if !allocated {
 				out.Type = LX.T_NULL
 				out.Data = UT.ColumnData{}
@@ -1560,14 +1587,11 @@ func evalRowFallbackColumn(expr PS.Expr, batch *UT.Batch, params []any) UT.Colum
 
 	if batch.Sel != nil {
 		for _, idx := range batch.Sel {
-			i := int(idx)
-			row := batchToRow(batch, i)
-			processRow(i, row)
+			processRow(int(idx), int(idx))
 		}
 	} else {
 		for i := 0; i < n; i++ {
-			row := batchToRow(batch, i)
-			processRow(i, row)
+			processRow(i, i)
 		}
 	}
 
