@@ -509,15 +509,27 @@ func transformBitmapHeapScan(b *OP.BitmapHeapScan) UT.BatchProducer {
 	return OP.NewBatchBitmapHeapScan(b.Table(), b.Store(), batchChildren)
 }
 
-// transformHashCrossJoin wraps a row-based HashCrossJoin as a
-// BatchProducer. The HashCrossJoin is left as-is (row-based); the
-// wrapper reads rows and batches them. REQ001602.
+// transformHashCrossJoin converts a row HashCrossJoin to a pure batch
+// hash cross join. REQ001628: eliminates the row-based wrapper.
 func transformHashCrossJoin(hcj *OP.HashCrossJoin) UT.BatchProducer {
-	// HashCrossJoin doesn't expose a direct Next() that we can
-	// wrap with a common batch helper. The operator is used for
-	// small-table equi-joins (< 1024 rows) and already materializes
-	// all matches upfront. Wrap via the operator interface.
-	return OP.NewVectorizedHashCrossJoin(hcj)
+	left := transformOp(hcj.LeftChild())
+	if left == nil {
+		return nil
+	}
+	right := transformOp(hcj.RightChild())
+	if right == nil {
+		return nil
+	}
+	// Resolve key column indices from the left/right schemas.
+	leftKeyIdx, ok := resolveColumnIndex(hcj.LeftChild(), hcj.LeftKeyName())
+	if !ok {
+		return nil
+	}
+	rightKeyIdx, ok := resolveColumnIndex(hcj.RightChild(), hcj.RightKeyName())
+	if !ok {
+		return nil
+	}
+	return OP.NewBatchHashCrossJoin(left, right, leftKeyIdx, rightKeyIdx)
 }
 
 // transformDistinct converts a row Distinct to VectorizedDistinct.

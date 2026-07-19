@@ -88,6 +88,12 @@ func NewHashCrossJoin(left, right pl.Operator, leftTbl, rightTbl, leftKey, right
 func (j *HashCrossJoin) LeftChild() pl.Operator  { return j.left }
 func (j *HashCrossJoin) RightChild() pl.Operator { return j.right }
 
+// LeftKeyName returns the left-side join key name.
+func (j *HashCrossJoin) LeftKeyName() string { return j.leftKey }
+
+// RightKeyName returns the right-side join key name.
+func (j *HashCrossJoin) RightKeyName() string { return j.rightKey }
+
 // SharedCols returns the cached join column names.
 func (j *HashCrossJoin) SharedCols() []string { return j.sharedCols }
 
