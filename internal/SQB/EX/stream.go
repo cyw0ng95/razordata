@@ -9,7 +9,6 @@ import (
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
-	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -339,32 +338,6 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
     }
     go func() {
         defer close(rowCh)
-        // REQ001604: if the plan is vectorized, drain via NextBatch()
-        // instead of per-row Next() to avoid goroutine-per-row overhead.
-        if bp, ok := plan.Root.(UT.BatchProducer); ok {
-            for {
-                batch, err := bp.NextBatch(ctx)
-                if err != nil {
-                    return
-                }
-                if batch == nil {
-                    break
-                }
-                rows := batch.ToRows()
-                for i := range rows {
-                    OP.WithExecContext(&rows[i], execCtx)
-                    select {
-                    case rowCh <- rows[i]:
-                    case <-ctx.Done():
-                        return
-                    }
-                }
-                if batch.Pooled {
-                    batch.Put()
-                }
-            }
-            return
-        }
         for {
             closeMu.Lock()
             if closed {

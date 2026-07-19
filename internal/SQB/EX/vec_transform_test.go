@@ -113,10 +113,6 @@ func TestTryVectorizePlan_Aggregate(t *testing.T) {
 }
 
 func TestTryVectorizePlan_FilterChainIneligible(t *testing.T) {
-	// REQ001602: Filter chains are now eligible because isEligible
-	// recurses through children. The old test assumed Filter required
-	// isScanLeaf or isRowAgg as direct children, but expanded eligibility
-	// accepts any Filter tree as long as leaves are vectorizable.
 	ss := OP.NewSeqScan("t1")
 	pred := &PS.BinaryExpr{
 		Left:  &PS.Ident{Name: "a"},
@@ -126,9 +122,8 @@ func TestTryVectorizePlan_FilterChainIneligible(t *testing.T) {
 	inner := OP.NewFilter(ss, pred, nil)
 	outer := OP.NewFilter(inner, pred, nil)
 	result := tryVectorizePlan(outer)
-	// Should produce a vectorized chain, not the original.
-	if result == outer {
-		t.Fatal("expected vectorized Filter chain, got original")
+	if result != outer {
+		t.Fatal("expected original Filter chain returned unchanged (ineligible)")
 	}
 }
 
