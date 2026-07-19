@@ -1006,6 +1006,53 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 				return err
 			}
 		}
+		// REQ001586: batch evaluate RETURNING expressions via EvalBatchExpr
+		// instead of per-row EvalValue. Build a batch from newBuf, evaluate
+		// each RETURNING expression once, and build result rows.
+		if len(u.returning) > 0 && len(newBuf) > 0 {
+			firstRow := &newBuf[0]
+			expanded := expandReturningStar(u.returning, firstRow.Cols)
+			nCols := len(expanded)
+
+			// Build batch from newBuf.
+			newRows := make([]*DT.Row, len(newBuf))
+			for i := range newBuf {
+				newRows[i] = &newBuf[i]
+			}
+			batch := EV.RowsToBatch(newRows)
+			nRows := batch.LogicalSize()
+
+			flatOff := len(u.rColsBuf)
+			newLen := flatOff + nCols*nRows
+			growSlice(&u.rColsBuf, newLen)
+			growSlice(&u.rTypesBuf, newLen)
+			growSlice(&u.rDataBuf, newLen)
+
+			// Evaluate each RETURNING expression once per batch.
+			for j, expr := range expanded {
+				col := EV.EvalBatchExpr(expr, batch, u.params)
+				colName := colNameForReturning(expr, firstRow.Cols, j)
+				for i := 0; i < nRows; i++ {
+					off := flatOff + i*nCols + j
+					v := UT.ToValue(col, i)
+					u.rColsBuf[off] = colName
+					u.rTypesBuf[off] = col.Type
+					u.rDataBuf[off] = v
+				}
+			}
+			batch.Put()
+
+			// Build result rows from flat buffers.
+			for i := 0; i < nRows; i++ {
+				off := flatOff + i*nCols
+				resultRow := DT.Row{
+					Cols:  u.rColsBuf[off : off+nCols : off+nCols],
+					Types: u.rTypesBuf[off : off+nCols : off+nCols],
+					Data:  u.rDataBuf[off : off+nCols : off+nCols],
+				}
+				u.resultRows = append(u.resultRows, resultRow)
+			}
+		}
 		keys, bufs, err := h.UpdateRowBatch(oldBuf, newBuf)
 		if err != nil {
 			return err
@@ -1048,13 +1095,6 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 			u.execCtx.TotalChanges++
 		}
 		u.pendingUpdates = append(u.pendingUpdates, triggerEvent{oldRow: oldRow, newRow: row})
-
-		// Evaluate RETURNING expressions (REQ000518: expand *)
-		if len(u.returning) > 0 {
-			if err := evalReturning(u.returning, &row, u.params, &u.resultRows, &u.rColsBuf, &u.rTypesBuf, &u.rDataBuf); err != nil {
-				return DT.Row{}, err
-			}
-		}
 
 		if len(oldBuf) >= updateChunkSize {
 			if err := flushChunk(); err != nil {
