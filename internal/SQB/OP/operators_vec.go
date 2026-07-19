@@ -282,11 +282,41 @@ type VectorizedFilter struct {
 	child  UT.BatchProducer
 	pred   PS.Expr
 	params []any
+
+	// REQ001631: IN-list bloom filter for fast negative detection.
+	inBloom   *UT.BloomFilter
+	inNegate  bool
+	inColIdx  int
 }
 
 // NewVectorizedFilter creates a vectorized filter.
+// REQ001631: detects IN-list patterns and builds a bloom filter
+// for fast negative detection when the list has > 8 elements.
 func NewVectorizedFilter(child UT.BatchProducer, pred PS.Expr) *VectorizedFilter {
-	return &VectorizedFilter{child: child, pred: pred}
+	f := &VectorizedFilter{child: child, pred: pred}
+	// Try to detect col IN (v1, v2, ..., vn) pattern for bloom filter.
+	if inExpr, ok := pred.(*PS.InExpr); ok && inExpr.Subquery == nil && len(inExpr.List) > 8 {
+		// Extract column name from the IN expression.
+		colName := extractInExprColName(inExpr.Expr)
+		if colName != "" {
+			// Build bloom filter from literal values.
+			vals := make([]int64, 0, len(inExpr.List))
+			for _, item := range inExpr.List {
+				if lit, ok := item.(*PS.NumberLiteral); ok {
+					vals = append(vals, lit.Val)
+				}
+			}
+			if len(vals) > 8 {
+				f.inBloom = UT.NewBloomFilter(len(vals), 0.01)
+				for _, v := range vals {
+					f.inBloom.Add(uint64(v))
+				}
+				f.inColIdx = -1 // resolved on first batch
+				f.inNegate = false
+			}
+		}
+	}
+	return f
 }
 
 // WithParams propagates bound ? placeholders to the filter.
@@ -304,6 +334,9 @@ func (f *VectorizedFilter) WithParams(p []any) *VectorizedFilter {
 }
 
 // NextBatch produces the next filtered batch.
+// REQ001631: when a bloom filter is configured, rows that are
+// definitely absent from the IN-list are filtered out before
+// the full predicate evaluation.
 func (f *VectorizedFilter) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	for {
 		batch, err := f.child.NextBatch(ctx)
@@ -312,6 +345,28 @@ func (f *VectorizedFilter) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		}
 		if batch == nil {
 			return nil, nil // EOF
+		}
+
+		// REQ001631: bloom filter pre-filter — skip rows that are
+		// definitely absent from the IN-list without calling EvalBatch.
+		if f.inBloom != nil {
+			// Resolve column index on first batch.
+			if f.inColIdx < 0 {
+				f.inColIdx = resolveInColName(batch, f.pred.(*PS.InExpr).Expr)
+			}
+			sel := f.applyBloomFilter(batch)
+			if sel == nil {
+				return batch, nil // all rows match
+			}
+			if len(sel) == 0 {
+				batch.Put()
+				continue // no rows match, try next batch
+			}
+			// Apply bloom filter selection before EvalBatch.
+			// The bloom filter may have false positives, so we still
+			// need EvalBatch for the final verdict.
+			batch.Sel = sel
+			batch.Size = len(sel)
 		}
 
 		// Apply predicate via vectorized evaluation
@@ -328,9 +383,9 @@ func (f *VectorizedFilter) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		}
 		// Partial match: update selection vector
 		batch.Sel = sel
-		batch.Size = len(sel) // logical size = selection count
+		batch.Size = len(sel)
 		return batch, nil
-	}
+}
 }
 
 // Close releases the child operator.
@@ -339,6 +394,92 @@ func (f *VectorizedFilter) Close() error {
 		return f.child.Close()
 	}
 	return nil
+}
+
+// applyBloomFilter filters rows in a batch by checking each row's
+// IN-list column value against the bloom filter. Rows with values
+// that are definitely absent from the bloom filter are excluded.
+// Returns a selection vector for rows that MAY be in the list.
+// REQ001631.
+func (f *VectorizedFilter) applyBloomFilter(batch *UT.Batch) []uint16 {
+	if f.inColIdx < 0 || f.inColIdx >= len(batch.Cols) || f.inBloom == nil {
+		return nil
+	}
+	col := &batch.Cols[f.inColIdx]
+	n := batch.LogicalSize()
+	sel := make([]uint16, 0, n)
+
+	for i := 0; i < n; i++ {
+		phys := i
+		if batch.Sel != nil {
+			phys = int(batch.Sel[i])
+		}
+		if phys >= len(batch.Cols) {
+			continue
+		}
+		if col.Nulls != nil && phys < len(col.Nulls) && col.Nulls[phys] {
+			continue
+		}
+		var key uint64
+		switch col.Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			if phys < len(col.Data.Ints) {
+				key = uint64(col.Data.Ints[phys])
+			}
+		case LX.T_FLOAT_KW:
+			if phys < len(col.Data.Floats) {
+				key = uint64(col.Data.Floats[phys])
+			}
+		default:
+			// Non-integer columns: include the row (bloom only supports int64).
+			sel = append(sel, uint16(phys))
+			continue
+		}
+		if f.inBloom.Contains(key) {
+			sel = append(sel, uint16(phys))
+		}
+	}
+
+	if len(sel) == n {
+		return nil // all rows may match
+	}
+	return sel
+}
+
+// extractInExprColName extracts the column name from an IN-list
+// expression. Returns "" if the expression is not a simple column ref.
+// REQ001631.
+func extractInExprColName(expr PS.Expr) string {
+	switch e := expr.(type) {
+	case *PS.Ident:
+		return e.Name
+	case *PS.QualifiedName:
+		if e.Name != "" {
+			return e.Name
+		}
+		return e.Table
+	}
+	return ""
+}
+
+// resolveInColName finds the column index for a column name in the
+// batch. Returns -1 if not found. REQ001631.
+func resolveInColName(batch *UT.Batch, expr PS.Expr) int {
+	name := extractInExprColName(expr)
+	if name == "" {
+		return -1
+	}
+	if batch.ColMap() != nil {
+		if idx, ok := batch.ColMap()[name]; ok {
+			return idx
+		}
+	}
+	for i, c := range batch.Cols {
+		if c.Name == name {
+			return i
+		}
+	}
+	return -1
 }
 
 // SchemaFromRowSchema converts a Row's Types to []LX.TokenType.
