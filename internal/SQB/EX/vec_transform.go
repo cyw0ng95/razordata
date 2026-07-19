@@ -135,10 +135,15 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		}
 		return OP.NewVectorizedSeqScan(o, schema, types)
 	case *OP.IndexScan:
+		// REQ001602: non-covering IndexScan wraps in VectorizedIndexScan.
 		if o.Covering() {
 			return OP.NewVectorizedCoveringIndexScan(o)
 		}
-		return nil
+		return OP.NewVectorizedIndexScan(o)
+	case *OP.BitmapHeapScan:
+		return OP.NewVectorizedBitmapHeapScan(o)
+	case *OP.IndexOnlyScan:
+		return OP.NewVectorizedIndexOnlyScan(o)
 	case *OP.Filter:
 		child := transformOp(o.Child())
 		if child == nil {
@@ -189,6 +194,8 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		return transformNestedLoopJoin(o)
 	case *OP.MergeJoin:
 		return transformMergeJoin(o)
+	case *OP.HashCrossJoin:
+		return transformHashCrossJoin(o)
 	case *OP.Distinct:
 		return transformDistinct(o)
 	case *OP.CompoundOp:
@@ -442,6 +449,17 @@ func transformNestedLoopJoin(nlj *OP.NestedLoopJoin) UT.BatchProducer {
 // REQ001602.
 func transformMergeJoin(mj *OP.MergeJoin) UT.BatchProducer {
 	return OP.NewVectorizedMergeJoin(mj)
+}
+
+// transformHashCrossJoin wraps a row-based HashCrossJoin as a
+// BatchProducer. The HashCrossJoin is left as-is (row-based); the
+// wrapper reads rows and batches them. REQ001602.
+func transformHashCrossJoin(hcj *OP.HashCrossJoin) UT.BatchProducer {
+	// HashCrossJoin doesn't expose a direct Next() that we can
+	// wrap with a common batch helper. The operator is used for
+	// small-table equi-joins (< 1024 rows) and already materializes
+	// all matches upfront. Wrap via the operator interface.
+	return OP.NewVectorizedHashCrossJoin(hcj)
 }
 
 // transformDistinct converts a row Distinct to VectorizedDistinct.
