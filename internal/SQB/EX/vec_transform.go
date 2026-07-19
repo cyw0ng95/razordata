@@ -448,12 +448,46 @@ func transformNestedLoopJoin(nlj *OP.NestedLoopJoin) UT.BatchProducer {
 	return OP.NewVectorizedNestedLoopJoin(left, right, nlj.OnFunc(), nlj.Kind())
 }
 
-// transformMergeJoin wraps a row-based MergeJoin as a BatchProducer.
-// The MergeJoin is left as-is (row-based); the wrapper reads rows
-// and batches them into columnar batches of up to BatchSize rows.
-// REQ001602.
+// transformMergeJoin converts a row MergeJoin to VectorizedMergeJoin.
+// REQ001615/REQ001625: pure batch sort-merge — no row intermediary.
+// Reads batches from both pre-sorted sides and merges them directly.
 func transformMergeJoin(mj *OP.MergeJoin) UT.BatchProducer {
-	return OP.NewVectorizedMergeJoin(mj)
+	left := transformOp(mj.LeftChild())
+	if left == nil {
+		return nil
+	}
+	right := transformOp(mj.RightChild())
+	if right == nil {
+		return nil
+	}
+	// Resolve key column indices from the left/right schemas.
+	leftKeys := mj.LeftKeys()
+	rightKeys := mj.RightKeys()
+	if len(leftKeys) != len(rightKeys) {
+		return nil
+	}
+	numKeys := len(leftKeys)
+	if numKeys == 0 {
+		return nil
+	}
+
+	leftKeyIdxs := make([]int, numKeys)
+	for i, lk := range leftKeys {
+		idx, ok := resolveColumnIndex(mj.LeftChild(), lk)
+		if !ok {
+			return nil
+		}
+		leftKeyIdxs[i] = idx
+	}
+	rightKeyIdxs := make([]int, numKeys)
+	for i, rk := range rightKeys {
+		idx, ok := resolveColumnIndex(mj.RightChild(), rk)
+		if !ok {
+			return nil
+		}
+		rightKeyIdxs[i] = idx
+	}
+	return OP.NewBatchMergeJoin(left, right, leftKeyIdxs, rightKeyIdxs, mj.Kind())
 }
 
 // transformHashCrossJoin wraps a row-based HashCrossJoin as a
