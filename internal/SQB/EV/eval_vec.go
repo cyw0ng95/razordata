@@ -7,6 +7,7 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"strconv"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -1037,14 +1038,12 @@ func EvalBatchExpr(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
 	case *PS.FunctionCall:
 		return evalFunctionBatchExpr(e, batch, params)
 
-	case *PS.SubqueryExpr:
+case *PS.SubqueryExpr:
 		// REQ001460: vectorized scalar subquery evaluation.
-		// Non-correlated subqueries are evaluated once per batch
-		// (or once per query via the global cache) and broadcast
-		// as a constant column. Correlated subqueries fall back
-		// to per-row evaluation with the row's ExecCtx populated
-		// by batchToRow.
 		return evalSubqueryBatchExpr(e, batch, params)
+
+	case *PS.CastExpr:
+		return evalCastBatchExpr(e, batch, params)
 
 	default:
 		return evalRowFallbackColumn(expr, batch, params)
@@ -1511,6 +1510,175 @@ func evalCaseBatchExpr(caseExpr *PS.CaseExpr, batch *UT.Batch, params []any) UT.
 		elseCol.Data = UT.ColumnData{}
 	}
 	return evalRowFallbackColumn(caseExpr, batch, params)
+}
+
+// evalCastBatchExpr evaluates a CAST expression over a batch.
+// REQ001632: vectorized CAST support.
+func evalCastBatchExpr(e *PS.CastExpr, batch *UT.Batch, params []any) UT.Column {
+	if e.Type == nil {
+		return EvalBatchExpr(e.Expr, batch, params)
+	}
+	targetType := LX.TokenType(e.Type.Type)
+	// Evaluate the inner expression.
+	inner := EvalBatchExpr(e.Expr, batch, params)
+	n := batch.LogicalSize()
+	if n == 0 {
+		return UT.Column{}
+	}
+
+	out := UT.Column{Type: targetType}
+	switch targetType {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		out.Data.Ints = make([]int64, n)
+		for i := 0; i < n; i++ {
+			phys := i
+			if batch.Sel != nil {
+				phys = int(batch.Sel[i])
+			}
+			if inner.Nulls != nil && phys < len(inner.Nulls) && inner.Nulls[phys] {
+				if out.Nulls == nil {
+					out.Nulls = make([]bool, n)
+				}
+				out.Nulls[i] = true
+				continue
+			}
+			switch inner.Type {
+			case LX.T_INT_KW, LX.T_BIGINT:
+				if phys < len(inner.Data.Ints) {
+					out.Data.Ints[i] = inner.Data.Ints[phys]
+				}
+			case LX.T_FLOAT_KW:
+				if phys < len(inner.Data.Floats) {
+					out.Data.Ints[i] = int64(inner.Data.Floats[phys])
+				}
+			case LX.T_TEXT, LX.T_VARCHAR:
+				if phys < len(inner.Data.Strs) {
+					n, err := strconv.ParseInt(inner.Data.Strs[phys], 10, 64)
+					if err == nil {
+						out.Data.Ints[i] = n
+					}
+				}
+			case LX.T_BOOL:
+				if phys < len(inner.Data.Bools) {
+					if inner.Data.Bools[phys] {
+						out.Data.Ints[i] = 1
+					}
+				}
+			}
+		}
+
+	case LX.T_FLOAT_KW:
+		out.Data.Floats = make([]float64, n)
+		for i := 0; i < n; i++ {
+			phys := i
+			if batch.Sel != nil {
+				phys = int(batch.Sel[i])
+			}
+			if inner.Nulls != nil && phys < len(inner.Nulls) && inner.Nulls[phys] {
+				if out.Nulls == nil {
+					out.Nulls = make([]bool, n)
+				}
+				out.Nulls[i] = true
+				continue
+			}
+			switch inner.Type {
+			case LX.T_INT_KW, LX.T_BIGINT:
+				if phys < len(inner.Data.Ints) {
+					out.Data.Floats[i] = float64(inner.Data.Ints[phys])
+				}
+			case LX.T_FLOAT_KW:
+				if phys < len(inner.Data.Floats) {
+					out.Data.Floats[i] = inner.Data.Floats[phys]
+				}
+			case LX.T_TEXT, LX.T_VARCHAR:
+				if phys < len(inner.Data.Strs) {
+					f, err := strconv.ParseFloat(inner.Data.Strs[phys], 64)
+					if err == nil {
+						out.Data.Floats[i] = f
+					}
+				}
+			case LX.T_BOOL:
+				if phys < len(inner.Data.Bools) {
+					if inner.Data.Bools[phys] {
+						out.Data.Floats[i] = 1.0
+					}
+				}
+			}
+		}
+
+	case LX.T_TEXT, LX.T_VARCHAR:
+		out.Data.Strs = make([]string, n)
+		for i := 0; i < n; i++ {
+			phys := i
+			if batch.Sel != nil {
+				phys = int(batch.Sel[i])
+			}
+			if inner.Nulls != nil && phys < len(inner.Nulls) && inner.Nulls[phys] {
+				if out.Nulls == nil {
+					out.Nulls = make([]bool, n)
+				}
+				out.Nulls[i] = true
+				continue
+			}
+			switch inner.Type {
+			case LX.T_INT_KW, LX.T_BIGINT:
+				if phys < len(inner.Data.Ints) {
+					out.Data.Strs[i] = fmt.Sprintf("%d", inner.Data.Ints[phys])
+				}
+			case LX.T_FLOAT_KW:
+				if phys < len(inner.Data.Floats) {
+					out.Data.Strs[i] = fmt.Sprintf("%f", inner.Data.Floats[phys])
+				}
+			case LX.T_TEXT, LX.T_VARCHAR:
+				if phys < len(inner.Data.Strs) {
+					out.Data.Strs[i] = inner.Data.Strs[phys]
+				}
+			case LX.T_BOOL:
+				if phys < len(inner.Data.Bools) {
+					if inner.Data.Bools[phys] {
+						out.Data.Strs[i] = "1"
+					} else {
+						out.Data.Strs[i] = "0"
+					}
+				}
+			}
+		}
+
+	case LX.T_BOOL:
+		out.Data.Bools = make([]bool, n)
+		for i := 0; i < n; i++ {
+			phys := i
+			if batch.Sel != nil {
+				phys = int(batch.Sel[i])
+			}
+			if inner.Nulls != nil && phys < len(inner.Nulls) && inner.Nulls[phys] {
+				if out.Nulls == nil {
+					out.Nulls = make([]bool, n)
+				}
+				out.Nulls[i] = true
+				continue
+			}
+			switch inner.Type {
+			case LX.T_INT_KW, LX.T_BIGINT:
+				if phys < len(inner.Data.Ints) {
+					out.Data.Bools[i] = inner.Data.Ints[phys] != 0
+				}
+			case LX.T_FLOAT_KW:
+				if phys < len(inner.Data.Floats) {
+					out.Data.Bools[i] = inner.Data.Floats[phys] != 0
+				}
+			case LX.T_TEXT, LX.T_VARCHAR:
+				if phys < len(inner.Data.Strs) {
+					out.Data.Bools[i] = inner.Data.Strs[phys] != "" && inner.Data.Strs[phys] != "0"
+				}
+			case LX.T_BOOL:
+				if phys < len(inner.Data.Bools) {
+					out.Data.Bools[i] = inner.Data.Bools[phys]
+				}
+			}
+		}
+	}
+	return out
 }
 
 // evalRowFallbackColumn falls back to row-at-a-time evaluation for

@@ -424,16 +424,22 @@ func TestVectorizedHashJoin_RightOuter(t *testing.T) {
 	batch.Put()
 
 	// Second batch: unmatched probe row (pk=2) with NULL build.
-	// NOTE: RIGHT outer unmatched probe emission is a future enhancement.
-	// For now, RIGHT outer join only emits matched rows.
 	batch2, err := j.NextBatch(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// RIGHT outer unmatched probe rows not yet implemented.
-	if batch2 != nil {
-		batch2.Put()
+	if batch2 == nil {
+		t.Fatal("expected unmatched probe row, got nil")
 	}
+	if batch2.Size != 1 {
+		t.Fatalf("expected 1 unmatched probe row, got %d", batch2.Size)
+	}
+	// Verify probe key column (pk=2) is present; build columns are NULL.
+	pk := UT.BatchValueAt(batch2.Cols[2], 0).(int64)
+	if pk != 2 {
+		t.Errorf("expected pk=2, got %d", pk)
+	}
+	batch2.Put()
 
 	// EOF.
 	batch3, err := j.NextBatch(ctx)

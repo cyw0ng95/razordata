@@ -45,12 +45,15 @@ type VectorizedHashJoin struct {
 	matchedBuild   []bool // matchedBuild[buildRowIndex] tracks emitted build rows
 	totalBuildRows int    // total rows in build side for unmatched iteration
 	// matchedProbe tracks which probe rows had at least one match.
-	// indexed by (batchIdx, rowInBatch).
-	matchedProbe   []bool // set to true when a probe row produces at least one match
+	matchedProbe   []bool
 	unmatchedBuf   []UT.Column
 	unmatchedN     int
+	// REQ001629: stored probe batches for RIGHT/FULL unmatched emission.
+	probeBatches   []*UT.Batch
+	probeBatchIdx  int
 	// REQ001619: track which build rows have been emitted for unmatched emission.
-	unmatchedBuildEmitted []bool // same length as totalBuildRows
+	unmatchedBuildEmitted []bool
+	matchedProbeRows      int // total probe rows seen across all batches
 }
 
 // NewVectorizedHashJoin creates a vectorized inner hash join.
@@ -271,10 +274,6 @@ func (j *VectorizedHashJoin) probePhase(ctx context.Context) (*UT.Batch, error) 
 		if !j.refillProbe(ctx) {
 			return nil, nil
 		}
-		// REQ001619: initialize matchedProbe tracking for RIGHT/FULL.
-		if (j.kind == JoinKindRight || j.kind == JoinKindFull) && j.matchedProbe == nil {
-			j.matchedProbe = make([]bool, j.probeBatch.Size)
-		}
 	}
 
 	nCols := nBuild + j.probeN
@@ -364,7 +363,12 @@ func (j *VectorizedHashJoin) probeCurrentRow() {
 
 func (j *VectorizedHashJoin) refillProbe(ctx context.Context) bool {
 	if j.probeBatch != nil {
-		j.probeBatch.Put()
+		// REQ001629: store probe batch for RIGHT/FULL unmatched emission.
+		if j.kind == JoinKindRight || j.kind == JoinKindFull {
+			j.probeBatches = append(j.probeBatches, j.probeBatch)
+		} else {
+			j.probeBatch.Put()
+		}
 		j.probeBatch = nil
 	}
 	batch, err := j.probe.NextBatch(ctx)
@@ -372,7 +376,7 @@ func (j *VectorizedHashJoin) refillProbe(ctx context.Context) bool {
 		return false
 	}
 	j.probeBatch = batch
-	j.probeRow = -1 // will be incremented to 0 by the probe loop
+	j.probeRow = -1
 	if j.probeNames == nil {
 		j.probeN = meaningfulCols([]*UT.Batch{batch})
 		j.probeNames = make([]string, j.probeN)
@@ -380,6 +384,18 @@ func (j *VectorizedHashJoin) refillProbe(ctx context.Context) bool {
 		for i := 0; i < j.probeN; i++ {
 			j.probeNames[i] = batch.Cols[i].Name
 			j.probeTypes[i] = batch.Cols[i].Type
+		}
+	}
+	// REQ001629: grow matchedProbe for multi-batch probe.
+	if j.kind == JoinKindRight || j.kind == JoinKindFull {
+		oldLen := len(j.matchedProbe)
+		newLen := oldLen + j.probeBatch.Size
+		if cap(j.matchedProbe) >= newLen {
+			j.matchedProbe = j.matchedProbe[:newLen]
+		} else {
+			grown := make([]bool, newLen)
+			copy(grown, j.matchedProbe)
+			j.matchedProbe = grown
 		}
 	}
 	return true
@@ -406,6 +422,11 @@ func (j *VectorizedHashJoin) Close() error {
 		j.probeBatch.Put()
 		j.probeBatch = nil
 	}
+	// REQ001629: release stored probe batches.
+	for _, b := range j.probeBatches {
+		b.Put()
+	}
+	j.probeBatches = nil
 	if j.build != nil {
 		if err := j.build.Close(); err != nil {
 			return err
@@ -429,10 +450,6 @@ func (j *VectorizedHashJoin) initUnmatchedBuf() {
 		return
 	}
 	j.unmatchedBuf = make([]UT.Column, nCols)
-	j.buildNames = make([]string, j.buildN)
-	j.buildTypes = make([]LX.TokenType, j.buildN)
-	j.probeNames = make([]string, j.probeN)
-	j.probeTypes = make([]LX.TokenType, j.probeN)
 	for i := 0; i < j.buildN; i++ {
 		j.unmatchedBuf[i].Name = j.buildNames[i]
 		j.unmatchedBuf[i].Type = j.buildTypes[i]
@@ -486,9 +503,50 @@ func (j *VectorizedHashJoin) emitUnmatchedBuild() *UT.Batch {
 // emitUnmatchedProbe emits RIGHT/FULL outer unmatched probe rows with NULL build side.
 // REQ001619: stores probe rows during probePhase for later unmatched emission.
 func (j *VectorizedHashJoin) emitUnmatchedProbe() *UT.Batch {
-	// RIGHT/FULL unmatched probe emission is a future enhancement.
-	// For now, return nil to signal no more unmatched probe rows.
-	return nil
+	// Ensure the last probe batch is stored.
+	if j.probeBatch != nil && (j.kind == JoinKindRight || j.kind == JoinKindFull) {
+		j.probeBatches = append(j.probeBatches, j.probeBatch)
+		j.probeBatch = nil
+	}
+	if j.unmatchedBuf == nil {
+		j.initUnmatchedBuf()
+	}
+	if j.unmatchedBuf == nil || len(j.probeBatches) == 0 {
+		return nil
+	}
+	output := UT.GetBatch(j.unmatchedN)
+	for i := 0; i < j.unmatchedN; i++ {
+		output.Cols[i].Name = j.unmatchedBuf[i].Name
+		output.Cols[i].Type = j.unmatchedBuf[i].Type
+		allocateColData(&output.Cols[i], UT.BatchSize, j.unmatchedBuf[i].Type)
+	}
+
+	probeRow := 0
+	for batchIdx := 0; batchIdx < len(j.probeBatches) && output.Size < UT.BatchSize; batchIdx++ {
+		batch := j.probeBatches[batchIdx]
+		for r := 0; r < batch.Size && output.Size < UT.BatchSize; r++ {
+			if probeRow < len(j.matchedProbe) && j.matchedProbe[probeRow] {
+				probeRow++
+				continue
+			}
+			// Mark as emitted so next call skips it.
+			if probeRow < len(j.matchedProbe) {
+				j.matchedProbe[probeRow] = true
+			}
+			// Build columns are NULL (already allocated) — copy probe columns.
+			for c := 0; c < j.probeN; c++ {
+				copyRowToColumn(&output.Cols[j.buildN+c], &batch.Cols[c], output.Size, r)
+			}
+			output.Size++
+			probeRow++
+		}
+	}
+
+	if output.Size == 0 {
+		output.Put()
+		return nil
+	}
+	return output
 }
 
 // replayProbeBatches drains the probe producer and returns all batches.
@@ -642,6 +700,7 @@ func utHashInt64(v int64) uint64 {
 // VectorizedNestedLoopJoin implements a batch-based nested loop join.
 // INNER and CROSS joins are supported. The build (right) side is fully
 // materialized; the probe (left) side is streamed batch-by-batch.
+// REQ001630: LEFT/RIGHT/FULL outer join support.
 type VectorizedNestedLoopJoin struct {
 	left      UT.BatchProducer
 	right     UT.BatchProducer
@@ -649,10 +708,9 @@ type VectorizedNestedLoopJoin struct {
 	kind      JoinKind
 
 	// REQ001620: columnar predicate for vectorized evaluation.
-	// colOnLeftIdx and colOnRightIdx are paired column indices to compare.
 	colOnLeftIdx  []int
 	colOnRightIdx []int
-	colOnEq       []bool // true = equality check, false = other comparison
+	colOnEq       []bool
 
 	// Materialized build (right) side
 	buildCols []UT.Column
@@ -661,13 +719,13 @@ type VectorizedNestedLoopJoin struct {
 	nBuildRow int
 
 	// Probe (left) side streaming
-	probeBatch *UT.Batch
-	probeRow   int
+	probeBatch  *UT.Batch
+	probeRow    int
 
 	// Pending match pairs for current probe row
 	pending struct {
-		l []uint32 // left row index (in current probe batch)
-		r []uint32 // paired right row index
+		l []uint32
+		r []uint32
 	}
 	pendingPos int
 
@@ -678,6 +736,12 @@ type VectorizedNestedLoopJoin struct {
 	rightNames []string
 	rightTypes []LX.TokenType
 	rightN     int
+
+	// REQ001630: outer join state.
+	matchedBuild    []bool   // matchedBuild[buildRowIdx]
+	matchedProbe    []bool   // matchedProbe[probeRowIdx]
+	probeBatches    []*UT.Batch // stored probe batches for unmatched emission
+	probeRowCount   int      // total probe rows seen
 
 	done bool
 }
@@ -722,7 +786,42 @@ func (j *VectorizedNestedLoopJoin) NextBatch(ctx context.Context) (*UT.Batch, er
 	if j.kind == JoinKindCross {
 		return j.nextCrossBatch(ctx)
 	}
-	return j.nextInnerBatch(ctx)
+	// REQ001630: multi-phase outer join.
+	// Phase 0 = matched probe rows (nextInnerBatch).
+	// Phase 1 = unmatched build rows (LEFT/FULL).
+	// Phase 2 = unmatched probe rows (RIGHT/FULL).
+	for {
+		batch, err := j.nextInnerBatch(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch != nil {
+			return batch, nil
+		}
+		// Probe exhausted. Emit unmatched rows.
+		if j.leftOuter() {
+			if batch := j.nljEmitUnmatchedBuild(); batch != nil {
+				return batch, nil
+			}
+		}
+		if j.rightOuter() {
+			if batch := j.nljEmitUnmatchedProbe(); batch != nil {
+				return batch, nil
+			}
+		}
+		j.done = true
+		return nil, nil
+	}
+}
+
+// leftOuter returns true for LEFT/FULL outer joins.
+func (j *VectorizedNestedLoopJoin) leftOuter() bool {
+	return j.kind == JoinKindLeft || j.kind == JoinKindFull
+}
+
+// rightOuter returns true for RIGHT/FULL outer joins.
+func (j *VectorizedNestedLoopJoin) rightOuter() bool {
+	return j.kind == JoinKindRight || j.kind == JoinKindFull
 }
 
 func (j *VectorizedNestedLoopJoin) materializeBuild(ctx context.Context) error {
@@ -778,6 +877,10 @@ func (j *VectorizedNestedLoopJoin) materializeBuild(ctx context.Context) error {
 	}
 
 	j.nBuildRow = totalRows
+	// REQ001630: initialize matched tracking for outer joins.
+	if j.leftOuter() || j.rightOuter() {
+		j.matchedBuild = make([]bool, totalRows)
+	}
 	j.buildDone = true
 	return nil
 }
@@ -829,7 +932,6 @@ func (j *VectorizedNestedLoopJoin) nextInnerBatch(ctx context.Context) (*UT.Batc
 
 	if output.Size == 0 {
 		output.Put()
-		j.done = true
 		return nil, nil
 	}
 	return output, nil
@@ -859,6 +961,14 @@ func (j *VectorizedNestedLoopJoin) drainPending() {
 
 		j.pending.l = append(j.pending.l, uint32(j.probeRow))
 		j.pending.r = append(j.pending.r, uint32(b))
+		// REQ001630: mark matched rows.
+		if j.matchedBuild != nil && b < len(j.matchedBuild) {
+			j.matchedBuild[b] = true
+		}
+	}
+	// REQ001630: mark probe row as matched if any matches found.
+	if len(j.pending.l) > 0 && j.matchedProbe != nil && j.probeRow < len(j.matchedProbe) {
+		j.matchedProbe[j.probeRow] = true
 	}
 }
 
@@ -879,7 +989,15 @@ func (j *VectorizedNestedLoopJoin) drainPendingCol() {
 		if matched {
 			j.pending.l = append(j.pending.l, uint32(j.probeRow))
 			j.pending.r = append(j.pending.r, uint32(b))
+			// REQ001630: mark matched rows.
+			if j.matchedBuild != nil && b < len(j.matchedBuild) {
+				j.matchedBuild[b] = true
+			}
 		}
+	}
+	// REQ001630: mark probe row as matched if any matches found.
+	if len(j.pending.l) > 0 && j.matchedProbe != nil && j.probeRow < len(j.matchedProbe) {
+		j.matchedProbe[j.probeRow] = true
 	}
 }
 
@@ -923,7 +1041,12 @@ func (j *VectorizedNestedLoopJoin) colValAtCol(cols *[]UT.Column, colIdx, rowIdx
 
 func (j *VectorizedNestedLoopJoin) refillBuildProbe(ctx context.Context) bool {
 	if j.probeBatch != nil {
-		j.probeBatch.Put()
+		// REQ001630: store probe batch for RIGHT/FULL unmatched emission.
+		if j.rightOuter() {
+			j.probeBatches = append(j.probeBatches, j.probeBatch)
+		} else {
+			j.probeBatch.Put()
+		}
 		j.probeBatch = nil
 	}
 	batch, err := j.left.NextBatch(ctx)
@@ -940,6 +1063,18 @@ func (j *VectorizedNestedLoopJoin) refillBuildProbe(ctx context.Context) bool {
 		for i := 0; i < j.leftN; i++ {
 			j.leftNames[i] = batch.Cols[i].Name
 			j.leftTypes[i] = batch.Cols[i].Type
+		}
+	}
+	// REQ001630: grow matchedProbe for multi-batch probe.
+	if j.rightOuter() {
+		oldLen := len(j.matchedProbe)
+		newLen := oldLen + j.probeBatch.Size
+		if cap(j.matchedProbe) >= newLen {
+			j.matchedProbe = j.matchedProbe[:newLen]
+		} else {
+			grown := make([]bool, newLen)
+			copy(grown, j.matchedProbe)
+			j.matchedProbe = grown
 		}
 	}
 	j.pending.l = j.pending.l[:0]
@@ -1023,6 +1158,11 @@ func (j *VectorizedNestedLoopJoin) Close() error {
 		j.probeBatch.Put()
 		j.probeBatch = nil
 	}
+	// REQ001630: release stored probe batches.
+	for _, b := range j.probeBatches {
+		b.Put()
+	}
+	j.probeBatches = nil
 	if j.left != nil {
 		_ = j.left.Close()
 	}
@@ -1030,6 +1170,96 @@ func (j *VectorizedNestedLoopJoin) Close() error {
 		return j.right.Close()
 	}
 	return nil
+}
+
+// nljEmitUnmatchedBuild emits unmatched build rows with NULL probe side.
+// REQ001630: LEFT/FULL outer join.
+func (j *VectorizedNestedLoopJoin) nljEmitUnmatchedBuild() *UT.Batch {
+	if j.matchedBuild == nil {
+		return nil
+	}
+	leftN, leftNames, leftTypes := j.probeNamesTypes()
+	nCols := leftN + j.buildN
+	output := UT.GetBatch(nCols)
+	for i := 0; i < leftN; i++ {
+		allocateColData(&output.Cols[i], UT.BatchSize, leftTypes[i])
+		output.Cols[i].Name = leftNames[i]
+	}
+	for i := 0; i < j.buildN; i++ {
+		allocateColData(&output.Cols[leftN+i], UT.BatchSize, j.rightTypes[i])
+		output.Cols[leftN+i].Name = j.rightNames[i]
+	}
+
+	for b := 0; b < j.nBuildRow && output.Size < UT.BatchSize; b++ {
+		if j.matchedBuild[b] {
+			continue
+		}
+		// Mark as emitted so next call skips it.
+		j.matchedBuild[b] = true
+		// Copy build columns (right side).
+		for c := 0; c < j.buildN; c++ {
+			copyRowToColumn(&output.Cols[leftN+c], &j.buildCols[c], output.Size, b)
+		}
+		// Left (probe) columns stay NULL.
+		output.Size++
+	}
+
+	if output.Size == 0 {
+		output.Put()
+		return nil
+	}
+	return output
+}
+
+// nljEmitUnmatchedProbe emits unmatched probe rows with NULL build side.
+// REQ001630: RIGHT/FULL outer join.
+func (j *VectorizedNestedLoopJoin) nljEmitUnmatchedProbe() *UT.Batch {
+	// Ensure the last probe batch is stored.
+	if j.probeBatch != nil && j.rightOuter() {
+		j.probeBatches = append(j.probeBatches, j.probeBatch)
+		j.probeBatch = nil
+	}
+	if j.matchedProbe == nil || len(j.probeBatches) == 0 {
+		return nil
+	}
+	leftN, leftNames, leftTypes := j.probeNamesTypes()
+	nCols := leftN + j.buildN
+	output := UT.GetBatch(nCols)
+	for i := 0; i < leftN; i++ {
+		allocateColData(&output.Cols[i], UT.BatchSize, leftTypes[i])
+		output.Cols[i].Name = leftNames[i]
+	}
+	for i := 0; i < j.buildN; i++ {
+		allocateColData(&output.Cols[leftN+i], UT.BatchSize, j.rightTypes[i])
+		output.Cols[leftN+i].Name = j.rightNames[i]
+	}
+
+	probeRow := 0
+	for batchIdx := 0; batchIdx < len(j.probeBatches) && output.Size < UT.BatchSize; batchIdx++ {
+		batch := j.probeBatches[batchIdx]
+		for r := 0; r < batch.Size && output.Size < UT.BatchSize; r++ {
+			if probeRow < len(j.matchedProbe) && j.matchedProbe[probeRow] {
+				probeRow++
+				continue
+			}
+			if probeRow < len(j.matchedProbe) {
+				j.matchedProbe[probeRow] = true
+			}
+			// Copy probe columns (left side).
+			for c := 0; c < leftN && c < len(batch.Cols); c++ {
+				copyRowToColumn(&output.Cols[c], &batch.Cols[c], output.Size, r)
+			}
+			// Build (right) columns stay NULL.
+			output.Size++
+			probeRow++
+		}
+	}
+
+	if output.Size == 0 {
+		output.Put()
+		return nil
+	}
+	return output
 }
 
 func emitNLJRow(output *UT.Batch, probeBatch *UT.Batch, buildCols *[]UT.Column, leftRow, rightRow, leftN int, _ int) {
