@@ -721,6 +721,9 @@ type Update struct {
 	rColsBuf  []string       // REQ001557: flat RETURNING col name backing
 	rTypesBuf []LX.TokenType // REQ001557: flat RETURNING type backing
 	rDataBuf  []DT.Value     // REQ001557: flat RETURNING data backing
+	// REQ001585: pre-resolved column indices for SET targets.
+	// Eliminates the O(N*M) linear scan per row in ApplyUpdate.
+	setColIdx []int
 }
 
 // triggerEvent is one deferred trigger invocation captured during
@@ -775,6 +778,17 @@ func NewUpdateWithStore(store DT.Store, table string, set []PS.Pair, where PS.Ex
 		returning: returning,
 		store:     store,
 		schema:    ss,
+	}
+	// REQ001585: pre-resolve column indices for SET targets.
+	upd.setColIdx = make([]int, len(set))
+	for i, p := range set {
+		upd.setColIdx[i] = -1
+		for j, c := range ss.Cols {
+			if c == p.Col {
+				upd.setColIdx[i] = j
+				break
+			}
+		}
 	}
 	if len(returning) > 0 {
 		nCols := len(ss.Cols)
@@ -840,7 +854,11 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 		// source table. Deep-copy Data before applyUpdate mutates it
 		// in-place, otherwise the source row is corrupted.
 		row.Data = append([]DT.Value(nil), row.Data...)
-		if err := ApplyUpdate(&row, u.set, u.params); err != nil {
+		if u.setColIdx != nil {
+			if err := ApplyUpdateFast(&row, u.set, u.params, u.setColIdx); err != nil {
+				return DT.Row{}, err
+			}
+		} else if err := ApplyUpdate(&row, u.set, u.params); err != nil {
 			return DT.Row{}, err
 		}
 		if cschema != nil {
@@ -977,7 +995,7 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 			return DT.Row{}, err
 		}
 		oldRow := DT.ShallowCloneRow(row)
-		if err := ApplyUpdate(&row, u.set, u.params); err != nil {
+		if err := ApplyUpdateFast(&row, u.set, u.params, u.setColIdx); err != nil {
 			return DT.Row{}, err
 		}
 		if row, err = FillDefaults(u.schema, row); err != nil {

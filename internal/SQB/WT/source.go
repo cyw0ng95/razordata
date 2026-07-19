@@ -169,6 +169,23 @@ func ApplyUpdate(row *DT.Row, set []PS.Pair, params []any) error {
 	return nil
 }
 
+// ApplyUpdateFast evaluates SET expressions using pre-resolved column
+// indices, eliminating the O(N*M) linear scan. REQ001585.
+func ApplyUpdateFast(row *DT.Row, set []PS.Pair, params []any, setColIdx []int) error {
+	for si, p := range set {
+		val, err := EV.EvalValue(p.Val, row, params)
+		if err != nil {
+			return err
+		}
+		idx := setColIdx[si]
+		if idx < 0 || idx >= len(row.Data) {
+			return errors.New("ex: update column not found: " + p.Col)
+		}
+		row.Data[idx] = val
+	}
+	return nil
+}
+
 // TriggerContext provides the runtime context for trigger execution.
 type TriggerContext struct {
 	OldRow *DT.Row // nil for INSERT
