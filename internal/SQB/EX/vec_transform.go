@@ -122,7 +122,7 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		}
 		return OP.NewVectorizedIndexScan(o)
 	case *OP.BitmapHeapScan:
-		return OP.NewVectorizedBitmapHeapScan(o)
+		return transformBitmapHeapScan(o)
 	case *OP.IndexOnlyScan:
 		return OP.NewVectorizedIndexOnlyScan(o)
 	case *OP.Filter:
@@ -488,6 +488,28 @@ func transformMergeJoin(mj *OP.MergeJoin) UT.BatchProducer {
 		rightKeyIdxs[i] = idx
 	}
 	return OP.NewBatchMergeJoin(left, right, leftKeyIdxs, rightKeyIdxs, mj.Kind())
+}
+
+// transformBitmapHeapScan converts a row BitmapHeapScan to a pure
+// batch implementation. REQ001616/REQ001627.
+func transformBitmapHeapScan(b *OP.BitmapHeapScan) UT.BatchProducer {
+	// Transform each child IndexScan to BatchProducer.
+	children := b.IndexScans()
+	batchChildren := make([]UT.BatchProducer, 0, len(children))
+	for _, child := range children {
+		if child == nil {
+			continue
+		}
+		bp := transformOp(child)
+		if bp == nil {
+			return nil
+		}
+		batchChildren = append(batchChildren, bp)
+	}
+	// BitmapHeapScan requires a store to fetch heap values.
+	// Without a store, the row-based version also can't fetch;
+	// fall back to scalar path. Callers must wire the store.
+	return OP.NewBatchBitmapHeapScan(b.Table(), b.Store(), batchChildren)
 }
 
 // transformHashCrossJoin wraps a row-based HashCrossJoin as a
