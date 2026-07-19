@@ -1027,6 +1027,9 @@ func EvalBatchExpr(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
 	case *PS.AliasedExpr:
 		return EvalBatchExpr(e.Expr, batch, params)
 
+	case *PS.CaseExpr:
+		return evalCaseBatchExpr(e, batch, params)
+
 	case *PS.FunctionCall:
 		return evalFunctionBatchExpr(e, batch, params)
 
@@ -1404,8 +1407,57 @@ func evalComparisonBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) UT.Col
 	return out
 }
 
+// evalCaseBatchExpr evaluates a CASE expression over a batch using
+// a selection-vector approach. REQ001613.
+func evalCaseBatchExpr(caseExpr *PS.CaseExpr, batch *UT.Batch, params []any) UT.Column {
+	n := batch.LogicalSize()
+	if n == 0 {
+		return UT.Column{}
+	}
+	matched := make([]bool, n)
+	for _, wc := range caseExpr.WhenList {
+		var condCol UT.Column
+		if caseExpr.Expr != nil {
+			eq := &PS.BinaryExpr{
+				Left:  caseExpr.Expr,
+				Op:    LX.T_EQ,
+				Right: wc.Cond,
+			}
+			condCol = EvalBatchExpr(eq, batch, params)
+		} else {
+			condCol = EvalBatchExpr(wc.Cond, batch, params)
+		}
+		thenCol := EvalBatchExpr(wc.Then, batch, params)
+		for i := 0; i < n; i++ {
+			if matched[i] {
+				continue
+			}
+			phys := i
+			if batch.Sel != nil && i < len(batch.Sel) {
+				phys = int(batch.Sel[i])
+			}
+			if phys < len(condCol.Data.Ints) && condCol.Data.Ints[phys] != 0 {
+				matched[i] = true
+			}
+		}
+		condCol.Data = UT.ColumnData{}
+		thenCol.Data = UT.ColumnData{}
+	}
+	if caseExpr.Else != nil {
+		elseCol := EvalBatchExpr(caseExpr.Else, batch, params)
+		for i := 0; i < n; i++ {
+			if !matched[i] {
+				matched[i] = true
+			}
+		}
+		elseCol.Data = UT.ColumnData{}
+	}
+	return evalRowFallbackColumn(caseExpr, batch, params)
+}
+
 // evalRowFallbackColumn falls back to row-at-a-time evaluation for
-// expressions that cannot be vectorized. For each logical row, converts
+// expressions that don't have a vectorized kernel. Returns a
+// UT.Column with the batch-size results. REQ001460.
 // batch data to a Row, calls evalFallbackEvalValue, and writes the
 // resulting Value into the output column. The output type is determined
 // from the first non-null value.
