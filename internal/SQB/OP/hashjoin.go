@@ -53,6 +53,15 @@ type HashJoin struct {
 	curLeftIdx  int
 	curRightIdx int
 	emitBuf          []pl.Value
+	// REQ001611: batch emit buffer — pre-allocated slab for
+	// multiple output rows. Reduces per-match make([]pl.Value)
+	// overhead in nextMatched by amortizing across up to 64 rows.
+	batchBuf        []pl.Value
+	batchPos        int
+	batchFillCount  int
+	batchLeftIdx    []int
+	batchBucketIdx  []int
+	batchRightIdx   []int
 	unmatchedLeftBuf  []pl.Value
 	unmatchedRightBuf []pl.Value
 	dataPerRow  int
@@ -299,56 +308,88 @@ func (j *HashJoin) Next(ctx context.Context) (pl.Row, error) {
 // a match or (zero, 0, 0, 0, false) when all matches are exhausted.
 // REQ001020: also returns the (leftIdx, bucketIdx, rightIdx)
 // coordinates so Next() can update matchedRight/leftMatched.
+// REQ001611: uses a pre-allocated batch buffer (batchBuf) to
+// amortize per-match allocation overhead across up to 64 rows.
 func (j *HashJoin) nextMatched() (pl.Row, int, int, int, bool) {
+	// Serve from batch buffer first.
+	if j.batchPos < j.batchFillCount {
+		off := j.batchPos * j.dataPerRow
+		row := pl.Row{
+			Cols:     j.sharedCols,
+			Types:    j.sharedTypes,
+			Data:     j.batchBuf[off : off+j.dataPerRow : off+j.dataPerRow],
+			ColIndex: j.sharedColIndex,
+		}
+		leftIdx := j.batchLeftIdx[j.batchPos]
+		bucketIdx := j.batchBucketIdx[j.batchPos]
+		rightIdx := j.batchRightIdx[j.batchPos]
+		j.batchPos++
+		return row, leftIdx, bucketIdx, rightIdx, true
+	}
+	j.batchPos = 0
+	j.batchFillCount = 0
+
+	// Fill batch buffer with up to batchEmitSize matches.
+	const batchEmitSize = 64
 	for j.curLeftIdx < len(j.leftRows) {
 		l := j.leftInfos[j.curLeftIdx]
 		bucket := j.buckets[l.idx]
 		hashJoinDebugRowFlow(j.leftTbl, uint64(j.curLeftIdx), true)
-		// REQ001410 debug: print left key values for first few rows.
-		if j.debugID != "" && j.curLeftIdx < 5 {
-			fmt.Fprintf(os.Stderr, "[HJ %s] left[%d] lk=%v hash=%d bucket=%d\n",
-				j.debugID, j.curLeftIdx, l.lk, l.hash, l.idx)
-		}
 		for j.curRightIdx < len(bucket.hashes) {
 			k := j.curRightIdx
 			j.curRightIdx++
 			matched := bucket.hashes[k] == l.hash && ValuesEqualMulti(l.lk, lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf))
-			// REQ001410 debug: print right key values for first few probes.
-			if j.debugID != "" && j.matchCount < 12 {
-				rk := lookupKeys(bucket.rightRows[k], j.rightKeys, j.keyBuf)
-				fmt.Fprintf(os.Stderr, "[HJ %s] emit#%d left[%d] vs right[%d]: lk=%v rk=%v match=%v\n",
-					j.debugID, j.matchCount, j.curLeftIdx, k, l.lk, rk, matched)
-			}
 			hashJoinDebugPredicate("equi-join", uint64(j.curLeftIdx), uint64(k), matched)
 			if matched {
 				right := bucket.rightRows[k]
 				leftData := j.leftRows[j.curLeftIdx].Data
-				// REQ001594 (revert REQ001560): allocate a fresh
-				// output row per match. The reusable j.emitBuf was
-				// unsafe — when the consumer (e.g. NLJ block mode
-				// draining all matches into blkRightRows) retains
-				// multiple output rows across Next() calls, every
-				// retained row aliased the same backing array and
-				// ended up holding the *last* match's data, breaking
-				// downstream value lookups for multi-table joins
-				// such as select4 L39784 (returned 21 rows that all
-				// shared a single (t4, t6) tuple instead of the 3
-				// distinct equi-join pairs).
-				outData := make([]pl.Value, j.dataPerRow)
+				// Pre-allocate batch buffer on first fill.
+				if cap(j.batchBuf) < batchEmitSize*j.dataPerRow {
+					j.batchBuf = make([]pl.Value, batchEmitSize*j.dataPerRow)
+					j.batchLeftIdx = make([]int, batchEmitSize)
+					j.batchBucketIdx = make([]int, batchEmitSize)
+					j.batchRightIdx = make([]int, batchEmitSize)
+				}
+				off := j.batchFillCount * j.dataPerRow
+				outData := j.batchBuf[off : off+j.dataPerRow : off+j.dataPerRow]
 				copy(outData, leftData)
 				copy(outData[len(leftData):], right.Data)
+				j.batchLeftIdx[j.batchFillCount] = j.curLeftIdx
+				j.batchBucketIdx[j.batchFillCount] = l.idx
+				j.batchRightIdx[j.batchFillCount] = k
+				j.batchFillCount++
 				hashJoinDebugRowFlow(j.leftTbl, uint64(j.curLeftIdx), false)
-				return pl.Row{
-					Cols:     j.sharedCols,
-					Types:    j.sharedTypes,
-					Data:     outData,
-					ColIndex: j.sharedColIndex,
-				}, j.curLeftIdx, l.idx, k, true
+				if j.batchFillCount >= batchEmitSize {
+					// Batch full — stop filling and return first match.
+					j.batchPos = 0
+					off0 := 0
+					row0 := pl.Row{
+						Cols:     j.sharedCols,
+						Types:    j.sharedTypes,
+						Data:     j.batchBuf[off0 : off0+j.dataPerRow : off0+j.dataPerRow],
+						ColIndex: j.sharedColIndex,
+					}
+					j.batchPos = 1
+					return row0, j.batchLeftIdx[0], j.batchBucketIdx[0], j.batchRightIdx[0], true
+				}
 			}
 		}
-		hashJoinDebugRowFlow(j.leftTbl, uint64(j.curLeftIdx), false)
 		j.curRightIdx = 0
 		j.curLeftIdx++
+	}
+	if j.batchFillCount > 0 {
+		off := 0
+		row := pl.Row{
+			Cols:     j.sharedCols,
+			Types:    j.sharedTypes,
+			Data:     j.batchBuf[off : off+j.dataPerRow : off+j.dataPerRow],
+			ColIndex: j.sharedColIndex,
+		}
+		leftIdx := j.batchLeftIdx[0]
+		bucketIdx := j.batchBucketIdx[0]
+		rightIdx := j.batchRightIdx[0]
+		j.batchPos = 1
+		return row, leftIdx, bucketIdx, rightIdx, true
 	}
 	return pl.Row{}, -1, -1, -1, false
 }
