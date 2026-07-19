@@ -100,27 +100,6 @@ func isEligible(root DT.Operator) bool {
 	return check(root)
 }
 
-// isScanLeaf returns true if op is a leaf scan operator that can
-// serve as the vectorization source: SeqScan or covering IndexScan.
-func isScanLeaf(op DT.Operator) bool {
-	switch o := op.(type) {
-	case *OP.SeqScan:
-		return true
-	case *OP.IndexScan:
-		return o.Covering()
-	}
-	return false
-}
-
-// isRowAgg returns true if op is a row-based Aggregate.
-func isRowAgg(op DT.Operator) bool {
-	switch op.(type) {
-	case *AG.Aggregate:
-		return true
-	}
-	return false
-}
-
 // transformOp transforms a row operator tree into a BatchProducer chain.
 func transformOp(op DT.Operator) UT.BatchProducer {
 	if op == nil {
