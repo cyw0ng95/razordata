@@ -317,26 +317,17 @@ func transformHashAggregate(h *AG.HashAggregate, bp UT.BatchProducer) *AG.Vector
 // traversing down to the SeqScan and looking up in its schema.
 // Falls back to index 0 when schema is unavailable (e.g., test mode).
 func resolveColumnIndex(child DT.Operator, colName string) (int, bool) {
-	var scan *OP.SeqScan
-	switch c := child.(type) {
-	case *OP.SeqScan:
-		scan = c
-	case *OP.Filter:
-		scan, _ = c.Child().(*OP.SeqScan)
-	default:
-		return 0, false
-	}
-	if scan == nil {
-		return 0, false
-	}
-	sch := scan.Schema()
-	if sch == nil {
-		// Schema unavailable (test mode, NewSeqScan without store) — return index 0
-		// as a best-effort fallback. This matches the original behavior where
-		// groupColIdxs[i] = i was used directly.
+	// REQ001602: walk through Filter/Project/Sort chains to find
+	// the underlying scan's schema. Previously only handled
+	// Filter(SeqScan) — multi-table joins with IN-list predicates
+	// produce Filter(Project(SeqScan)) shapes that were rejected.
+	cols := colsOf(child)
+	if cols == nil {
+		// Schema unavailable (test mode, no store) — return index 0
+		// as best-effort fallback.
 		return 0, true
 	}
-	for i, name := range sch.Cols {
+	for i, name := range cols {
 		if name == colName {
 			return i, true
 		}
