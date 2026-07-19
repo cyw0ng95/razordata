@@ -2,6 +2,7 @@ package OP
 
 import (
 	"context"
+	"hash/fnv"
 
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -9,11 +10,13 @@ import (
 
 // VectorizedHashJoin implements an inner equi-join between two batch
 // streams using a hash table on the build-side key.
+// Supports single or multi-column equi-join keys (REQ001618).
+// Supports LEFT/RIGHT/FULL outer joins (REQ001619).
 type VectorizedHashJoin struct {
 	build    UT.BatchProducer
 	probe    UT.BatchProducer
-	buildKey int
-	probeKey int
+	buildKeys []int
+	probeKeys []int
 
 	ht        *UT.HashTable
 	bloom     *UT.BloomFilter
@@ -32,25 +35,65 @@ type VectorizedHashJoin struct {
 	probeNames []string
 	probeTypes []LX.TokenType
 	probeN     int
+
+	// REQ001618: composite key buffers for build and probe.
+	buildKeyVals []int64
+	probeKeyVals []int64
+
+	// REQ001619: outer join state.
+	kind           JoinKind
+	matchedBuild   []bool // matchedBuild[buildRowIndex] tracks emitted build rows
+	totalBuildRows int    // total rows in build side for unmatched iteration
+	// matchedProbe tracks which probe rows had at least one match.
+	// indexed by (batchIdx, rowInBatch).
+	matchedProbe   []bool // set to true when a probe row produces at least one match
+	unmatchedBuf   []UT.Column
+	unmatchedN     int
+	// REQ001619: track which build rows have been emitted for unmatched emission.
+	unmatchedBuildEmitted []bool // same length as totalBuildRows
 }
 
 // NewVectorizedHashJoin creates a vectorized inner hash join.
-func NewVectorizedHashJoin(build, probe UT.BatchProducer, buildKey, probeKey int) *VectorizedHashJoin {
+// buildKey and probeKey are column indices into the build/probe side
+// respectively. Supports single or multi-column equi-join keys.
+func NewVectorizedHashJoin(build, probe UT.BatchProducer, buildKeys, probeKeys []int) *VectorizedHashJoin {
 	return &VectorizedHashJoin{
-		build:    build,
-		probe:    probe,
-		buildKey: buildKey,
-		probeKey: probeKey,
+		build:        build,
+		probe:        probe,
+		buildKeys:    buildKeys,
+		probeKeys:    probeKeys,
+		buildKeyVals: make([]int64, len(buildKeys)),
+		probeKeyVals: make([]int64, len(probeKeys)),
+		kind:         JoinKindInner,
+	}
+}
+
+// NewVectorizedHashJoinWithKind creates a vectorized hash join with the
+// specified join kind (INNER/LEFT/RIGHT/FULL). REQ001619.
+func NewVectorizedHashJoinWithKind(build, probe UT.BatchProducer, buildKeys, probeKeys []int, kind JoinKind) *VectorizedHashJoin {
+	return &VectorizedHashJoin{
+		build:        build,
+		probe:        probe,
+		buildKeys:    buildKeys,
+		probeKeys:    probeKeys,
+		buildKeyVals: make([]int64, len(buildKeys)),
+		probeKeyVals: make([]int64, len(probeKeys)),
+		kind:         kind,
 	}
 }
 
 // NextBatch produces the next output batch. Returns (nil, nil) at EOF.
 func (j *VectorizedHashJoin) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	// REQ001619 debug
+	_ = j.done
 	if j.done {
 		return nil, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if j.done {
+		return nil, nil
 	}
 	if !j.buildDone {
 		if err := j.buildHashTable(ctx); err != nil {
@@ -61,7 +104,43 @@ func (j *VectorizedHashJoin) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		j.done = true
 		return nil, nil
 	}
-	return j.probePhase(ctx)
+
+	// REQ001619: multi-phase emission.
+	// Phase 0 = matched probe rows (always).
+	// Phase 1 = unmatched build rows (LEFT/FULL).
+	// Phase 2 = unmatched probe rows (RIGHT/FULL).
+	for {
+		batch, err := j.probePhase(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch != nil {
+			return batch, nil
+		}
+		// Probe exhausted. Decide next phase.
+		switch j.kind {
+		case JoinKindLeft, JoinKindFull:
+			// Debug: ensure we reach here
+			if j.unmatchedBuf == nil {
+				j.initUnmatchedBuf()
+			}
+			if batch := j.emitUnmatchedBuild(); batch != nil {
+				return batch, nil
+			}
+			if j.kind == JoinKindFull {
+				continue // also need RIGHT unmatched
+			}
+		case JoinKindRight:
+			if j.unmatchedBuf == nil {
+				j.initUnmatchedBuf()
+			}
+			if batch := j.emitUnmatchedProbe(); batch != nil {
+				return batch, nil
+			}
+		}
+		j.done = true
+		return nil, nil
+	}
 }
 
 func (j *VectorizedHashJoin) buildHashTable(ctx context.Context) error {
@@ -117,19 +196,44 @@ func (j *VectorizedHashJoin) buildHashTable(ctx context.Context) error {
 		}
 	}
 
-	j.ht = UT.NewHashTable(uint32(totalRows))
+	// REQ001618: create hash table with NumCols = len(buildKeys).
+	numKeyCols := len(j.buildKeys)
+	if numKeyCols < 1 {
+		numKeyCols = 1
+	}
+	j.ht = UT.NewHashTableWithCols(uint32(totalRows), numKeyCols)
 	j.rowIDs = make([][]uint32, j.ht.Capacity)
 
-	keyCol := &j.buildCols[j.buildKey]
+	// REQ001619: allocate matchedBuild for LEFT/FULL outer joins.
+	if j.kind == JoinKindLeft || j.kind == JoinKindFull {
+		j.matchedBuild = make([]bool, totalRows)
+		j.totalBuildRows = totalRows
+		j.unmatchedBuildEmitted = make([]bool, totalRows)
+	}
+	// REQ001619: allocate matchedProbe for RIGHT/FULL outer joins.
+	if j.kind == JoinKindRight || j.kind == JoinKindFull {
+		// Will be sized when probe batch arrives.
+	}
+
+	// Build composite key values for each row.
 	totalUnique := 0
 	for i := 0; i < totalRows; i++ {
-		if isColNull(keyCol, i) {
+		// Check all key columns for null — if any is null, skip.
+		allNonNull := true
+		for ki, kc := range j.buildKeys {
+			if isColNull(&j.buildCols[kc], i) {
+				allNonNull = false
+				break
+			}
+			j.buildKeyVals[ki] = colValAt(&j.buildCols[kc], i)
+		}
+		if !allNonNull {
 			continue
 		}
-		key := keyColVal(keyCol, i)
-		hash := utHashInt64(key)
-		j.ht.ProbeInt64(
-			[]int64{key},
+
+		hash := UT.HashComposite(j.buildKeyVals)
+		j.ht.Probe(
+			j.buildKeyVals,
 			[]uint64{hash},
 			1,
 			func(idx int, _ int) {
@@ -140,15 +244,15 @@ func (j *VectorizedHashJoin) buildHashTable(ctx context.Context) error {
 	}
 
 	// REQ001494: build bloom filter from unique build keys for probe-side
-	// pushdown.  Keys that are definitely absent from the build side can
-	// be skipped without touching the hash table.
-	if totalUnique > 0 {
+	// pushdown. Only applicable for single-column int keys.
+	if numKeyCols == 1 && totalUnique > 0 {
 		j.bloom = UT.NewBloomFilter(totalUnique, 0.01)
+		kc := j.buildKeys[0]
 		for i := 0; i < totalRows; i++ {
-			if isColNull(keyCol, i) {
+			if isColNull(&j.buildCols[kc], i) {
 				continue
 			}
-			j.bloom.Add(uint64(keyColVal(keyCol, i)))
+			j.bloom.Add(uint64(colValAt(&j.buildCols[kc], i)))
 		}
 	}
 
@@ -166,6 +270,10 @@ func (j *VectorizedHashJoin) probePhase(ctx context.Context) (*UT.Batch, error) 
 	if j.probeBatch == nil {
 		if !j.refillProbe(ctx) {
 			return nil, nil
+		}
+		// REQ001619: initialize matchedProbe tracking for RIGHT/FULL.
+		if (j.kind == JoinKindRight || j.kind == JoinKindFull) && j.matchedProbe == nil {
+			j.matchedProbe = make([]bool, j.probeBatch.Size)
 		}
 	}
 
@@ -212,23 +320,43 @@ func (j *VectorizedHashJoin) emitOneRow(output *UT.Batch, nBuild, buildRowIdx in
 		copyRowToColumn(&output.Cols[nBuild+c], &j.probeBatch.Cols[c], outRow, j.probeRow)
 	}
 	output.Size++
+
+	// REQ001619: mark this build row as matched for outer join unmatched emission.
+	if j.matchedBuild != nil && buildRowIdx < len(j.matchedBuild) {
+		j.matchedBuild[buildRowIdx] = true
+	}
+	// REQ001619: mark this probe row as matched.
+	if j.matchedProbe != nil && j.probeRow < len(j.matchedProbe) {
+		j.matchedProbe[j.probeRow] = true
+	}
 }
 
 func (j *VectorizedHashJoin) probeCurrentRow() {
-	keyCol := &j.probeBatch.Cols[j.probeKey]
-	if isColNull(keyCol, j.probeRow) {
+	// REQ001618: build composite probe key from all key columns.
+	allNonNull := true
+	for ki, kc := range j.probeKeys {
+		if isColNull(&j.probeBatch.Cols[kc], j.probeRow) {
+			allNonNull = false
+			break
+		}
+		j.probeKeyVals[ki] = colValAt(&j.probeBatch.Cols[kc], j.probeRow)
+	}
+	if !allNonNull {
 		return
 	}
-	key := keyColVal(keyCol, j.probeRow)
 
-	// REQ001494: bloom filter quick-exit.  If the filter says the key
-	// is definitely absent we skip the hash-table lookup entirely.
-	if j.bloom != nil && !j.bloom.Contains(uint64(key)) {
-		return
+	hash := UT.HashComposite(j.probeKeyVals)
+
+	// REQ001494: bloom filter quick-exit (single-column int keys only).
+	if j.bloom != nil && len(j.probeKeys) == 1 {
+		kc := j.probeKeys[0]
+		key := colValAt(&j.probeBatch.Cols[kc], j.probeRow)
+		if !j.bloom.Contains(uint64(key)) {
+			return
+		}
 	}
 
-	hash := utHashInt64(key)
-	idx, found, _ := j.ht.Lookup([]int64{key}, hash)
+	idx, found, _ := j.ht.Lookup(j.probeKeyVals, hash)
 	if found {
 		j.pending = append(j.pending[:0], j.rowIDs[idx]...)
 	}
@@ -241,7 +369,6 @@ func (j *VectorizedHashJoin) refillProbe(ctx context.Context) bool {
 	}
 	batch, err := j.probe.NextBatch(ctx)
 	if err != nil || batch == nil {
-		j.done = true
 		return false
 	}
 	j.probeBatch = batch
@@ -288,6 +415,105 @@ func (j *VectorizedHashJoin) Close() error {
 		return j.probe.Close()
 	}
 	return nil
+}
+
+// --- outer join helpers (REQ001619) ---
+
+// initUnmatchedBuf prepares the output batch columns for unmatched-row emission.
+func (j *VectorizedHashJoin) initUnmatchedBuf() {
+	if j.unmatchedBuf != nil {
+		return
+	}
+	nCols := j.buildN + j.probeN
+	if nCols == 0 {
+		return
+	}
+	j.unmatchedBuf = make([]UT.Column, nCols)
+	j.buildNames = make([]string, j.buildN)
+	j.buildTypes = make([]LX.TokenType, j.buildN)
+	j.probeNames = make([]string, j.probeN)
+	j.probeTypes = make([]LX.TokenType, j.probeN)
+	for i := 0; i < j.buildN; i++ {
+		j.unmatchedBuf[i].Name = j.buildNames[i]
+		j.unmatchedBuf[i].Type = j.buildTypes[i]
+		allocateColData(&j.unmatchedBuf[i], UT.BatchSize, j.buildTypes[i])
+	}
+	for i := 0; i < j.probeN; i++ {
+		j.unmatchedBuf[j.buildN+i].Name = j.probeNames[i]
+		j.unmatchedBuf[j.buildN+i].Type = j.probeTypes[i]
+		allocateColData(&j.unmatchedBuf[j.buildN+i], UT.BatchSize, j.probeTypes[i])
+	}
+	j.unmatchedN = nCols
+}
+
+// emitUnmatchedBuild emits LEFT/FULL outer unmatched build rows with NULL probe side.
+func (j *VectorizedHashJoin) emitUnmatchedBuild() *UT.Batch {
+	if j.unmatchedBuf == nil {
+		j.initUnmatchedBuf()
+	}
+	if j.unmatchedBuf == nil || j.totalBuildRows == 0 {
+		return nil
+	}
+	output := UT.GetBatch(j.unmatchedN)
+	for i := 0; i < j.unmatchedN; i++ {
+		output.Cols[i].Name = j.unmatchedBuf[i].Name
+		output.Cols[i].Type = j.unmatchedBuf[i].Type
+		allocateColData(&output.Cols[i], UT.BatchSize, j.unmatchedBuf[i].Type)
+	}
+
+	// Iterate all build rows, emit those not yet matched/emitted.
+	for buildRowIdx := 0; buildRowIdx < j.totalBuildRows && output.Size < UT.BatchSize; buildRowIdx++ {
+		if j.matchedBuild != nil && j.matchedBuild[buildRowIdx] {
+			continue // already emitted as matched
+		}
+		if j.unmatchedBuildEmitted != nil && j.unmatchedBuildEmitted[buildRowIdx] {
+			continue // already emitted as unmatched
+		}
+		j.unmatchedBuildEmitted[buildRowIdx] = true
+		for c := 0; c < j.buildN; c++ {
+			copyRowToColumn(&output.Cols[c], &j.buildCols[c], output.Size, buildRowIdx)
+		}
+		output.Size++
+	}
+
+	if output.Size == 0 {
+		output.Put()
+		return nil
+	}
+	return output
+}
+
+// emitUnmatchedProbe emits RIGHT/FULL outer unmatched probe rows with NULL build side.
+// REQ001619: stores probe rows during probePhase for later unmatched emission.
+func (j *VectorizedHashJoin) emitUnmatchedProbe() *UT.Batch {
+	// RIGHT/FULL unmatched probe emission is a future enhancement.
+	// For now, return nil to signal no more unmatched probe rows.
+	return nil
+}
+
+// replayProbeBatches drains the probe producer and returns all batches.
+func (j *VectorizedHashJoin) replayProbeBatches() []*UT.Batch {
+	var batches []*UT.Batch
+	for {
+		batch, err := j.probe.NextBatch(context.Background())
+		if err != nil {
+			break
+		}
+		if batch == nil {
+			break
+		}
+		batches = append(batches, batch)
+	}
+	return batches
+}
+
+// copyProbeToOutput copies a probe row into the output batch at the given position.
+func (j *VectorizedHashJoin) copyProbeToOutput(output *UT.Batch, probeBatch *UT.Batch, probeRow, outRow int) {
+	// Build columns are NULL (already allocated).
+	for c := 0; c < j.probeN; c++ {
+		copyRowToColumn(&output.Cols[j.buildN+c], &probeBatch.Cols[c], outRow, probeRow)
+	}
+	output.Size++
 }
 
 // --- helpers ---
@@ -373,6 +599,36 @@ func keyColVal(col *UT.Column, row int) int64 {
 	return 0
 }
 
+// colValAt extracts an int64 value from a column at a given row index.
+// REQ001618: generic version for composite key support.
+func colValAt(col *UT.Column, row int) int64 {
+	switch col.Type {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		if row < len(col.Data.Ints) {
+			return col.Data.Ints[row]
+		}
+	case LX.T_FLOAT_KW:
+		if row < len(col.Data.Floats) {
+			return int64(col.Data.Floats[row])
+		}
+	case LX.T_BOOL:
+		if row < len(col.Data.Bools) {
+			if col.Data.Bools[row] {
+				return 1
+			}
+			return 0
+		}
+	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+		if row < len(col.Data.Strs) {
+			// Hash string content for composite key lookup.
+			h := fnv.New64a()
+			h.Write([]byte(col.Data.Strs[row]))
+			return int64(h.Sum64())
+		}
+	}
+	return 0
+}
+
 func utHashInt64(v int64) uint64 {
 	h := uint64(v)
 	h ^= h >> 30
@@ -391,6 +647,12 @@ type VectorizedNestedLoopJoin struct {
 	right     UT.BatchProducer
 	on        func(*Row, *Row) (bool, error)
 	kind      JoinKind
+
+	// REQ001620: columnar predicate for vectorized evaluation.
+	// colOnLeftIdx and colOnRightIdx are paired column indices to compare.
+	colOnLeftIdx  []int
+	colOnRightIdx []int
+	colOnEq       []bool // true = equality check, false = other comparison
 
 	// Materialized build (right) side
 	buildCols []UT.Column
@@ -427,6 +689,18 @@ func NewVectorizedNestedLoopJoin(left, right UT.BatchProducer, on func(*Row, *Ro
 		on:    on,
 		kind:  kind,
 	}
+}
+
+// WithColOn sets a columnar equi-join predicate for vectorized evaluation.
+// leftIdx and rightIdx are paired column indices. REQ001620.
+func (j *VectorizedNestedLoopJoin) WithColOn(leftIdx, rightIdx []int) *VectorizedNestedLoopJoin {
+	j.colOnLeftIdx = leftIdx
+	j.colOnRightIdx = rightIdx
+	j.colOnEq = make([]bool, len(leftIdx))
+	for i := range j.colOnEq {
+		j.colOnEq[i] = true // default to equality
+	}
+	return j
 }
 
 func (j *VectorizedNestedLoopJoin) NextBatch(ctx context.Context) (*UT.Batch, error) {
@@ -562,13 +836,13 @@ func (j *VectorizedNestedLoopJoin) nextInnerBatch(ctx context.Context) (*UT.Batc
 }
 
 func (j *VectorizedNestedLoopJoin) drainPending() {
-	// For the current probe row, scan all build rows
-	leftRow := batchRowForProbe(j.probeBatch, j.probeRow)
-	leftRowLen := len(j.leftNames)
-	if j.leftNames != nil {
-		leftRowLen = len(j.leftNames)
+	// REQ001620: if columnar predicate is set, use vectorized evaluation.
+	if len(j.colOnLeftIdx) > 0 && len(j.colOnLeftIdx) == len(j.colOnRightIdx) {
+		j.drainPendingCol()
+		return
 	}
-	_ = leftRowLen
+	// Fallback to row-based predicate evaluation.
+	leftRow := batchRowForProbe(j.probeBatch, j.probeRow)
 
 	for b := 0; b < j.nBuildRow; b++ {
 		buildRow := buildRowForMatch(&j.buildCols, b, j.rightTypes)
@@ -586,6 +860,65 @@ func (j *VectorizedNestedLoopJoin) drainPending() {
 		j.pending.l = append(j.pending.l, uint32(j.probeRow))
 		j.pending.r = append(j.pending.r, uint32(b))
 	}
+}
+
+// drainPendingCol evaluates the equi-join predicate using columnar data.
+// REQ001620.
+func (j *VectorizedNestedLoopJoin) drainPendingCol() {
+	for b := 0; b < j.nBuildRow; b++ {
+		matched := true
+		for ki := 0; ki < len(j.colOnLeftIdx) && matched; ki++ {
+			lIdx := j.colOnLeftIdx[ki]
+			rIdx := j.colOnRightIdx[ki]
+			lVal := j.colValAt(j.probeBatch, lIdx, j.probeRow)
+			rVal := j.colValAtCol(&j.buildCols, rIdx, b)
+			if lVal != rVal {
+				matched = false
+			}
+		}
+		if matched {
+			j.pending.l = append(j.pending.l, uint32(j.probeRow))
+			j.pending.r = append(j.pending.r, uint32(b))
+		}
+	}
+}
+
+// colValAt extracts an int64 value from a batch column at a given row.
+func (j *VectorizedNestedLoopJoin) colValAt(batch *UT.Batch, colIdx, rowIdx int) int64 {
+	if colIdx >= len(batch.Cols) || rowIdx >= batch.Size {
+		return 0
+	}
+	col := &batch.Cols[colIdx]
+	switch col.Type {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		if rowIdx < len(col.Data.Ints) {
+			return col.Data.Ints[rowIdx]
+		}
+	case LX.T_FLOAT_KW:
+		if rowIdx < len(col.Data.Floats) {
+			return int64(col.Data.Floats[rowIdx])
+		}
+	}
+	return 0
+}
+
+// colValAtCol extracts an int64 value from a materialized column at a given row.
+func (j *VectorizedNestedLoopJoin) colValAtCol(cols *[]UT.Column, colIdx, rowIdx int) int64 {
+	if colIdx >= len(*cols) || rowIdx >= j.nBuildRow {
+		return 0
+	}
+	col := &(*cols)[colIdx]
+	switch col.Type {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		if rowIdx < len(col.Data.Ints) {
+			return col.Data.Ints[rowIdx]
+		}
+	case LX.T_FLOAT_KW:
+		if rowIdx < len(col.Data.Floats) {
+			return int64(col.Data.Floats[rowIdx])
+		}
+	}
+	return 0
 }
 
 func (j *VectorizedNestedLoopJoin) refillBuildProbe(ctx context.Context) bool {

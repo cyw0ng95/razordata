@@ -10,15 +10,19 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
-func TestTryVectorizePlan_Ineligible(t *testing.T) {
-	// HashJoin with multi-column keys is NOT eligible.
+func TestTryVectorizePlan_MultiKeyJoin(t *testing.T) {
+	// REQ001618: HashJoin with multi-column keys IS now eligible.
 	left := OP.NewSeqScan("t1")
 	right := OP.NewSeqScan("t2")
 	hj := OP.NewHashJoin(left, right, "t1", "t2", []string{"a", "b"}, []string{"a", "b"}, 0)
 	result := tryVectorizePlan(hj)
-	if result != hj {
-		t.Fatal("expected original HashJoin root returned unchanged for multi-key join")
+	if result == hj {
+		t.Fatal("expected vectorized plan for multi-key join, got original HashJoin")
 	}
+	if _, ok := result.(*OP.HashJoin); ok {
+		t.Fatal("expected vectorized plan, not original HashJoin")
+	}
+	t.Logf("Multi-key HashJoin result = %T", result)
 }
 
 func TestTryVectorizePlan_HashJoin(t *testing.T) {

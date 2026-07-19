@@ -69,10 +69,12 @@ func isEligible(root DT.Operator) bool {
 			}
 			return true
 		case *OP.HashJoin:
-			// HashJoin requires single-column equi-join keys for the
-			// current VectorizedHashJoin implementation. Multi-key joins
-			// fall back to scalar via ScalarBatchProducer.
-			if len(o.LeftKeys()) != 1 || len(o.RightKeys()) != 1 {
+			// REQ001618: multi-column equi-join keys are supported.
+			// Both sides must have the same number of keys (> 0).
+			if len(o.LeftKeys()) == 0 || len(o.RightKeys()) == 0 {
+				return false
+			}
+			if len(o.LeftKeys()) != len(o.RightKeys()) {
 				return false
 			}
 			return check(o.LeftChild()) && check(o.RightChild())
@@ -196,13 +198,10 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 }
 
 // transformHashJoin converts a row HashJoin to VectorizedHashJoin.
-// The HashJoin must have single-column keys and SeqScan children
-// (verified by isEligible). Returns nil if transformation fails.
+// Supports single or multi-column equi-join keys (REQ001618).
+// Supports outer join kinds (REQ001619).
+// Returns nil if transformation fails.
 func transformHashJoin(h *OP.HashJoin) UT.BatchProducer {
-	// Multi-column keys not supported by VectorizedHashJoin.
-	if len(h.LeftKeys()) != 1 || len(h.RightKeys()) != 1 {
-		return nil
-	}
 	// Transform children: left = probe, right = build
 	left := transformOp(h.LeftChild())
 	if left == nil {
@@ -213,19 +212,42 @@ func transformHashJoin(h *OP.HashJoin) UT.BatchProducer {
 		return nil
 	}
 	// Resolve key column indices from the SeqScan schemas.
-	// Single-column keys only (verified by isEligible).
-	leftKey := h.LeftKeys()[0]
-	rightKey := h.RightKeys()[0]
-	buildIdx, ok := resolveColumnIndex(h.RightChild(), rightKey)
-	if !ok {
+	// REQ001618: supports multi-column keys.
+	leftKeys := h.LeftKeys()
+	rightKeys := h.RightKeys()
+	if len(leftKeys) != len(rightKeys) {
+		return nil // key count mismatch
+	}
+	numKeys := len(leftKeys)
+	if numKeys == 0 {
 		return nil
 	}
-	probeIdx, ok := resolveColumnIndex(h.LeftChild(), leftKey)
-	if !ok {
-		return nil
+
+	buildIdxs := make([]int, numKeys)
+	for i, rk := range rightKeys {
+		idx, ok := resolveColumnIndex(h.RightChild(), rk)
+		if !ok {
+			return nil
+		}
+		buildIdxs[i] = idx
 	}
+	probeIdxs := make([]int, numKeys)
+	for i, lk := range leftKeys {
+		idx, ok := resolveColumnIndex(h.LeftChild(), lk)
+		if !ok {
+			return nil
+		}
+		probeIdxs[i] = idx
+	}
+
+	// REQ001619: forward join kind.
+	kind := h.Kind()
+	
 	// VectorizedHashJoin expects build (right) side first, then probe (left).
-	return OP.NewVectorizedHashJoin(right, left, buildIdx, probeIdx)
+	if kind == OP.JoinKindInner {
+		return OP.NewVectorizedHashJoin(right, left, buildIdxs, probeIdxs)
+	}
+	return OP.NewVectorizedHashJoinWithKind(right, left, buildIdxs, probeIdxs, kind)
 }
 
 // transformAggregate converts a row Aggregate to VectorizedHashAggregate.

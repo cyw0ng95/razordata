@@ -34,7 +34,7 @@ func TestVectorizedHashJoin_BloomFilterPushdown(t *testing.T) {
 		batches: []*UT.Batch{makeJoinProbeBatch(probeKeys)},
 	}
 
-	j := NewVectorizedHashJoin(build, probe, 0, 0)
+	j := NewVectorizedHashJoin(build, probe, []int{0}, []int{0})
 	defer j.Close()
 
 	ctx := context.Background()
@@ -81,7 +81,7 @@ func TestVectorizedHashJoin_BloomFilter_AllMiss(t *testing.T) {
 		batches: []*UT.Batch{makeJoinProbeBatch([]int64{1, 2, 3})},
 	}
 
-	j := NewVectorizedHashJoin(build, probe, 0, 0)
+	j := NewVectorizedHashJoin(build, probe, []int{0}, []int{0})
 	defer j.Close()
 
 	ctx := context.Background()
@@ -106,7 +106,7 @@ func TestVectorizedHashJoin_BloomFilter_NegativeKeys(t *testing.T) {
 		batches: []*UT.Batch{makeJoinProbeBatch([]int64{-3, 0, 7})},
 	}
 
-	j := NewVectorizedHashJoin(build, probe, 0, 0)
+	j := NewVectorizedHashJoin(build, probe, []int{0}, []int{0})
 	defer j.Close()
 
 	ctx := context.Background()
@@ -156,7 +156,7 @@ func TestVectorizedHashJoin_BloomFilter_FloatKeys(t *testing.T) {
 		batches: []*UT.Batch{makeFloatProbeBatch([]float64{2.5, 9.9, 1.5})},
 	}
 
-	j := NewVectorizedHashJoin(build, probe, 0, 0)
+	j := NewVectorizedHashJoin(build, probe, []int{0}, []int{0})
 	defer j.Close()
 
 	ctx := context.Background()
