@@ -2,6 +2,10 @@ package EV
 
 import (
 	"fmt"
+	"hash"
+	"hash/fnv"
+	"math"
+	"reflect"
 	"slices"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -1047,6 +1051,10 @@ func EvalBatchExpr(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
 	}
 }
 
+// REQ001610: per-session cache for correlated subquery results.
+// Uses the existing correlatedSubqueryCache from eval.go (LRU, 256 entries).
+// Key is a string combining subquery pointer and outer-row correlated column hash.
+
 // evalSubqueryBatchExpr evaluates a scalar subquery over a batch,
 // dispatching on correlation status. Non-correlated subqueries
 // short-circuit via globalSubqueryCache (REQ001460):
@@ -1056,10 +1064,8 @@ func EvalBatchExpr(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
 //     minimal Row carrying the batch's ExecCtx (for the planner),
 //     then broadcast.
 //
-// Correlated subqueries fall through to evalRowFallbackColumn which
-// invokes the row-at-a-time path; the Row reconstructed by
-// batchToRow now carries ExecCtx, so evalScalarSubquery can resolve
-// the planner via getSubqueryPlanner.
+// Correlated subqueries use per-row evaluation with a local cache
+// keyed by the outer row's correlated column values (REQ001610).
 func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any) UT.Column {
 	if subq == nil {
 		return fillNullColumn(batch)
@@ -1068,10 +1074,9 @@ func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any)
 	if n == 0 {
 		return UT.Column{Type: LX.T_NULL}
 	}
+	corrCols := cachedCorrelatedCols(subq)
 	// Non-correlated subqueries: same result for every row.
-	// Use the cheap "no correlated columns" check first.
-	if _, ok := subq.Subquery.(*PS.Select); ok && len(cachedCorrelatedCols(subq)) == 0 {
-		// Try cache first; same key as the scalar path.
+	if len(corrCols) == 0 {
 		key := cachedSubqueryKey(subq)
 		if cached, ok := globalSubqueryCache.Load(key); ok {
 			if v, ok := cached.(Value); ok {
@@ -1079,17 +1084,70 @@ func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any)
 			}
 			return evalAnyLiteral(cached, batch)
 		}
-		// Cache miss: evaluate once via the existing scalar path.
-		// A minimal Row carrying ExecCtx gives getSubqueryPlanner
-		// the planner needed to execute the subquery.
 		probeRow := &Row{ExecCtx: batch.ExecCtx}
 		v, err := evalScalarSubquery(subq, probeRow, params)
 		if err == nil {
 			return broadcastValueColumn(batch, v)
 		}
-		// Fall through to row fallback for safety on error.
+		return evalRowFallbackColumn(subq, batch, params)
 	}
-	return evalRowFallbackColumn(subq, batch, params)
+	// REQ001610: correlated subquery with per-row cache.
+	// Build result column by evaluating each row, caching results
+	// by the outer row's correlated column values.
+	subqPtr := uintptr(reflect.ValueOf(subq).Pointer())
+	var out UT.Column
+	allocated := false
+	for i := 0; i < n; i++ {
+		phys := i
+		if batch.Sel != nil && i < len(batch.Sel) {
+			phys = int(batch.Sel[i])
+		}
+		row := batchToRow(batch, phys)
+		// Compute hash of correlated column values for cache key.
+		h := fnv.New64a()
+		for _, col := range corrCols {
+			for ci, name := range row.Cols {
+				if name == col {
+					if ci < len(row.Data) {
+						writeHashToFNV(h, row.Data[ci])
+					}
+					break
+				}
+			}
+		}
+		key := fmt.Sprintf("%x:%x", subqPtr, h.Sum64())
+		if cached, ok := correlatedSubqueryCache.Get(key); ok {
+			v := cached
+			if !allocated {
+				out.Type = tokenTypeFromValue(v)
+				allocateColumnData(&out, batch.Size)
+				allocated = true
+			}
+			writeValueToColumnData(&out, i, v)
+			continue
+		}
+		v, err := evalScalarSubquery(subq, row, params)
+		if err != nil {
+			if !allocated {
+				out.Type = LX.T_NULL
+				out.Data = UT.ColumnData{}
+				allocated = true
+			}
+			if out.Nulls == nil {
+				out.Nulls = make([]bool, batch.Size)
+			}
+			out.Nulls[i] = true
+			continue
+		}
+		correlatedSubqueryCache.Put(key, v)
+		if !allocated {
+			out.Type = tokenTypeFromValue(v)
+			allocateColumnData(&out, batch.Size)
+			allocated = true
+		}
+		writeValueToColumnData(&out, i, v)
+	}
+	return out
 }
 
 // broadcastValueColumn creates a constant column filled with v for
@@ -1897,4 +1955,50 @@ func evalInListBatch(col UT.Column, list []any, n int) []uint16 {
 		return sel
 	}
 	return nil
+}
+
+// writeHashToFNV writes a pl.Value to an fnv hash for use as a cache key.
+// REQ001610.
+func writeHashToFNV(h hash.Hash64, v Value) {
+	if h == nil {
+		return
+	}
+	switch v.Kind {
+	case KindInt:
+		var b [8]byte
+		u := uint64(v.I64)
+		b[0] = byte(u)
+		b[1] = byte(u >> 8)
+		b[2] = byte(u >> 16)
+		b[3] = byte(u >> 24)
+		b[4] = byte(u >> 32)
+		b[5] = byte(u >> 40)
+		b[6] = byte(u >> 48)
+		b[7] = byte(u >> 56)
+		h.Write(b[:])
+	case KindFloat:
+		var b [8]byte
+		u := math.Float64bits(v.F64)
+		b[0] = byte(u)
+		b[1] = byte(u >> 8)
+		b[2] = byte(u >> 16)
+		b[3] = byte(u >> 24)
+		b[4] = byte(u >> 32)
+		b[5] = byte(u >> 40)
+		b[6] = byte(u >> 48)
+		b[7] = byte(u >> 56)
+		h.Write(b[:])
+	case KindText:
+		h.Write([]byte(v.S))
+	case KindBlob:
+		h.Write(v.B)
+	case KindBool:
+		if v.Bo {
+			h.Write([]byte{1})
+		} else {
+			h.Write([]byte{0})
+		}
+	default:
+		h.Write([]byte{0xff})
+	}
 }
