@@ -1687,7 +1687,6 @@ func rowToBatch(row *Row) *UT.Batch {
 			case KindBlob:
 				b.AppendRow(i, LX.T_TEXT, string(v.B), false)
 			default:
-				// KindNull: skip append or mark null
 				b.AppendRow(i, LX.T_NULL, nil, true)
 			}
 		} else {
@@ -1702,6 +1701,51 @@ func rowToBatch(row *Row) *UT.Batch {
 	}
 	b.SetColMap(cm)
 	b.Pooled = false // synthetic batch, don't return to pool
+	return b
+}
+
+// RowsToBatch converts a slice of rows into a columnar batch.
+// REQ001585: used by UPDATE SET evaluation to evaluate expressions
+// once per chunk via EvalBatchExpr instead of per-row EvalValue.
+func RowsToBatch(rows []*Row) *UT.Batch {
+	if len(rows) == 0 {
+		return nil
+	}
+	nCols := len(rows[0].Cols)
+	b := UT.GetBatch(nCols)
+	for i, name := range rows[0].Cols {
+		b.Cols[i].Name = name
+	}
+	for _, row := range rows {
+		for i := 0; i < nCols; i++ {
+			if i < len(row.Data) {
+				v := row.Data[i]
+				switch v.Kind {
+				case KindInt:
+					b.AppendRow(i, LX.T_INT_KW, v.I64, false)
+				case KindFloat:
+					b.AppendRow(i, LX.T_FLOAT_KW, v.F64, false)
+				case KindText:
+					b.AppendRow(i, LX.T_TEXT, v.S, false)
+				case KindBool:
+					b.AppendRow(i, LX.T_BOOL, v.Bo, false)
+				case KindBlob:
+					b.AppendRow(i, LX.T_TEXT, string(v.B), false)
+				default:
+					b.AppendRow(i, LX.T_NULL, nil, true)
+				}
+			} else {
+				b.AppendRow(i, LX.T_NULL, nil, true)
+			}
+		}
+		b.AdvanceSize()
+	}
+	cm := make(map[string]int, nCols)
+	for i, name := range rows[0].Cols {
+		cm[name] = i
+	}
+	b.SetColMap(cm)
+	b.Pooled = false
 	return b
 }
 

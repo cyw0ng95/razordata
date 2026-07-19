@@ -959,9 +959,52 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 	// during the chunk loop and consumed by firePendingTriggers below.
 	// The trigger lock (`triggerMu` inside FireTriggers) is acquired
 	// O(1) times per chunk instead of O(N) times per row.
+	// REQ001585: batch-evaluate SET expressions via EvalBatchExpr
+	// instead of per-row ApplyUpdate. Build a batch from oldBuf,
+	// evaluate each SET expression once, and apply results to newBuf.
 	flushChunk := func() error {
 		if len(oldBuf) == 0 {
 			return nil
+		}
+		// Batch evaluate SET expressions.
+		if len(u.set) > 0 && u.setColIdx != nil {
+			oldRows := make([]*DT.Row, len(oldBuf))
+			for i := range oldBuf {
+				oldRows[i] = &oldBuf[i]
+			}
+			batch := EV.RowsToBatch(oldRows)
+			defer batch.Put()
+			nRows := batch.LogicalSize()
+			for si, p := range u.set {
+				col := EV.EvalBatchExpr(p.Val, batch, u.params)
+				ci := u.setColIdx[si]
+				if ci < 0 {
+					continue
+				}
+				for i := 0; i < nRows && i < len(newBuf); i++ {
+					v := UT.ToValue(col, i)
+					newBuf[i].Data[ci] = v
+				}
+			}
+		}
+		// Validate each new row.
+		for i := range newBuf {
+			row := &newBuf[i]
+			if r, err := FillDefaults(u.schema, *row); err != nil {
+				return err
+			} else {
+				*row = r
+			}
+			if err := ValidateRow(u.schema, *row); err != nil {
+				return err
+			}
+			if err := ValidateCheck(u.schema, *row); err != nil {
+				return err
+			}
+			noopLookup := func(cols []int, vals []any) (bool, error) { return false, nil }
+			if err := CheckUnique(u.schema, *row, nil, DT.Row{}, noopLookup); err != nil {
+				return err
+			}
 		}
 		keys, bufs, err := h.UpdateRowBatch(oldBuf, newBuf)
 		if err != nil {
@@ -995,24 +1038,8 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 			return DT.Row{}, err
 		}
 		oldRow := DT.ShallowCloneRow(row)
-		if err := ApplyUpdateFast(&row, u.set, u.params, u.setColIdx); err != nil {
-			return DT.Row{}, err
-		}
-		if row, err = FillDefaults(u.schema, row); err != nil {
-			return DT.Row{}, err
-		}
-		if err := ValidateRow(u.schema, row); err != nil {
-			return DT.Row{}, err
-		}
-		if err := ValidateCheck(u.schema, row); err != nil {
-			return DT.Row{}, err
-		}
-		// Engine-path unique: best-effort no-op (correct UNIQUE in the
-		// engine path requires a real index, deferred to REQ000045).
-		noopLookup := func(cols []int, vals []any) (bool, error) { return false, nil }
-		if err := CheckUnique(u.schema, row, nil, DT.Row{}, noopLookup); err != nil {
-			return DT.Row{}, err
-		}
+		// Deep-copy Data before ApplyUpdate mutates it in-place.
+		row.Data = append([]DT.Value(nil), row.Data...)
 		oldBuf = append(oldBuf, oldRow)
 		newBuf = append(newBuf, row)
 		u.rows++
@@ -1020,11 +1047,6 @@ func (u *Update) nextFromStore(ctx context.Context) (DT.Row, error) {
 			u.execCtx.LastChanges++
 			u.execCtx.TotalChanges++
 		}
-
-		// REQ001578: capture (oldRow, newRow) for deferred trigger
-		// firing after the chunk is durable. Previously fired
-		// fireUpdateTriggers here per row — see writers_dml.go
-		// history for the pre-batch path.
 		u.pendingUpdates = append(u.pendingUpdates, triggerEvent{oldRow: oldRow, newRow: row})
 
 		// Evaluate RETURNING expressions (REQ000518: expand *)
