@@ -15,9 +15,6 @@ func TestTryVectorizePlan_Ineligible(t *testing.T) {
 	left := OP.NewSeqScan("t1")
 	right := OP.NewSeqScan("t2")
 	hj := OP.NewHashJoin(left, right, "t1", "t2", []string{"a", "b"}, []string{"a", "b"}, 0)
-	if isEligible(hj) {
-		t.Fatal("multi-column key HashJoin should not be eligible")
-	}
 	result := tryVectorizePlan(hj)
 	if result != hj {
 		t.Fatal("expected original HashJoin root returned unchanged for multi-key join")

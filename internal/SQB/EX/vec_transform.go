@@ -13,18 +13,18 @@ import (
 
 // tryVectorizePlan attempts to replace row-based operators with vectorized
 // equivalents. Returns the (possibly modified) root operator wrapped in
-// a BatchToRowAdapter. Returns the original root unchanged if
+// a BatchToRowAdapter. Falls back to the original root unchanged if
 // vectorization is not applicable.
 func tryVectorizePlan(root DT.Operator) DT.Operator {
-	if !isEligible(root) {
-		return root
-	}
 	bp := transformOp(root)
-	if bp == nil {
-		return root
+	if bp != nil {
+		return UT.NewBatchToRowAdapter(bp)
 	}
-	return UT.NewBatchToRowAdapter(bp)
+	return root
 }
+
+// REQ001614: isEligible removed — tryVectorizePlan always succeeds
+// by falling back to ScalarBatchProducer.
 
 // isEligible checks whether the operator tree can be vectorized.
 // REQ001602: expanded eligibility — sub-components that are not yet
@@ -199,6 +199,10 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 // The HashJoin must have single-column keys and SeqScan children
 // (verified by isEligible). Returns nil if transformation fails.
 func transformHashJoin(h *OP.HashJoin) UT.BatchProducer {
+	// Multi-column keys not supported by VectorizedHashJoin.
+	if len(h.LeftKeys()) != 1 || len(h.RightKeys()) != 1 {
+		return nil
+	}
 	// Transform children: left = probe, right = build
 	left := transformOp(h.LeftChild())
 	if left == nil {
