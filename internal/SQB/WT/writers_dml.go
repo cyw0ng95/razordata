@@ -411,6 +411,32 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 	if i.schema != nil && nRows > 1 && nCols > 0 {
 		bigBuf = make([]DT.Value, nRows*nCols)
 	}
+	// REQ001589: batch INSERT rows into InsertRowBatch for amortised
+	// PK extraction, encoding, and store write. The batch is flushed
+	// when full or when conflict handling requires per-row insertion.
+	const insertChunkSize = 256
+	insertBuf := make([]DT.Row, 0, insertChunkSize)
+	flushInsertBuf := func() error {
+		if len(insertBuf) == 0 {
+			return nil
+		}
+		keys, bufs, err := h.InsertRowBatch(insertBuf)
+		if err != nil {
+			return err
+		}
+		if i.txWriter != nil {
+			for j, k := range keys {
+				i.txWriter.RecordWrite(k, bufs[j])
+			}
+		}
+		i.rows += int64(len(insertBuf))
+		if i.execCtx != nil {
+			i.execCtx.LastChanges += int64(len(insertBuf))
+			i.execCtx.TotalChanges += int64(len(insertBuf))
+		}
+		insertBuf = insertBuf[:0]
+		return nil
+	}
 	for ri, row := range iterValues {
 		var out DT.Row
 		var err error
@@ -444,10 +470,10 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 		}
 		if err := CheckUnique(i.schema, out, i.pending, DT.Row{}, lookupFn); err != nil {
 			if i.conflictAction == PS.ConflictActionReplace {
-				// Delete the existing row via the handle, then fall
-				// through to insert below. REQ000987: InsertRow already
-				// maintains indexes on success; the delete path uses
-				// the row from `out` for PK extraction.
+				// Flush pending batch before per-row delete+insert.
+				if err := flushInsertBuf(); err != nil {
+					return DT.Row{}, err
+				}
 				if _, derr := h.DeleteRow(out); derr == nil {
 					i.rows++
 					if i.execCtx != nil {
@@ -455,7 +481,6 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 						i.execCtx.TotalChanges++
 					}
 				}
-				// Fall through to insert below
 			} else if i.conflictAction == PS.ConflictActionIgnore {
 				continue
 			} else {
@@ -468,21 +493,12 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 				return DT.Row{}, err
 			}
 		}
-		// REQ000987: TableHandle.InsertRow handles PK extraction +
-		// REQ001128 rowid auto-fill + EncodeRow + Store.Insert +
-		// secondary index maintenance in one call, returning the
-		// (key, buf) pair so TxWriter can log it without re-encoding.
-		key, buf, err := h.InsertRow(out)
-		if err != nil {
-			return DT.Row{}, err
-		}
-		if i.txWriter != nil {
-			i.txWriter.RecordWrite(key, buf)
-		}
-		i.rows++
-		if i.execCtx != nil {
-			i.execCtx.LastChanges++
-			i.execCtx.TotalChanges++
+		// REQ001589: batch insert via InsertRowBatch instead of per-row InsertRow.
+		insertBuf = append(insertBuf, out)
+		if len(insertBuf) >= insertChunkSize {
+			if err := flushInsertBuf(); err != nil {
+				return DT.Row{}, err
+			}
 		}
 
 		// Fire AFTER INSERT triggers (REQ000316: incremental matview support)
@@ -497,7 +513,10 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 			}
 		}
 	}
-	_ = ctx
+	// Flush remaining batch.
+	if err := flushInsertBuf(); err != nil {
+		return DT.Row{}, err
+	}
 
 	// Return first RETURNING result if any
 	if len(i.resultRows) > 0 {
