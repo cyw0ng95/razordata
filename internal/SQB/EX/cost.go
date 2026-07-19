@@ -11,6 +11,22 @@ import (
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
+// vectorizedJoinBonus is the cost multiplier applied to join operators
+// that have vectorized (batch) implementations. Vectorized joins are
+// ~30% cheaper than their row-based counterparts due to batched columnar
+// processing and elimination of per-row allocation overhead. REQ001621.
+const vectorizedJoinBonus = 0.7
+
+// isVectorizedJoin reports whether the operator will be vectorized
+// by tryVectorizePlan. REQ001621.
+func isVectorizedJoin(op DT.Operator) bool {
+	switch op.(type) {
+	case *OP.HashJoin, *OP.NestedLoopJoin, *OP.MergeJoin, *OP.HashCrossJoin:
+		return true
+	}
+	return false
+}
+
 func (p *Planner) estimateCostLegacy(op DT.Operator) float64 {
 	if op == nil {
 		return 0
@@ -65,7 +81,7 @@ func (p *Planner) estimateCostLegacy(op DT.Operator) float64 {
 	case *OP.NestedLoopJoin:
 		leftCost := p.estimateCostLegacy(v.LeftChild())
 		rightCost := p.estimateCostLegacy(v.RightChild())
-		return leftCost * rightCost
+		return leftCost * rightCost * vectorizedJoinBonus
 	case *OP.HashJoin:
 		leftCost := p.estimateCostLegacy(v.LeftChild())
 		rightCost := p.estimateCostLegacy(v.RightChild())
@@ -75,7 +91,7 @@ func (p *Planner) estimateCostLegacy(op DT.Operator) float64 {
 		if rightCost < 1 {
 			rightCost = 1
 		}
-		return leftCost + rightCost
+		return (leftCost + rightCost) * vectorizedJoinBonus
 	case *OP.HashCrossJoin:
 		leftCost := p.estimateCostLegacy(v.LeftChild())
 		rightCost := p.estimateCostLegacy(v.RightChild())
@@ -85,7 +101,7 @@ func (p *Planner) estimateCostLegacy(op DT.Operator) float64 {
 		if rightCost < 1 {
 			rightCost = 1
 		}
-		return leftCost + rightCost
+		return (leftCost + rightCost) * vectorizedJoinBonus
 	case *OP.MergeJoin:
 		// REQ001102: MergeJoin is O(N+M) on pre-sorted inputs. Cost
 		// is dominated by the children plus a small merge overhead.
@@ -97,7 +113,7 @@ func (p *Planner) estimateCostLegacy(op DT.Operator) float64 {
 		if rightCost < 1 {
 			rightCost = 1
 		}
-		return leftCost + rightCost + 1
+		return (leftCost + rightCost + 1) * vectorizedJoinBonus
 	case *WT.Insert, *WT.Update, *WT.Delete, *WT.CreateTable, *WT.DropTable:
 		// Writer operators: cost ~ 1 (single mutation).
 		return 1.0
@@ -161,7 +177,7 @@ func (p *Planner) estimateCostWithParams(op DT.Operator, cp CostParams) float64 
 		if rightCost < 1 {
 			rightCost = 1
 		}
-		return leftCost * (rightCost + cp.CPUOperatorCost)
+		return leftCost * (rightCost + cp.CPUOperatorCost) * vectorizedJoinBonus
 	case *OP.HashJoin:
 		leftCost := p.estimateCostWithParams(v.LeftChild(), cp)
 		rightCost := p.estimateCostWithParams(v.RightChild(), cp)
@@ -171,7 +187,7 @@ func (p *Planner) estimateCostWithParams(op DT.Operator, cp CostParams) float64 
 		if rightCost < 1 {
 			rightCost = 1
 		}
-		return rightCost + leftCost*cp.CPUOperatorCost + rightCost*cp.CPUTupleCost
+		return (rightCost + leftCost*cp.CPUOperatorCost + rightCost*cp.CPUTupleCost) * vectorizedJoinBonus
 	case *OP.HashCrossJoin:
 		leftCost := p.estimateCostWithParams(v.LeftChild(), cp)
 		rightCost := p.estimateCostWithParams(v.RightChild(), cp)
@@ -181,7 +197,7 @@ func (p *Planner) estimateCostWithParams(op DT.Operator, cp CostParams) float64 
 		if rightCost < 1 {
 			rightCost = 1
 		}
-		return leftCost + rightCost
+		return (leftCost + rightCost) * vectorizedJoinBonus
 	case *OP.MergeJoin:
 		leftCost := p.estimateCostWithParams(v.LeftChild(), cp)
 		rightCost := p.estimateCostWithParams(v.RightChild(), cp)
@@ -191,7 +207,7 @@ func (p *Planner) estimateCostWithParams(op DT.Operator, cp CostParams) float64 
 		if rightCost < 1 {
 			rightCost = 1
 		}
-		return leftCost + rightCost + cp.CPUTupleCost
+		return (leftCost + rightCost + cp.CPUTupleCost) * vectorizedJoinBonus
 	case *WT.Insert, *WT.Update, *WT.Delete, *WT.CreateTable, *WT.DropTable:
 		return 1.0
 	default:

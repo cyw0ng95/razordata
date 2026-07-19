@@ -3,6 +3,7 @@ package OP
 import (
 	"context"
 	"hash/fnv"
+	"sync"
 
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -12,6 +13,7 @@ import (
 // streams using a hash table on the build-side key.
 // Supports single or multi-column equi-join keys (REQ001618).
 // Supports LEFT/RIGHT/FULL outer joins (REQ001619).
+// Supports parallel build phase (REQ001622).
 type VectorizedHashJoin struct {
 	build    UT.BatchProducer
 	probe    UT.BatchProducer
@@ -42,18 +44,18 @@ type VectorizedHashJoin struct {
 
 	// REQ001619: outer join state.
 	kind           JoinKind
-	matchedBuild   []bool // matchedBuild[buildRowIndex] tracks emitted build rows
-	totalBuildRows int    // total rows in build side for unmatched iteration
-	// matchedProbe tracks which probe rows had at least one match.
+	matchedBuild   []bool
+	totalBuildRows int
 	matchedProbe   []bool
 	unmatchedBuf   []UT.Column
 	unmatchedN     int
-	// REQ001629: stored probe batches for RIGHT/FULL unmatched emission.
 	probeBatches   []*UT.Batch
 	probeBatchIdx  int
-	// REQ001619: track which build rows have been emitted for unmatched emission.
 	unmatchedBuildEmitted []bool
-	matchedProbeRows      int // total probe rows seen across all batches
+	matchedProbeRows      int
+
+	// REQ001622: parallel build phase.
+	pool *UT.WorkerPool
 }
 
 // NewVectorizedHashJoin creates a vectorized inner hash join.
@@ -83,6 +85,13 @@ func NewVectorizedHashJoinWithKind(build, probe UT.BatchProducer, buildKeys, pro
 		probeKeyVals: make([]int64, len(probeKeys)),
 		kind:         kind,
 	}
+}
+
+// WithPool attaches a WorkerPool for parallel build phase.
+// REQ001622.
+func (j *VectorizedHashJoin) WithPool(pool *UT.WorkerPool) *VectorizedHashJoin {
+	j.pool = pool
+	return j
 }
 
 // NextBatch produces the next output batch. Returns (nil, nil) at EOF.
@@ -218,48 +227,216 @@ func (j *VectorizedHashJoin) buildHashTable(ctx context.Context) error {
 		// Will be sized when probe batch arrives.
 	}
 
-	// Build composite key values for each row.
-	totalUnique := 0
-	for i := 0; i < totalRows; i++ {
-		// Check all key columns for null — if any is null, skip.
-		allNonNull := true
-		for ki, kc := range j.buildKeys {
-			if isColNull(&j.buildCols[kc], i) {
-				allNonNull = false
-				break
-			}
-			j.buildKeyVals[ki] = colValAt(&j.buildCols[kc], i)
+// REQ001622: parallel build phase using WorkerPool.
+	if j.pool != nil && totalRows >= 512 {
+		if err := j.buildHashTableParallel(totalRows, numKeyCols); err != nil {
+			return err
 		}
-		if !allNonNull {
-			continue
-		}
-
-		hash := UT.HashComposite(j.buildKeyVals)
-		j.ht.Probe(
-			j.buildKeyVals,
-			[]uint64{hash},
-			1,
-			func(idx int, _ int) {
-				j.rowIDs[idx] = append(j.rowIDs[idx], uint32(i))
-			},
-		)
-		totalUnique++
-	}
-
-	// REQ001494: build bloom filter from unique build keys for probe-side
-	// pushdown. Only applicable for single-column int keys.
-	if numKeyCols == 1 && totalUnique > 0 {
-		j.bloom = UT.NewBloomFilter(totalUnique, 0.01)
-		kc := j.buildKeys[0]
+	} else {
+		// Build composite key values for each row (sequential).
+		j.ht = UT.NewHashTableWithCols(uint32(totalRows), numKeyCols)
+		j.rowIDs = make([][]uint32, j.ht.Capacity)
+		totalUnique := 0
 		for i := 0; i < totalRows; i++ {
-			if isColNull(&j.buildCols[kc], i) {
+			allNonNull := true
+			for ki, kc := range j.buildKeys {
+				if isColNull(&j.buildCols[kc], i) {
+					allNonNull = false
+					break
+				}
+				j.buildKeyVals[ki] = colValAt(&j.buildCols[kc], i)
+			}
+			if !allNonNull {
 				continue
 			}
-			j.bloom.Add(uint64(colValAt(&j.buildCols[kc], i)))
+			hash := UT.HashComposite(j.buildKeyVals)
+			j.ht.Probe(
+				j.buildKeyVals,
+				[]uint64{hash},
+				1,
+				func(idx int, _ int) {
+					j.rowIDs[idx] = append(j.rowIDs[idx], uint32(i))
+				},
+			)
+			totalUnique++
 		}
+		// REQ001494: build bloom filter.
+		if numKeyCols == 1 && totalUnique > 0 {
+			j.bloom = UT.NewBloomFilter(totalUnique, 0.01)
+			kc := j.buildKeys[0]
+			for i := 0; i < totalRows; i++ {
+				if isColNull(&j.buildCols[kc], i) {
+					continue
+				}
+				j.bloom.Add(uint64(colValAt(&j.buildCols[kc], i)))
+			}
+}
 	}
 
 	j.buildDone = true
+	return nil
+}
+
+// buildHashTableParallel builds the hash table in parallel using the
+// WorkerPool. Each worker processes a chunk of rows, builds a local
+// hash table and row IDs, then merges into the global structures.
+// REQ001622.
+func (j *VectorizedHashJoin) buildHashTableParallel(totalRows int, numKeyCols int) error {
+	// Create the global hash table.
+	j.ht = UT.NewHashTableWithCols(uint32(totalRows), numKeyCols)
+	j.rowIDs = make([][]uint32, j.ht.Capacity)
+
+	// Determine number of workers.
+	numWorkers := j.pool.Workers()
+	if numWorkers <= 0 {
+		numWorkers = 1
+	}
+	if numWorkers > totalRows/64 {
+		numWorkers = totalRows / 64
+		if numWorkers < 1 {
+			numWorkers = 1
+		}
+	}
+
+	type localResult struct {
+		ht      *UT.HashTable
+		rowIDs  [][]uint32
+		start   int
+		end     int
+		unique  int
+	}
+
+	chunkSize := (totalRows + numWorkers - 1) / numWorkers
+	results := make([]localResult, numWorkers)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for wi := 0; wi < numWorkers; wi++ {
+		start := wi * chunkSize
+		end := start + chunkSize
+		if end > totalRows {
+			end = totalRows
+		}
+		if start >= end {
+			results[wi] = localResult{start: start, end: end}
+			continue
+		}
+
+		wg.Add(1)
+		wIdx := wi
+		wStart := start
+		wEnd := end
+		_ = j.pool.TrySubmit(func() error {
+			defer wg.Done()
+			keyVals := make([]int64, numKeyCols)
+			local := localResult{
+				ht:     UT.NewHashTableWithCols(uint32(wEnd-wStart), numKeyCols),
+				rowIDs: make([][]uint32, UT.NewHashTableWithCols(uint32(wEnd-wStart), numKeyCols).Capacity),
+				start:  wStart,
+				end:    wEnd,
+			}
+			for i := wStart; i < wEnd; i++ {
+				allNonNull := true
+				for ki, kc := range j.buildKeys {
+					if isColNull(&j.buildCols[kc], i) {
+						allNonNull = false
+						break
+					}
+					keyVals[ki] = colValAt(&j.buildCols[kc], i)
+				}
+				if !allNonNull {
+					continue
+				}
+				hash := UT.HashComposite(keyVals)
+				local.ht.Probe(
+					keyVals,
+					[]uint64{hash},
+					1,
+					func(idx int, _ int) {
+						local.rowIDs[idx] = append(local.rowIDs[idx], uint32(i))
+					},
+				)
+				local.unique++
+			}
+			mu.Lock()
+			results[wIdx] = local
+			mu.Unlock()
+			return nil
+		})
+	}
+	wg.Wait()
+
+	// Merge local hash tables into the global one.
+	totalUnique := 0
+	bloomVals := make([]int64, 0, totalRows)
+	for _, res := range results {
+		if res.ht == nil || res.ht.Occupied == 0 {
+			continue
+		}
+		entries := res.ht.Entries()
+		for _, entry := range entries {
+			// Re-probe into global hash table.
+			keySlice := make([]int64, numKeyCols)
+			copy(keySlice, entry.Key)
+			hash := entry.Hash
+			j.ht.Probe(
+				keySlice,
+				[]uint64{hash},
+				1,
+				func(idx int, _ int) {
+					// Find all row IDs from the local table for this slot.
+					// We need to match the slot in the local table.
+					// Since we don't have a reverse mapping, scan the local rowIDs.
+					// This is O(unique_slots) per merge — acceptable for the
+					// parallel build case where numKeyCols is small.
+				},
+			)
+			totalUnique++
+			if numKeyCols == 1 {
+				bloomVals = append(bloomVals, entry.Key[0])
+			}
+		}
+
+		// Merge row IDs: find the slot in the global table and append.
+		for _, ids := range res.rowIDs {
+			if len(ids) == 0 {
+				continue
+			}
+			// Re-probe to find the corresponding global slot.
+			if len(ids) > 0 {
+				firstRow := int(ids[0])
+				keyVals := make([]int64, numKeyCols)
+				for ki, kc := range j.buildKeys {
+					keyVals[ki] = colValAt(&j.buildCols[kc], firstRow)
+				}
+				hash := UT.HashComposite(keyVals)
+				// Find the slot in the global table.
+				gIdx, found, _ := j.ht.Lookup(keyVals, hash)
+				if found {
+					j.rowIDs[gIdx] = append(j.rowIDs[gIdx], ids...)
+				} else {
+					// Insert into global table.
+					j.ht.Probe(
+						keyVals,
+						[]uint64{hash},
+						1,
+						func(idx int, _ int) {
+							j.rowIDs[idx] = append(j.rowIDs[idx], ids...)
+						},
+					)
+				}
+			}
+		}
+	}
+
+	// Build bloom filter.
+	if numKeyCols == 1 && len(bloomVals) > 0 {
+		j.bloom = UT.NewBloomFilter(len(bloomVals), 0.01)
+		for _, v := range bloomVals {
+			j.bloom.Add(uint64(v))
+		}
+	}
+
 	return nil
 }
 
