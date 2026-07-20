@@ -23,11 +23,14 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 	hasDuplicates := false
 	seenNames := make(map[string]bool, k+1)
 
+	// REQ001642: use CO.EstimateCardinality when catalog stats are
+	// available, falling back to getTableRowCount when absent.
+	baseRows := p.estimatedCardinality(baseTable, wherePredicates, pushedPredicates)
+	tableRowCounts[baseTable] = baseRows
+
 	// baseTable gets index 0.
 	tableIndex[baseTable] = 0
 	seenNames[baseTable] = true
-	tableRowCounts[baseTable] = p.getTableRowCount(baseTable)
-	baseRows := tableRowCounts[baseTable]
 
 	for _, jt := range joinTables {
 		n := jt.name
@@ -37,7 +40,7 @@ func (p *Planner) n3JoinOrdering(baseTable string, joinTables []joinTableInfo, w
 		}
 		seenNames[n] = true
 		tableIndex[n] = len(tableIndex)
-		tableRowCounts[n] = p.getTableRowCount(n)
+		tableRowCounts[n] = p.estimatedCardinality(n, wherePredicates, pushedPredicates)
 	}
 
 	// REQ000883/REQ000909: pre-compute per-table selectivity from

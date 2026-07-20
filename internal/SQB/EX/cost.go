@@ -239,6 +239,57 @@ func (p *Planner) getTableRowCount(table string) float64 {
 	return 100.0
 }
 
+// estimatedCardinality returns the estimated row count for a table
+// after applying all single-table predicates. Uses CO.EstimateCardinality
+// when catalog stats are available, falling back to getTableRowCount.
+// REQ001642.
+func (p *Planner) estimatedCardinality(table string, wherePredicates []PS.Expr, pushedPredicates map[string][]PS.Expr) float64 {
+	baseRows := p.getTableRowCount(table)
+
+	// Collect all predicates that apply to this table.
+	var tablePreds []PS.Expr
+	for _, pred := range wherePredicates {
+		if p.canPushDown(pred, table) {
+			tablePreds = append(tablePreds, pred)
+		}
+	}
+	if pushedPredicates != nil {
+		if preds, ok := pushedPredicates[table]; ok {
+			tablePreds = append(tablePreds, preds...)
+		}
+	}
+
+	if len(tablePreds) == 0 {
+		return baseRows
+	}
+
+	// Try to get column stats for selectivity estimation.
+	cat := DT.Catalog()
+	if cat != nil {
+		if ts := cat.TableStats(table); ts != nil && ts.RowCount > 0 {
+			// Use the first column's stats as a proxy for the table.
+			for _, col := range ts.ColStats {
+				rows := CO.EstimateCardinality(baseRows, tablePreds, col)
+				if rows < baseRows {
+					return rows
+				}
+				break
+			}
+		}
+	}
+
+	// Fallback: apply selectivity using the planner's existing heuristic.
+	rows := baseRows
+	for _, pred := range tablePreds {
+		psel := p.joinPredSel(pred, rows)
+		rows *= psel
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
+
 func (p *Planner) estimateJoinCost(leftRows, rightRows int, predicates []PS.Expr, hasIndex bool) float64 {
 	indexFactor := 1.0
 	if hasIndex {

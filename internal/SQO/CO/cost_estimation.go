@@ -237,3 +237,26 @@ func EstimateInListSelectivity(list []PS.Expr, rowCount float64, mcvs [][]byte, 
 	}
 	return sel
 }
+
+// EstimateCardinality returns the estimated number of rows after
+// applying predicates, using catalog stats when available.
+// REQ001642. Falls back to the base rowCount when stats are absent.
+func EstimateCardinality(baseRowCount float64, predicates []PS.Expr, stats *ls.ColumnStats) float64 {
+	if baseRowCount <= 0 {
+		baseRowCount = 100.0
+	}
+	rows := baseRowCount
+	for _, pred := range predicates {
+		sel := 1.0
+		if stats != nil {
+			sel = EstimateSelectivityWithStats(pred, stats)
+		} else {
+			sel = EstimateSelectivity(pred)
+		}
+		rows *= sel
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
