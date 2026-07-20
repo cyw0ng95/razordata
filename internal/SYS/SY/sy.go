@@ -347,18 +347,13 @@ func (e *Engine) IsClosed() bool   { return e.closed.Load() }
 // the engine to a clean post-Open state. Preserves the directory, WAL,
 // and storage engine; only the logical catalog is reset. REQ001454.
 func (e *Engine) Reset(ctx context.Context) error {
-	DT.TablesMu.Lock()
-	defer DT.TablesMu.Unlock()
-	// Clear in-memory tables and schemas.
-	for k := range DT.Tables {
-		delete(DT.Tables, k)
-	}
-	for k := range DT.Schemas {
-		delete(DT.Schemas, k)
-	}
-	for k := range DT.InMemSchemas {
-		delete(DT.InMemSchemas, k)
-	}
+	// REQ001584: clear ALL global state, not just DT.Tables/Schemas.
+	// EX.UnregisterAll clears DT.StoreSchemas, DT.TableIDs,
+	// DT.ViewRegistry, DT.RegisteredIndexes, OP.TableSchemaCache,
+	// WT trigger state, and other globals that Engine.Reset's
+	// manual delete loop missed.
+	executor.UnregisterAll() // acquires + releases DT.TablesMu internally
+
 	// Reset the executor's plan cache.
 	e.exe.ClearPlanCache()
 	// Reset the per-engine row arena for fresh re-use.
@@ -368,7 +363,7 @@ func (e *Engine) Reset(ctx context.Context) error {
 	// REQ001497 follow-up: drop all storage state between SLT corpus
 	// files. Previously only DT.Tables was cleared, leaving SST data
 	// on disk that was then mixed with subsequent files' data and
-	// produced 2× duplicated row counts. DropAll clears the LS engine
+	// produced 2x duplicated row counts. DropAll clears the LS engine
 	// state (memtable, manifest, page cache, mmap, SST files) so each
 	// file runs against a truly fresh engine.
 	if e.eng != nil {
