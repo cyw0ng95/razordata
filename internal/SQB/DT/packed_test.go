@@ -83,7 +83,7 @@ func TestUnpackRowInto_Int(t *testing.T) {
 
 	arena := &RowArena{}
 	row := arena.AllocRow(2, schema)
-	err := UnpackRowInto(row, buf, schema)
+	err := UnpackRowInto(&row, buf, schema)
 	if err != nil {
 		t.Fatalf("UnpackRowInto: %v", err)
 	}
@@ -131,7 +131,7 @@ func BenchmarkPackedRow_Decode(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			row := arena.AllocRow(5, schema)
-			err := UnpackRowInto(row, buf, schema)
+			err := UnpackRowInto(&row, buf, schema)
 			if err != nil {
 				arena.Reset()
 				b.Fatal(err)

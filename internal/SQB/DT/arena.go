@@ -85,11 +85,15 @@ func (a *RowArena) ResetOffset() {
 	a.offset = 0
 }
 
-func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) *Row {
+// AllocRow returns a Row whose Data is a sub-slice of the arena's
+// current slab (bump-pointer allocation, no per-row heap alloc).
+// REQ001632: returns Row by value instead of *Row to eliminate the
+// per-row heap allocation for the Row struct itself.
+func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) Row {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if nCols <= 0 {
-		return &Row{
+		return Row{
 			Cols:     schema.Cols,
 			ColIndex: schema.ColIndex,
 		}
@@ -100,7 +104,7 @@ func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) *Row {
 	}
 	start := a.offset
 	a.offset += nCols
-	return &Row{
+	return Row{
 		Cols:     schema.Cols,
 		Data:     a.slab[start : start+nCols : start+nCols],
 		ColIndex: schema.ColIndex,

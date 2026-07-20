@@ -178,7 +178,7 @@ func BenchmarkSeqScan_ArenaVsSlice(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			row := arena.AllocRow(5, schema)
-			if err := DecodeRowInto(row, encoded, schema); err != nil {
+			if err := DecodeRowInto(&row, encoded, schema); err != nil {
 				arena.Reset()
 				b.Fatal(err)
 			}
@@ -205,9 +205,6 @@ func TestRowArena_Presize(t *testing.T) {
 	// AllocRow should not trigger grow for 100 rows.
 	for i := 0; i < 100; i++ {
 		row := arena.AllocRow(3, schema)
-		if row == nil {
-			t.Fatalf("AllocRow %d returned nil", i)
-		}
 		if len(row.Data) != 3 {
 			t.Fatalf("row %d: Data len = %d, want 3", i, len(row.Data))
 		}
@@ -232,8 +229,8 @@ func TestRowArena_PresizeGrowFallback(t *testing.T) {
 	// Should still work via grow fallback.
 	for i := 0; i < 10; i++ {
 		row := arena.AllocRow(1, schema)
-		if row == nil {
-			t.Fatalf("AllocRow %d returned nil", i)
+		if len(row.Data) != 1 {
+			t.Fatalf("AllocRow %d: Data len = %d, want 1", i, len(row.Data))
 		}
 	}
 	arena.Reset()

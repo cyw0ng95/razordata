@@ -3,7 +3,6 @@ package OP
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -776,14 +775,11 @@ func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
 		return row, nil
 	}
 	row := s.rowArena.AllocRow(n, s.schema)
-	if row == nil {
-		return Row{}, errors.New("op: arena alloc failed")
-	}
-	err := DT.DecodeRowInto(row, data, s.schema)
+	err := DT.DecodeRowInto(&row, data, s.schema)
 	if err != nil {
 		return Row{}, err
 	}
-	return *row, nil
+	return row, nil
 }
 
 // decodeRowSubsetBuffered decodes only the columns listed in
@@ -823,14 +819,11 @@ func (s *SeqScan) decodeRowSubsetBuffered(data []byte) (Row, error) {
 		s.subsetSchemaAliasKey = s.aliasCacheKey()
 	}
 	row := s.rowArena.AllocRow(n, s.subsetSchema)
-	if row == nil {
-		return Row{}, errors.New("op: arena alloc failed")
-	}
-	err := DT.DecodeRowSubsetInto(row, data, s.schema, wanted)
+	err := DT.DecodeRowSubsetInto(&row, data, s.schema, wanted)
 	if err != nil {
 		return Row{}, err
 	}
-	return *row, nil
+	return row, nil
 }
 
 // aliasCacheKey returns a stable identifier for the alias context
