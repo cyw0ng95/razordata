@@ -834,6 +834,10 @@ func NewUpdateWithStore(store DT.Store, table string, set []PS.Pair, where PS.Ex
 				break
 			}
 		}
+		// REQ001586: validate SET column exists in schema.
+		if upd.setColIdx[i] < 0 {
+			return nil, fmt.Errorf("ex: update SET column %q not found in table %q", p.Col, table)
+		}
 	}
 	if len(returning) > 0 {
 		nCols := len(ss.Cols)
