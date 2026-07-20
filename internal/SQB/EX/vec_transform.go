@@ -93,6 +93,8 @@ func isEligible(root DT.Operator) bool {
 				o.CompoundOpType() == PS.CompoundIntersect
 		case *OP.Sort:
 			return check(o.Child())
+		case *OP.TopNSort:
+			return check(o.Child())
 		case *OP.Limit:
 			return check(o.Child())
 		default:
@@ -195,6 +197,13 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 			return nil
 		}
 		return OP.NewVectorizedSort(child, o.Keys())
+	case *OP.TopNSort:
+		child := transformOp(o.Child())
+		if child == nil {
+			return nil
+		}
+		// REQ001640: convert row-based TopNSort to vectorized TopN sort.
+		return OP.NewVectorizedTopNSort(child, o.Keys(), o.Limit())
 	case *OP.Limit:
 		child := transformOp(o.Child())
 		if child == nil {

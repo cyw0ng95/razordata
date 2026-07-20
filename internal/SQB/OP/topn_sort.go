@@ -41,6 +41,9 @@ func (t *TopNSort) Child() Operator      { return t.child }
 func (t *TopNSort) SetChild(c Operator)  { t.child = c }
 func (t *TopNSort) Keys() []PS.OrderItem { return t.keys }
 
+// Limit returns the maximum number of rows to retain.
+func (t *TopNSort) Limit() int64 { return t.limit }
+
 func (t *TopNSort) Next(ctx context.Context) (Row, error) {
 	if !t.materialized {
 		t.materialize(ctx)
