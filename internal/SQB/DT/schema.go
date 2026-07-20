@@ -32,9 +32,12 @@ type StoreSchema struct {
 	CompiledChecks []func(*Row) (bool, error)
 	ColTypes       []LX.TokenType
 	// REQ000568: DECIMAL(P,S) Precision and Scale per column.
-	// Only meaningful when ColTypes[i] is T_DECIMAL or T_NUMERIC.
 	Precision []int
 	Scale     []int
+	// REQ001312: WITHOUT ROWID flag — when true, the primary key
+	// IS the row key (no synthetic rowid). The SST entry key is
+	// the composite PK value instead of (rowid, ...).
+	WithoutRowid bool
 	// REQ000248/249: parallel to Cols; non-nil means column is a
 	// STORED Generated column. The expression is evaluated on
 	// INSERT/UPDATE and the result is stored as the cell value.
@@ -152,6 +155,18 @@ func SchemaFor(name string) (*StoreSchema, bool) {
 		return ss, ok
 	}
 	return nil, false
+}
+
+// SetWithoutRowid marks a table as WITHOUT ROWID. The PK becomes the
+// row key in the SST store. REQ001312.
+func SetWithoutRowid(name string) {
+	StoreMu.Lock()
+	defer StoreMu.Unlock()
+	if id, ok := TableIDs[name]; ok {
+		if ss, ok := StoreSchemas[id]; ok {
+			ss.WithoutRowid = true
+		}
+	}
 }
 
 // AllTableNames returns a sorted list of all registered table names.

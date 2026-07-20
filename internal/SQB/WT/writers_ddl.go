@@ -2,7 +2,6 @@ package WT
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 
@@ -195,9 +194,9 @@ func (c *CreateTable) Next(ctx context.Context) (DT.Row, error) {
 	}
 	c.done = true
 
-	// REQ000910: WITHOUT ROWID storage is not yet implemented.
+	// REQ001312: WITHOUT ROWID storage — use PK as the row key.
 	if c.Stmt.WithoutRowid {
-		return DT.Row{}, errors.New("ex: WITHOUT ROWID not yet supported")
+		DT.SetWithoutRowid(c.Stmt.Name)
 	}
 
 	// CREATE TABLE AS SELECT (REQ000520): the schema comes from

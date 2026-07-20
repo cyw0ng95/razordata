@@ -94,6 +94,9 @@ type Writer interface {
 	Sync() error
 	SyncAsync() (<-chan AsyncSyncResult, error)
 	Close() error
+	// Checkpoint performs a WAL checkpoint in the given mode.
+	// REQ001303: modes 0=passive, 1=full, 2=truncate, 3=restart.
+	Checkpoint(mode int) (uint64, error)
 }
 
 type logSegment struct {
@@ -112,6 +115,7 @@ const (
 	cmdAppend cmdType = iota
 	cmdSync
 	cmdSyncAsync
+	cmdCheckpoint
 	cmdStop
 )
 
@@ -121,6 +125,7 @@ type cmd struct {
 	batch *WriteBatch
 	seq   [][]byte // pre-encoded records for cmdAppend
 	res   chan cmdResult
+	mode  int // checkpoint mode
 }
 
 type cmdResult struct {
@@ -215,6 +220,8 @@ func (w *writer) loop() {
 			c.res <- w.handleSync(c)
 		case cmdSyncAsync:
 			c.res <- w.handleSyncAsync(c)
+		case cmdCheckpoint:
+			c.res <- w.handleCheckpoint(c)
 		case cmdStop:
 			w.handleStop()
 			close(c.res)
@@ -288,6 +295,18 @@ func (w *writer) Close() error {
 	w.wg.Wait()
 	close(w.ch)
 	return nil
+}
+
+// Checkpoint performs a WAL checkpoint in the given mode.
+// REQ001303: modes 0=passive, 1=full, 2=truncate, 3=restart.
+func (w *writer) Checkpoint(mode int) (uint64, error) {
+	if w.readOnly {
+		return 0, ErrReadOnly
+	}
+	res := make(chan cmdResult, 1)
+	w.ch <- cmd{typ: cmdCheckpoint, mode: mode, res: res}
+	r := <-res
+	return r.lsn, r.err
 }
 
 func (w *writer) handleAppend(c cmd) cmdResult {
@@ -422,6 +441,57 @@ func (w *writer) handleSyncAsync(c cmd) cmdResult {
 	}()
 
 	return cmdResult{asyncC: ch}
+}
+
+// handleCheckpoint performs a WAL checkpoint. REQ001303.
+// mode 0=passive, 1=full, 2=truncate, 3=restart.
+func (w *writer) handleCheckpoint(c cmd) cmdResult {
+	// Sync first to ensure all pending writes are on disk.
+	if err := w.handleSync(c).err; err != nil {
+		return cmdResult{err: err}
+	}
+
+	// Build checkpoint record with current LSN.
+	cp := &Checkpoint{
+		LSN: w.synced.Load(),
+	}
+	header, txns := AppendCheckpointPayload(cp)
+	rec := &LogRecord{
+		Type:  RTCheckpoint,
+		Value: append(header, txns...),
+	}
+
+	// Write the checkpoint record.
+	batch := &WriteBatch{Recs: []LogRecord{*rec}}
+	appRes := w.handleAppend(cmd{batch: batch})
+	if appRes.err != nil {
+		return appRes
+	}
+
+	// Sync after checkpoint write.
+	if err := w.handleSync(c).err; err != nil {
+		return cmdResult{err: err}
+	}
+
+	// Mode-specific actions.
+	switch c.mode {
+	case 2: // truncate: truncate current segment to zero
+		if w.seg != nil {
+			if err := w.sm.Truncate(w.seg.number, 0); err != nil {
+				return cmdResult{err: err}
+			}
+			w.seg.writeOff = 0
+		}
+	case 3: // restart: close current segment, start fresh
+		if w.seg != nil {
+			if err := w.seg.fh.Close(); err != nil {
+				return cmdResult{err: err}
+			}
+			w.seg = nil
+		}
+	}
+
+	return cmdResult{lsn: cp.LSN}
 }
 
 func (w *writer) handleStop() {

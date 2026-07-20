@@ -1068,8 +1068,8 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 	case "foreign_key_check":
 		// REQ000906: handled by the Pragma operator.
 		return WT.NewPragma(s).WithStore(p.store)
-	case "wal_autocheckpoint", "busy_timeout", "busy_handler":
-		// REQ001300 / REQ001301 / REQ001302: handled by Pragma operator.
+	case "wal_autocheckpoint", "busy_timeout", "busy_handler", "wal_checkpoint":
+		// REQ001300 / REQ001301 / REQ001302 / REQ001303: handled by Pragma operator.
 		return WT.NewPragma(s).WithStore(p.store)
 	case "auto_compact":
 		// REQ001304: toggle LSM auto-compaction mode.
