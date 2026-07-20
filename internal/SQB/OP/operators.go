@@ -152,6 +152,14 @@ type SeqScan struct {
 	// REQ001221: rowArena replaces decodeBuf for bump-pointer
 	rowArena *DT.RowArena
 
+	// REQ001558: pre-computed projection metadata. When RequestedCols
+	// is set, these are built once in NewSeqScan and reused across
+	// all rows, eliminating per-row make([]string) + make([]Value) +
+	// make(map[string]int) allocations.
+	projCols     []string
+	projTypes    []LX.TokenType
+	projColIndex map[string]int
+
 	// REQ001434: subsetSchema caches a derived StoreSchema whose
 	// Cols/ColTypes/ColIndex cover only the columns referenced
 	// by the planner (usedColIdx). Cached on the SeqScan so the
@@ -273,7 +281,33 @@ func (s *SeqScan) WithUsedCols(cols []string) *SeqScan {
 			}
 		}
 	}
+	// REQ001558: pre-compute projection metadata.
+	s.initProjection()
 	return s
+}
+
+// initProjection pre-computes the projected column metadata from
+// RequestedCols. Called once after RequestedCols is set. REQ001558.
+func (s *SeqScan) initProjection() {
+	if len(s.RequestedCols) == 0 || s.schema == nil {
+		return
+	}
+	cols := s.schema.Cols
+	types := s.schema.ColTypes
+	rc := s.RequestedCols
+	n := len(rc)
+	s.projCols = make([]string, n)
+	s.projTypes = make([]LX.TokenType, n)
+	s.projColIndex = make(map[string]int, n*2)
+	for i, idx := range rc {
+		if idx >= 0 && idx < len(cols) {
+			s.projCols[i] = cols[idx]
+			if idx < len(types) {
+				s.projTypes[i] = types[idx]
+			}
+		}
+		s.projColIndex[s.projCols[i]] = i
+	}
 }
 
 // buildPointLookup scans the in-memory table and pre-computes the list
@@ -542,28 +576,21 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 	// REQ001229: projection pushdown — when RequestedCols is set, build
 	// the output row with only the requested column indices. This avoids
 	// decoding all columns only to prune them afterwards.
-	if s.RequestedCols != nil {
-		cols := schema.cols
-		types := schema.types
+	// REQ001558: uses pre-computed projection metadata to avoid per-row
+	// make([]string) + make([]Value) + make(map[string]int) allocations.
+	if s.RequestedCols != nil && s.projCols != nil {
 		rc := s.RequestedCols
-		newCols := make([]string, len(rc))
-		newTypes := make([]LX.TokenType, len(rc))
-		newData := make([]Value, len(rc))
+		n := len(rc)
+		newData := make([]Value, n)
 		for i, idx := range rc {
-			newCols[i] = cols[idx]
-			if idx < len(types) {
-				newTypes[i] = types[idx]
+			if idx < len(r.Data) {
+				newData[i] = r.Data[idx]
 			}
-			newData[i] = r.Data[idx]
 		}
-		newIndex := make(map[string]int, len(rc)*2)
-		for i, c := range newCols {
-			newIndex[c] = i
-		}
-		out.Cols = newCols
-		out.Types = newTypes
+		out.Cols = s.projCols
+		out.Types = s.projTypes
 		out.Data = newData
-		out.ColIndex = newIndex
+		out.ColIndex = s.projColIndex
 	} else {
 		// REQ000840: when shallow, reuse source row Data without copying.
 		// Safe for read-only queries — source rows in DT.Tables[] are never
