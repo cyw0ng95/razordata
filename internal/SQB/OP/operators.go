@@ -966,11 +966,11 @@ func (s *SeqScan) nextColumnarBatch(ctx context.Context, batch *UT.Batch, wanted
 // batchColumnWriter implements DT.ColumnWriter for filling batch
 // column data directly from DecodeRowSubsetIntoColumnar.
 type batchColumnWriter struct {
-	batch   *UT.Batch
-	wanted  []int
-	types   []LX.TokenType
-	rowIdx  int
-	intern  *UT.StringInterner // optional, batch-scoped string dedup
+	batch  *UT.Batch
+	wanted []int
+	types  []LX.TokenType
+	rowIdx int
+	intern *UT.StringInterner // optional, batch-scoped string dedup
 }
 
 func (w *batchColumnWriter) colFor(fullColIdx int) (int, *UT.Column) {
@@ -1178,10 +1178,10 @@ type IndexScan struct {
 	// secondary index's stored values. coverIdxCols / coverIdxTypes
 	// describe the encoded index suffix; coverPK is the column whose
 	// value is stored as the index entry's payload.
-	coveringMode    bool
-	coverIdxCols    []string
-	coverIdxTypes   []LX.TokenType
-	coverPK         string
+	coveringMode  bool
+	coverIdxCols  []string
+	coverIdxTypes []LX.TokenType
+	coverPK       string
 
 	closed atomic.Bool
 }
