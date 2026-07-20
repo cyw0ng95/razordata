@@ -793,6 +793,8 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 			j.blkLeftBatch = append(j.blkLeftBatch, prefixed)
 		}
 	}
+	// REQ001649: ctx cancellation check every 1024 rows.
+	var ctxCheck int
 	for len(j.blkLeftBatch) < batchSize {
 		row, err := j.left.Next(ctx)
 		if err != nil {
@@ -800,6 +802,13 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 				break
 			}
 			return Row{}, err
+		}
+		ctxCheck++
+		if ctxCheck >= 1024 {
+			ctxCheck = 0
+			if err := ctx.Err(); err != nil {
+				return Row{}, err
+			}
 		}
 		// REQ001410: deep-copy Data when caching left batch. The child
 		// operator (especially a child NLJ in block mode) reuses its

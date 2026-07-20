@@ -698,6 +698,8 @@ func (a *VectorizedHashAggregate) NextBatch(ctx context.Context) (*UT.Batch, err
 	a.ht.Payloads = make([]any, 0, 64)
 
 	// Drain child batches
+	// REQ001649: ctx cancellation check every 1024 batches.
+	var ctxCheck int
 	for {
 		batch, err := a.child.NextBatch(ctx)
 		if err != nil {
@@ -705,6 +707,13 @@ func (a *VectorizedHashAggregate) NextBatch(ctx context.Context) (*UT.Batch, err
 		}
 		if batch == nil {
 			break
+		}
+		ctxCheck++
+		if ctxCheck >= 1024 {
+			ctxCheck = 0
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 		}
 		a.processBatch(batch)
 		batch.Put()

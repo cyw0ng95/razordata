@@ -37,6 +37,8 @@ func NewVectorizedSort(child UT.BatchProducer, keys []PS.OrderItem) *VectorizedS
 func (s *VectorizedSort) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	// Phase 1: materialize all rows from child into columnar storage.
 	if s.numRows == 0 {
+		// REQ001649: ctx cancellation check every 1024 rows.
+		var ctxCheck int
 		for {
 			batch, err := s.child.NextBatch(ctx)
 			if err != nil {
@@ -44,6 +46,13 @@ func (s *VectorizedSort) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			}
 			if batch == nil {
 				break
+			}
+			ctxCheck++
+			if ctxCheck >= 1024 {
+				ctxCheck = 0
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 			}
 			s.appendBatch(batch)
 			batch.Put()

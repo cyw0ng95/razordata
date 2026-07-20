@@ -323,6 +323,8 @@ type Filter struct {
 	// is already slow (no compiled predicate), so a coarser batch
 	// is safe and avoids ~10K goroutine-scheduled checks per select1.
 	ctxCheckCounter uint64
+	// REQ001567: reusable buffer for function call argument allocation.
+	fnArgBuf []any
 
 	closed atomic.Bool
 }
@@ -371,6 +373,8 @@ func NewFilter(child Operator, predicate PS.Expr, schema *DT.StoreSchema) *Filte
 		// allocation in refillBatch.
 		batchBuf:  *buf,
 		batchEmit: *emit,
+		// REQ001567: pre-allocate function call argument buffer.
+		fnArgBuf: make([]any, 0, 10),
 	}
 }
 
@@ -810,6 +814,8 @@ type Project struct {
 	dataBuf         []Value
 	dataPerRow      int
 	execCtx    *pl.ExecContext
+	// REQ001567: reusable buffer for function call argument allocation.
+	fnArgBuf []any
 	closed    atomic.Bool
 }
 
@@ -892,6 +898,8 @@ func NewProject(child Operator, cols []PS.Expr) *Project {
 		// REQ001091: dataPerRow is now set in NewProject so the lazy-init
 		// branch in Next is a no-op for the pool-acquired case.
 		dataPerRow: len(cols),
+		// REQ001567: pre-allocate function call argument buffer.
+		fnArgBuf: make([]any, 0, 10),
 	}
 }
 
@@ -1633,7 +1641,7 @@ func (p *Project) compileProjectExprs() {
 	for i, c := range p.cols {
 		switch e := c.(type) {
 		case *PS.FunctionCall:
-			p.compiledExprs[i] = compileProjectFuncCall(e)
+			p.compiledExprs[i] = compileProjectFuncCall(e, p.fnArgBuf)
 		case *PS.CaseExpr:
 			p.compiledExprs[i] = compileProjectCaseExpr(e)
 		default:
@@ -1850,10 +1858,11 @@ func compileColRef(name string, slotIdx int) func(*Row) Value {
 
 // compileProjectFuncCall compiles a function call expression into a
 // closure that calls EvalFunction directly, bypassing the top-level
-// EvalValue type-switch. REQ001291.
-func compileProjectFuncCall(e *PS.FunctionCall) func(*Row) (Value, error) {
+// EvalValue type-switch. REQ001291. The buf argument is reused for
+// argument storage to avoid per-call allocation (REQ001567).
+func compileProjectFuncCall(e *PS.FunctionCall, buf []any) func(*Row) (Value, error) {
 	return func(row *Row) (Value, error) {
-		return EV.EvalFunction(e, row, nil)
+		return EV.EvalFunction(e, row, nil, buf)
 	}
 }
 
