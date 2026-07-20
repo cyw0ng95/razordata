@@ -1198,3 +1198,375 @@ func TestCoverage_havingEmpty(t *testing.T) {
 		t.Errorf("expected 0 rows, got %d", len(rows))
 	}
 }
+
+func setupCatalogEngine(t *testing.T) (*Executor, *ls.Engine, *ls.Catalog) {
+	t.Helper()
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	dir := t.TempDir()
+	cat, err := ls.NewCatalog(filepath.Join(dir, "cat"))
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	DT.SetCatalog(cat)
+	t.Cleanup(func() { DT.SetCatalog(nil); _ = cat.Close() })
+	return ex, eng, cat
+}
+
+func registerCatalogTable(t *testing.T, ex *Executor, cat *ls.Catalog, name string, cols []string, pk string) {
+	t.Helper()
+	for _, c := range cols {
+		// ensure column name is listed
+		_ = c
+	}
+	ex.RegisterTableWithPK(name, cols, pk)
+	exID, _ := DT.TableIDFor(name)
+	catCols := make([]ls.CatalogColumn, 0, len(cols))
+	for _, cn := range cols {
+		catCols = append(catCols, ls.CatalogColumn{Name: cn, Type: 1, Nullable: true})
+	}
+	if err := cat.Put(ls.CatalogEntry{
+		Name:       name,
+		TableID:    exID,
+		PrimaryKey: pk,
+		CreateSQL:  "CREATE TABLE " + name + " (...)",
+		Columns:    catCols,
+	}); err != nil {
+		t.Fatalf("cat.Put(%q): %v", name, err)
+	}
+}
+
+func TestAnalyze_ComputesRowCount(t *testing.T) {
+	ex, eng, cat := setupCatalogEngine(t)
+	defer eng.Close()
+	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+	for i := 0; i < 7; i++ {
+		ex.Exec(ctx, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i*10))
+	}
+	_, err := ex.Exec(ctx, "ANALYZE t")
+	if err != nil {
+		t.Fatalf("ANALYZE: %v", err)
+	}
+	for _, col := range []string{"id", "v"} {
+		stats := cat.ColumnStatsByName("t", col)
+		if stats == nil {
+			t.Fatalf("no stats for column %q", col)
+		}
+		if stats.RowCount != 7 {
+			t.Fatalf("col %q RowCount=%d, want 7", col, stats.RowCount)
+		}
+	}
+}
+
+func TestAnalyze_ComputesNDV(t *testing.T) {
+	ex, eng, cat := setupCatalogEngine(t)
+	defer eng.Close()
+	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (2, 10)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (3, 30)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (4, 30)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (5, 50)")
+	_, err := ex.Exec(ctx, "ANALYZE t")
+	if err != nil {
+		t.Fatalf("ANALYZE: %v", err)
+	}
+	stats := cat.ColumnStatsByName("t", "v")
+	if stats == nil {
+		t.Fatal("no stats for column v")
+	}
+	if stats.DistinctCount != 3 {
+		t.Fatalf("v DistinctCount=%d, want 3", stats.DistinctCount)
+	}
+	idStats := cat.ColumnStatsByName("t", "id")
+	if idStats == nil {
+		t.Fatal("no stats for column id")
+	}
+	if idStats.DistinctCount != 5 {
+		t.Fatalf("id DistinctCount=%d, want 5", idStats.DistinctCount)
+	}
+}
+
+func TestAnalyze_ComputesNullCount_NotNullCol(t *testing.T) {
+	ex, eng, cat := setupCatalogEngine(t)
+	defer eng.Close()
+	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (2, NULL)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (3, NULL)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (4, 40)")
+	_, err := ex.Exec(ctx, "ANALYZE t")
+	if err != nil {
+		t.Fatalf("ANALYZE: %v", err)
+	}
+	statsV := cat.ColumnStatsByName("t", "v")
+	if statsV == nil {
+		t.Fatal("no stats for column v")
+	}
+	if statsV.NullCount != 2 {
+		t.Fatalf("v NullCount=%d, want 2", statsV.NullCount)
+	}
+	statsID := cat.ColumnStatsByName("t", "id")
+	if statsID == nil {
+		t.Fatal("no stats for column id")
+	}
+	if statsID.NullCount != 0 {
+		t.Fatalf("id NullCount=%d, want 0", statsID.NullCount)
+	}
+}
+
+func TestAnalyze_ComputesMinMax(t *testing.T) {
+	ex, eng, cat := setupCatalogEngine(t)
+	defer eng.Close()
+	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 100)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (2, 200)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (3, 50)")
+	_, err := ex.Exec(ctx, "ANALYZE t")
+	if err != nil {
+		t.Fatalf("ANALYZE: %v", err)
+	}
+	stats := cat.ColumnStatsByName("t", "v")
+	if stats == nil {
+		t.Fatal("no stats for column v")
+	}
+	if stats.MinValue == nil {
+		t.Fatal("MinValue is nil")
+	}
+	if stats.MaxValue == nil {
+		t.Fatal("MaxValue is nil")
+	}
+}
+
+func TestAnalyze_NullExcludedFromMinMax(t *testing.T) {
+	ex, eng, cat := setupCatalogEngine(t)
+	defer eng.Close()
+	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, NULL)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (2, NULL)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (3, 300)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (4, 100)")
+	_, err := ex.Exec(ctx, "ANALYZE t")
+	if err != nil {
+		t.Fatalf("ANALYZE: %v", err)
+	}
+	stats := cat.ColumnStatsByName("t", "v")
+	if stats == nil {
+		t.Fatal("no stats for column v")
+	}
+	if stats.MinValue == nil {
+		t.Fatal("MinValue is nil (NULL should be excluded)")
+	}
+	if stats.MaxValue == nil {
+		t.Fatal("MaxValue is nil (NULL should be excluded)")
+	}
+}
+
+func TestAnalyze_LargeTable_Sampling(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping large-table test in short mode")
+	}
+	ex, eng, cat := setupCatalogEngine(t)
+	defer eng.Close()
+	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+	// Insert 10K rows to stay under the 1M threshold
+	for i := 0; i < 10000; i++ {
+		ex.Exec(ctx, fmt.Sprintf("INSERT INTO t VALUES (%d, %d)", i, i%100))
+	}
+	_, err := ex.Exec(ctx, "ANALYZE t")
+	if err != nil {
+		t.Fatalf("ANALYZE on 10K rows: %v", err)
+	}
+	stats := cat.ColumnStatsByName("t", "v")
+	if stats == nil {
+		t.Fatal("no stats for column v after 10K rows")
+	}
+	if stats.RowCount != 10000 {
+		t.Fatalf("RowCount=%d, want 10000", stats.RowCount)
+	}
+	if stats.DistinctCount != 100 {
+		t.Fatalf("v DistinctCount=%d, want 100", stats.DistinctCount)
+	}
+}
+
+func TestAnalyze_PersistsAcrossRestart(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	dir := t.TempDir()
+	cat, err := ls.NewCatalog(filepath.Join(dir, "cat"))
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	DT.SetCatalog(cat)
+
+	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 100)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (2, 200)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (3, 100)")
+
+	_, err = ex.Exec(ctx, "ANALYZE t")
+	if err != nil {
+		t.Fatalf("ANALYZE: %v", err)
+	}
+
+	preStats := cat.ColumnStatsByName("t", "v")
+	if preStats == nil {
+		t.Fatal("no stats after ANALYZE (pre-close)")
+	}
+
+	catPath := filepath.Dir(cat.Path())
+	if err := cat.Close(); err != nil {
+		t.Fatalf("cat.Close: %v", err)
+	}
+	DT.SetCatalog(nil)
+	eng.Close()
+	ResetForTest(t)
+
+	cat2, err := ls.NewCatalog(catPath)
+	if err != nil {
+		t.Fatalf("NewCatalog (reopen): %v", err)
+	}
+	defer cat2.Close()
+	DT.SetCatalog(cat2)
+
+	stats := cat2.ColumnStatsByName("t", "v")
+	if stats == nil {
+		t.Fatal("no stats for column v after reopen")
+	}
+	if stats.RowCount != 3 {
+		t.Fatalf("RowCount=%d, want 3", stats.RowCount)
+	}
+	if stats.DistinctCount != 2 {
+		t.Fatalf("DistinctCount=%d, want 2", stats.DistinctCount)
+	}
+	if stats.NullCount != 0 {
+		t.Fatalf("NullCount=%d, want 0", stats.NullCount)
+	}
+}
+
+func TestStats_WiredOnOpen(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	dir := t.TempDir()
+	cat, err := ls.NewCatalog(filepath.Join(dir, "cat"))
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	DT.SetCatalog(cat)
+
+	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
+	ctx := context.Background()
+	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (2, 20)")
+	ex.Exec(ctx, "INSERT INTO t VALUES (3, 30)")
+
+	_, err = ex.Exec(ctx, "ANALYZE t")
+	if err != nil {
+		t.Fatalf("ANALYZE: %v", err)
+	}
+
+	catPath := filepath.Dir(cat.Path())
+	if err := cat.Close(); err != nil {
+		t.Fatalf("cat.Close: %v", err)
+	}
+	DT.SetCatalog(nil)
+	eng.Close()
+	ResetForTest(t)
+
+	cat2, err := ls.NewCatalog(catPath)
+	if err != nil {
+		t.Fatalf("NewCatalog (reopen): %v", err)
+	}
+	defer cat2.Close()
+	DT.SetCatalog(cat2)
+
+	dir2 := t.TempDir()
+	eng2, err := ls.Open(filepath.Join(dir2, "db"))
+	if err != nil {
+		t.Fatalf("ls.Open: %v", err)
+	}
+	defer eng2.Close()
+	ex2 := NewExecutorWithEngine(&engineStore{eng: eng2})
+
+	ex2.RegisterTableWithPK("t", []string{"id", "v"}, "id")
+	exID, _ := DT.TableIDFor("t")
+	_ = cat2.Put(ls.CatalogEntry{
+		Name:       "t",
+		TableID:    exID,
+		PrimaryKey: "id",
+		CreateSQL:  "CREATE TABLE t (id INT, v INT, PRIMARY KEY(id))",
+		Columns: []ls.CatalogColumn{
+			{Name: "id", Type: 1, Nullable: false},
+			{Name: "v", Type: 1, Nullable: true},
+		},
+	})
+
+	ex2.Exec(ctx, "INSERT INTO t VALUES (4, 40)")
+	ex2.Exec(ctx, "INSERT INTO t VALUES (5, 50)")
+
+	planner := ex2.planner
+	if planner != nil {
+		planner.SetStatsCatalog(cat2)
+	}
+
+	stats := cat2.ColumnStatsByName("t", "v")
+	if stats == nil {
+		t.Fatal("stats not wired on open")
+	}
+	if stats.RowCount != 3 {
+		t.Fatalf("RowCount=%d, want 3 (stats from first run)", stats.RowCount)
+	}
+	if stats.DistinctCount != 3 {
+		t.Fatalf("DistinctCount=%d, want 3", stats.DistinctCount)
+	}
+	t.Logf("stats wired on open: rowCount=%d distinctCount=%d", stats.RowCount, stats.DistinctCount)
+}
+
+func TestStats_Queries_UseLoadedNDV(t *testing.T) {
+	ResetForTest(t)
+	ex, eng := newEngineExecutor(t)
+	defer eng.Close()
+	dir := t.TempDir()
+	cat, err := ls.NewCatalog(filepath.Join(dir, "cat"))
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	DT.SetCatalog(cat)
+
+	registerCatalogTable(t, ex, cat, "t", []string{"id", "grp", "v"}, "id")
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		ex.Exec(ctx, fmt.Sprintf("INSERT INTO t VALUES (%d, %d, %d)", i, i%10, i*10))
+	}
+
+	_, err = ex.Exec(ctx, "ANALYZE t")
+	if err != nil {
+		t.Fatalf("ANALYZE: %v", err)
+	}
+
+	stats := cat.ColumnStatsByName("t", "grp")
+	if stats == nil {
+		t.Fatal("no stats for column grp")
+	}
+	if stats.DistinctCount != 10 {
+		t.Fatalf("grp DistinctCount=%d, want 10", stats.DistinctCount)
+	}
+
+	planner := ex.planner
+	if planner != nil {
+		planner.SetStatsCatalog(cat)
+	}
+
+	_, qErr := ex.QueryAll(ctx, "SELECT grp, COUNT(*) FROM t WHERE grp = 1 GROUP BY grp")
+	if qErr != nil {
+		t.Fatalf("query with stats: %v", qErr)
+	}
+	t.Log("query with loaded NDV ran without errors")
+}

@@ -908,11 +908,21 @@ func readInlineStatsBlob(data []byte, off int) ([]byte, int, error) {
 		return nil, off, errTruncated
 	}
 	startOff := off
-	count, n := binary.Uvarint(data[off:])
+	first, n := binary.Uvarint(data[off:])
 	if n <= 0 {
 		return nil, off, errTruncated
 	}
 	off += n
+	var count uint64
+	if first == 1 || first == 2 {
+		count, n = binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil, off, errTruncated
+		}
+		off += n
+	} else {
+		count = first
+	}
 	for i := uint64(0); i < count; i++ {
 		if off >= len(data) {
 			return nil, off, errTruncated
@@ -980,6 +990,23 @@ func readInlineStatsBlob(data []byte, off int) ([]byte, int, error) {
 		}
 		_ = rowCount
 		off += n
+		mcvCount, n := binary.Uvarint(data[off:])
+		if n <= 0 {
+			return nil, off, errTruncated
+		}
+		off += n
+		for j := uint64(0); j < mcvCount; j++ {
+			vLen, n := binary.Uvarint(data[off:])
+			if n <= 0 {
+				return nil, off, errTruncated
+			}
+			off += n
+			if off+int(vLen) > len(data) {
+				return nil, off, errTruncated
+			}
+			off += int(vLen)
+			off += 8 // freq
+		}
 	}
 	return data[startOff:off], off, nil
 }

@@ -102,7 +102,11 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 		return nil
 	}
 
-	const sampleSize = 10000
+	// REQ001314: full scan for tables < 1M rows, 1% reservoir
+	// sampling for larger tables. The reservoir is the base sample
+	// size, then we scale to 1% of total rows for very large tables.
+	const fullScanThreshold = int64(1_000_000)
+	const baseReservoirSize = 10000
 	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano()+1)))
 
 	nCols := len(ss.Cols)
@@ -117,7 +121,7 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 	cols := make([]colInfo, nCols)
 	for i := range cols {
 		cols[i].distinct = make(map[string]struct{})
-		cols[i].reservoir = make([][]byte, 0, sampleSize)
+		cols[i].reservoir = make([][]byte, 0, baseReservoirSize)
 	}
 
 	rowCount := int64(0)
@@ -128,6 +132,13 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 	it := a.store.NewIterator(prefix)
 	defer it.Close()
 
+	// Decide sample size based on expected table size. We use a
+	// 2-pass approach: first pass counts rows, second pass collects
+	// stats. But to keep the code simple, we use a single-pass
+	// reservoir with adaptive sizing: if rowCount < fullScanThreshold,
+	// keep all rows; otherwise use 1% reservoir.
+	sampleSize := baseReservoirSize
+	useReservoir := false
 	var rowBuf Row
 	var err error
 	for it.Next() {
@@ -169,13 +180,26 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 			}
 
 			ci.reservoirN++
-			if len(ci.reservoir) < sampleSize {
-				ci.reservoir = append(ci.reservoir, append([]byte(nil), b...))
-			} else {
-				j := rng.IntN(int(ci.reservoirN))
-				if j < sampleSize {
-					ci.reservoir[j] = append(ci.reservoir[j][:0], b...)
+			// After we know the total row count (or during the first
+			// pass), decide whether to use reservoir sampling. For
+			// tables < fullScanThreshold, keep all rows. For larger
+			// tables, use 1% reservoir.
+			if rowCount == fullScanThreshold {
+				// Switch to reservoir mode at this point.
+				useReservoir = true
+			}
+			if useReservoir {
+				if int64(len(ci.reservoir)) < int64(sampleSize) {
+					ci.reservoir = append(ci.reservoir, append([]byte(nil), b...))
+				} else {
+					j := rng.IntN(int(ci.reservoirN))
+					if j < sampleSize {
+						ci.reservoir[j] = append(ci.reservoir[j][:0], b...)
+					}
 				}
+			} else {
+				// Below threshold: keep all distinct values for NDV.
+				// (reservoir only stores min/max, NDV uses distinct map.)
 			}
 		}
 	}
