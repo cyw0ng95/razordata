@@ -11,7 +11,7 @@ import (
 
 type RowArena struct {
 	mu      sync.Mutex
-	slabs   [][]Value // all slabs ever allocated — kept alive for GC tracing
+	slabs   [][]Value // all slabs ever allocated (cleared on Reset)
 	slab    []Value   // current active slab
 	offset  int
 	slabCap int
@@ -145,10 +145,9 @@ func (a *RowArena) grow(needed int) {
 }
 
 // growLocked grows the arena slab. Caller must hold a.mu.
+// REQ001639: removed redundant a.slabs tracking — old slabs stay alive
+// via outstanding Row.Data sub-slices through normal GC reachability.
 func (a *RowArena) growLocked(needed int) {
-	if a.slab != nil {
-		a.slabs = append(a.slabs, a.slab) // keep alive for GC tracing
-	}
 	// REQ001285: geometric growth — double the slab each time to reduce
 	// grow() frequency. For 10K rows x 6 cols x 48B = 2.88MB, fixed
 	// 64KB slabs require ~44 grows; geometric doubling needs ~6.

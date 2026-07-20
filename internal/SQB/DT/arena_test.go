@@ -3,6 +3,7 @@ package DT
 import (
 	"bytes"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -291,5 +292,77 @@ func BenchmarkRowArena_Init_Pool(b *testing.B) {
 				arena.Reset()
 			}
 		})
+	}
+}
+
+// TestRowArena_OldSlabsNotCollectedWhileReferenced verifies REQ001639:
+// old slabs stay alive through outstanding Row.Data sub-slices even
+// after the `a.slabs` tracking is removed. We allocate a row, keep a
+// reference to its Data, grow the arena multiple times, force GC, and
+// verify the old row data is still valid.
+func TestRowArena_OldSlabsNotCollectedWhileReferenced(t *testing.T) {
+	schema := &StoreSchema{
+		Cols:     []string{"a", "b", "c"},
+		ColIndex: map[string]int{"a": 0, "b": 1, "c": 2},
+	}
+
+	arena := &RowArena{}
+
+	// Allocate a row that will live in the first slab.
+	row := arena.AllocRow(3, schema)
+	row.Data[0] = NewIntValue(42)
+	row.Data[1] = NewFloatValue(3.14)
+	row.Data[2] = NewTextValue("hello")
+	// Keep a reference to the row's Data.
+	oldData := row.Data
+
+	// Grow the arena many times (geometric: 64KB → 128KB → 256KB → ...)
+	// Each slab of Value is ~8K values. 3 rows per cycle, so we need
+	// ~8K/3 ≈ 2700 cycles to overflow one slab.
+	for i := 0; i < 10000; i++ {
+		r := arena.AllocRow(3, schema)
+		r.Data[0] = NewIntValue(int64(i))
+		r.Data[1] = NewFloatValue(float64(i))
+		r.Data[2] = NewTextValue("x")
+	}
+
+	// Force GC to run.
+	runtime.GC()
+
+	// Verify the old row data is still valid.
+	if got := oldData[0].I64; got != 42 {
+		t.Errorf("oldData[0].I64 = %d, want 42", got)
+	}
+	if got := oldData[1].F64; got != 3.14 {
+		t.Errorf("oldData[1].F64 = %f, want 3.14", got)
+	}
+	if got := oldData[2].S; got != "hello" {
+		t.Errorf("oldData[2].S = %q, want hello", got)
+	}
+
+	arena.Reset()
+}
+
+// BenchmarkSelect1_GCPressure measures alloc/grow/reset cycles under
+// GC pressure. REQ001639: removing redundant slabs tracking should
+// reduce GC scan time compared to the old approach.
+func BenchmarkSelect1_GCPressure(b *testing.B) {
+	schema := &StoreSchema{
+		Cols:     []string{"a", "b", "c", "d", "e"},
+		ColIndex: map[string]int{"a": 0, "b": 1, "c": 2, "d": 3, "e": 4},
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		arena := &RowArena{}
+		// Allocate enough rows to force multiple grows.
+		for j := 0; j < 10000; j++ {
+			arena.AllocRow(5, schema)
+		}
+		// Force GC mid-cycle to measure scanning overhead.
+		if i%10 == 0 {
+			runtime.GC()
+		}
+		arena.Reset()
 	}
 }
