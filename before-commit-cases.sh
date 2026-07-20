@@ -37,7 +37,7 @@ quick_fail
 cd "$ROOT/tests/sqlcmp"
 
 # Fast: SLT evidence files (~500ms each)
-EVIDENCE_CASES=(
+FAST_SLT_CASES=(
   "in1:evidence/in1"
   "in2:evidence/in2"
   "aggfunc:evidence/slt_lang_aggfunc"
@@ -50,12 +50,17 @@ EVIDENCE_CASES=(
   "reindex:evidence/slt_lang_reindex"
   "replace:evidence/slt_lang_replace"
   "update:evidence/slt_lang_update"
+  "idx1000_2:index/random/1000/slt_good_2"
+  "idx1000_3:index/random/1000/slt_good_3"
+  "idx1000_4:index/random/1000/slt_good_4"
+  "rsel125:random/select/slt_good_125"
+  "rsel126:random/select/slt_good_126"
 )
 
-for case_def in "${EVIDENCE_CASES[@]}"; do
+for case_def in "${FAST_SLT_CASES[@]}"; do
   label="${case_def%%:*}"
   path="${case_def##*:}"
-  run_step "evidence/$label" "SLT $path" \
+  run_step "$label" "SLT $path" \
     go test -tags slt_corpus -run "TestSLT_PerFile/$path" -count=1 -timeout 30s ./slt/
   quick_fail
 done
