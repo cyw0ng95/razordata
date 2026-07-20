@@ -23,86 +23,8 @@ func tryVectorizePlan(root DT.Operator) DT.Operator {
 	return root
 }
 
-// REQ001614: isEligible removed — tryVectorizePlan always succeeds
-// by falling back to ScalarBatchProducer.
-
-// isEligible checks whether the operator tree can be vectorized.
-// REQ001602: expanded eligibility — sub-components that are not yet
-// vectorized are acceptable; they will be wrapped in
-// ScalarBatchProducer at runtime. This turns vectorization from a
-// strict white-list into a best-effort optimization.
-func isEligible(root DT.Operator) bool {
-	var check func(op DT.Operator) bool
-	check = func(op DT.Operator) bool {
-		if op == nil {
-			return true
-		}
-		switch o := op.(type) {
-		case *OP.SeqScan:
-			return true
-		case *OP.IndexScan:
-			// Non-covering IndexScan: still eligible; the scalar
-			// path will be wrapped in ScalarBatchProducer.
-			return true
-		case *OP.BitmapHeapScan:
-			return true
-		case *OP.Filter:
-			return check(o.Child())
-		case *OP.Project:
-			return check(o.Child())
-		case *AG.Aggregate:
-			if len(o.GroupCols()) > 0 {
-				for _, gc := range o.GroupCols() {
-					if _, ok := gc.(*PS.Ident); !ok {
-						return false
-					}
-				}
-			}
-			return check(o.Child())
-		case *AG.HashAggregate:
-			if len(o.GroupCols()) > 0 {
-				for _, gc := range o.GroupCols() {
-					if _, ok := gc.(*PS.Ident); !ok {
-						return false
-					}
-				}
-			}
-			return true
-		case *OP.HashJoin:
-			// REQ001618: multi-column equi-join keys are supported.
-			// Both sides must have the same number of keys (> 0).
-			if len(o.LeftKeys()) == 0 || len(o.RightKeys()) == 0 {
-				return false
-			}
-			if len(o.LeftKeys()) != len(o.RightKeys()) {
-				return false
-			}
-			return check(o.LeftChild()) && check(o.RightChild())
-		case *OP.NestedLoopJoin:
-			return check(o.LeftChild()) && check(o.RightChild())
-		case *OP.MergeJoin:
-			return check(o.LeftChild()) && check(o.RightChild())
-		case *OP.HashCrossJoin:
-			return check(o.LeftChild()) && check(o.RightChild())
-		case *OP.Distinct:
-			return check(o.Child())
-		case *OP.CompoundOp:
-			return o.CompoundOpType() == PS.CompoundUnionAll ||
-				o.CompoundOpType() == PS.CompoundUnion ||
-				o.CompoundOpType() == PS.CompoundExcept ||
-				o.CompoundOpType() == PS.CompoundIntersect
-		case *OP.Sort:
-			return check(o.Child())
-		case *OP.TopNSort:
-			return check(o.Child())
-		case *OP.Limit:
-			return check(o.Child())
-		default:
-			return false
-		}
-	}
-	return check(root)
-}
+// REQ001614: isEligible removed — tryVectorizePlan always succeeds.
+// All operators are now vectorized or wrapped in ScalarBatchProducer.
 
 // transformOp transforms a row operator tree into a BatchProducer chain.
 func transformOp(op DT.Operator) UT.BatchProducer {

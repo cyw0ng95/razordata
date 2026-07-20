@@ -2,7 +2,6 @@ package UT
 
 import (
 	"context"
-	"errors"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
@@ -144,109 +143,5 @@ func IsBatchProducer(op pl.Operator) bool {
 	return ok
 }
 
-// WrapOperator wraps a pl.Operator as a BatchProducer.
-// If the operator already implements BatchProducer, returns it directly.
-// Otherwise wraps it in a ScalarBatchProducer that converts per-row
-// Next() calls into single-row batches.
-//
-// REQ001601: scalar execution is vectorized execution with batch size=1.
-func WrapOperator(op pl.Operator) BatchProducer {
-	if bp, ok := op.(BatchProducer); ok {
-		return bp
-	}
-	return NewScalarBatchProducer(&operatorBatchAdapter{op: op})
-}
-
-// operatorBatchAdapter bridges pl.Operator (Next) to BatchProducer (NextBatch).
-type operatorBatchAdapter struct {
-	op   pl.Operator
-	rows []pl.Row
-	pos  int
-	done bool
-}
-
-func (a *operatorBatchAdapter) NextBatch(ctx context.Context) (*Batch, error) {
-	if a.done {
-		return nil, nil
-	}
-	// Drain remaining buffered rows first.
-	if a.pos < len(a.rows) {
-		// Return one row at a time from buffer.
-		row := a.rows[a.pos]
-		a.pos++
-		out := GetBatch(len(row.Cols))
-		out.Size = 1
-		for i, col := range row.Cols {
-			out.Cols[i].Name = col
-			if a.pos-1 < len(row.Data) {
-				v := row.Data[a.pos-1]
-			switch v.Kind {
-			case pl.KindInt:
-				out.Cols[i].Type = LX.T_INT_KW
-				out.Cols[i].Data.Ints = colDataPool.getInts(i, 1)
-				out.Cols[i].Data.Ints[0] = v.I64
-			case pl.KindFloat:
-				out.Cols[i].Type = LX.T_FLOAT_KW
-				out.Cols[i].Data.Floats = colDataPool.getFloats(i, 1)
-				out.Cols[i].Data.Floats[0] = v.F64
-			case pl.KindText, pl.KindBlob:
-				out.Cols[i].Type = LX.T_TEXT
-				out.Cols[i].Data.Strs = colDataPool.getStrs(i, 1)
-				out.Cols[i].Data.Strs[0] = v.S
-			case pl.KindBool:
-				out.Cols[i].Type = LX.T_BOOL
-				out.Cols[i].Data.Bools = colDataPool.getBools(i, 1)
-				out.Cols[i].Data.Bools[0] = v.Bo
-			default:
-				out.Cols[i].Nulls = []bool{true}
-			}
-			}
-		}
-		return out, nil
-	}
-
-	// Fetch next row from operator.
-	row, err := a.op.Next(ctx)
-	if err != nil {
-		if errors.Is(err, pl.ErrNoRows) {
-			a.done = true
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	// Convert row to single-row batch.
-	out := GetBatch(len(row.Cols))
-	out.Size = 1
-	for i, col := range row.Cols {
-		out.Cols[i].Name = col
-		if i < len(row.Data) {
-			v := row.Data[i]
-			switch v.Kind {
-			case pl.KindInt:
-				out.Cols[i].Type = LX.T_INT_KW
-				out.Cols[i].Data.Ints = colDataPool.getInts(i, 1)
-				out.Cols[i].Data.Ints[0] = v.I64
-			case pl.KindFloat:
-				out.Cols[i].Type = LX.T_FLOAT_KW
-				out.Cols[i].Data.Floats = colDataPool.getFloats(i, 1)
-				out.Cols[i].Data.Floats[0] = v.F64
-			case pl.KindText, pl.KindBlob:
-				out.Cols[i].Type = LX.T_TEXT
-				out.Cols[i].Data.Strs = colDataPool.getStrs(i, 1)
-				out.Cols[i].Data.Strs[0] = v.S
-			case pl.KindBool:
-				out.Cols[i].Type = LX.T_BOOL
-				out.Cols[i].Data.Bools = colDataPool.getBools(i, 1)
-				out.Cols[i].Data.Bools[0] = v.Bo
-			default:
-				out.Cols[i].Nulls = []bool{true}
-			}
-		}
-	}
-	return out, nil
-}
-
-func (a *operatorBatchAdapter) Close() error {
-	return a.op.Close()
-}
+// REQ001614: WrapOperator and operatorBatchAdapter removed.
+// All operators go through BatchProducer directly.
