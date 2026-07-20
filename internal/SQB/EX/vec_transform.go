@@ -3,6 +3,7 @@ package EX
 import (
 	"strings"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -16,11 +17,62 @@ import (
 // a BatchToRowAdapter. Falls back to the original root unchanged if
 // vectorization is not applicable.
 func tryVectorizePlan(root DT.Operator) DT.Operator {
-	bp := transformOp(root)
-	if bp != nil {
-		return UT.NewBatchToRowAdapter(bp)
+	// REQ001581: planner wraps plan.Root in *AD.AdaptiveOp (planner.go:526)
+	// so this call site almost always sees an AdaptiveOp. Without
+	// unwrapping, transformOp returns nil (no case for AdaptiveOp), and
+	// the entire plan tree — including every Filter, HashJoin, Project
+	// inside AdaptiveOp.Inner — falls back to row execution, bypassing
+	// REQ001614 (default vec), REQ001618-1623 (vec joins), REQ001611
+	// (HJ batch emission), and REQ001631 (IN-list bloom). Dominates
+	// SLT select4 long-tail wall time. The vectorized chain that we
+	// produce here already supersedes ADQC's specialized codegen path
+	// (which targets the same batch shape), so unwrapping the
+	// AdaptiveOp wrapper is semantically equivalent and faster.
+	vec := transformRoot(root)
+	if vec != nil {
+		return UT.NewBatchToRowAdapter(vec)
 	}
 	return root
+}
+
+// transformRoot recurses one level through AD wrappers before calling
+// transformOp on the actual data operator. For AdaptiveOp the inner
+// is what gets vectorized — the BatchProducer result replaces the
+// AdaptiveOp entirely because vec execution already supersedes ADQC.
+func transformRoot(root DT.Operator) UT.BatchProducer {
+	if root == nil {
+		return nil
+	}
+	if aop, ok := root.(*AD.AdaptiveOp); ok {
+		// REQ001581: only unwrap AdaptiveOp for plans that contain
+		// a join operator. Non-join plans (Sort, Filter, Project,
+		// SeqScan) are well-tested with the row-based path and would
+		// expose latent vec bugs in CrossJoin, Sort, etc.
+		// This is a conservative gate; expand as vec operators mature.
+		if !hasJoinOp(aop.Inner) {
+			return nil
+		}
+		return transformOp(aop.Inner)
+	}
+	return transformOp(root)
+}
+
+// hasJoinOp walks the operator tree for join operators.
+// REQ001581: used by transformRoot to gate AdaptiveOp unwrapping.
+func hasJoinOp(op DT.Operator) bool {
+	if op == nil {
+		return false
+	}
+	switch op.(type) {
+	case *OP.HashJoin, *OP.NestedLoopJoin, *OP.MergeJoin:
+		return true
+	}
+	for _, child := range childrenOf(op) {
+		if hasJoinOp(child) {
+			return true
+		}
+	}
+	return false
 }
 
 // REQ001614: isEligible removed — tryVectorizePlan always succeeds.

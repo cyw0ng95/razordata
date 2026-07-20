@@ -379,6 +379,16 @@ func GetBatch(cols int) *Batch {
 		b.Cols[i].Type = 0
 		b.Cols[i].Data = ColumnData{}
 		b.Cols[i].Nulls = nil
+		b.Cols[i].Name = ""
+	}
+	// REQ001582: clear Name on all remaining pooled columns so stale
+	// names from a previous owner (e.g. a wider SeqScan) do not leak
+	// into ColNames() / ToRows() output. Without this, an aggregate
+	// that emits 1 column can produce a row showing ["count","name"]
+	// because the pooled batch kept column 1's name from an earlier
+	// child scan. Critical for correctness, not just performance.
+	for i := cols; i < MaxColumns; i++ {
+		b.Cols[i].Name = ""
 	}
 	return b
 }
