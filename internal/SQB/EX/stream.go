@@ -1,10 +1,11 @@
 package EX
 
 import (
-	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"context"
 	"errors"
 	"sync"
+
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -225,7 +226,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 		if err != nil {
 			return nil, err
 		}
-		propagateParams(op, args)
+		propagateParams(op, args, &e.paramBuf)
 		firstRow, firstErr := op.Next(ctx)
 		if firstErr != nil && firstErr != DT.ErrNoRows {
 			op.Close()
@@ -285,7 +286,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	if plan == nil || plan.Root == nil {
 		return nil, errors.New("ex: plan produced no root")
 	}
-	propagateParams(plan.Root, args)
+	propagateParams(plan.Root, args, &e.paramBuf)
 	propagatePlanner(plan.Root, e.planner)
 	// REQ000586: thread DT.ExecContext to eliminate global.
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
@@ -300,98 +301,98 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 		if firstErr == DT.ErrNoRows {
 			plan.Root.Close()
 			return &streamIterator{
-                cols:  nil,
-                types: nil,
-                done:  true,
-            }, nil
-        }
-        plan.Root.Close()
-        return nil, firstErr
-    }
-    DT.WithExecContext(&firstRow, execCtx)
-    cols := append([]string(nil), firstRow.Cols...)
-    types := append([]LX.TokenType(nil), firstRow.Types...)
+				cols:  nil,
+				types: nil,
+				done:  true,
+			}, nil
+		}
+		plan.Root.Close()
+		return nil, firstErr
+	}
+	DT.WithExecContext(&firstRow, execCtx)
+	cols := append([]string(nil), firstRow.Cols...)
+	types := append([]LX.TokenType(nil), firstRow.Types...)
 
-    // REQ001409: for simple small queries, use synchronous caller-pull path
-    // to avoid goroutine stack + channel sync overhead.
-    // REQ001425: use lazy streaming from the operator tree instead of
-    // pre-buffering all rows into a slice. Eliminates the append+slice
-    // growth per query for small result sets.
-    if isEligibleForSyncStream(stmt, plan, e.planner) {
-        return e.streamFromOperator(ctx, plan, execCtx, firstRow, true, cols, types), nil
-    }
+	// REQ001409: for simple small queries, use synchronous caller-pull path
+	// to avoid goroutine stack + channel sync overhead.
+	// REQ001425: use lazy streaming from the operator tree instead of
+	// pre-buffering all rows into a slice. Eliminates the append+slice
+	// growth per query for small result sets.
+	if isEligibleForSyncStream(stmt, plan, e.planner) {
+		return e.streamFromOperator(ctx, plan, execCtx, firstRow, true, cols, types), nil
+	}
 
-    // REQ001410: do NOT defer resetRowArena here — the goroutine
-    // launched below continues reading from plan.Root after this
-    // function returns. The arena must survive until the goroutine
-    // finishes. resetRowArena is called in the goroutine's deferred
-    // cleanup (after close(rowCh)) instead.
-    rowCh := make(chan DT.Row, 16)
-    rowCh <- firstRow
-    closed := false
-    var closeMu sync.Mutex
-    closer := func() error {
-        closeMu.Lock()
-        defer closeMu.Unlock()
-        if closed {
-            return nil
-        }
-        closed = true
-        return plan.Root.Close()
-    }
-    go func() {
-        defer close(rowCh)
-        // REQ001604: if the plan is vectorized, drain via NextBatch()
-        // instead of per-row Next() to avoid goroutine-per-row overhead.
-        if bp, ok := plan.Root.(UT.BatchProducer); ok {
-            for {
-                batch, err := bp.NextBatch(ctx)
-                if err != nil {
-                    return
-                }
-                if batch == nil {
-                    break
-                }
-                rows := batch.ToRows()
-                for i := range rows {
-                    OP.WithExecContext(&rows[i], execCtx)
-                    select {
-                    case rowCh <- rows[i]:
-                    case <-ctx.Done():
-                        return
-                    }
-                }
-                if batch.Pooled {
-                    batch.Put()
-                }
-            }
-            return
-        }
-        for {
-            closeMu.Lock()
-            if closed {
-                closeMu.Unlock()
-                return
-            }
-            closeMu.Unlock()
-            r, err := plan.Root.Next(ctx)
-            if err != nil {
-                return
-            }
-            OP.WithExecContext(&r, execCtx)
-            select {
-            case rowCh <- r:
-            case <-ctx.Done():
-                return
-            }
-        }
-    }()
-    return &streamIterator{
-        cols:   cols,
-        types:  types,
-        rowCh:  rowCh,
-        closer: closer,
-    }, nil
+	// REQ001410: do NOT defer resetRowArena here — the goroutine
+	// launched below continues reading from plan.Root after this
+	// function returns. The arena must survive until the goroutine
+	// finishes. resetRowArena is called in the goroutine's deferred
+	// cleanup (after close(rowCh)) instead.
+	rowCh := make(chan DT.Row, 16)
+	rowCh <- firstRow
+	closed := false
+	var closeMu sync.Mutex
+	closer := func() error {
+		closeMu.Lock()
+		defer closeMu.Unlock()
+		if closed {
+			return nil
+		}
+		closed = true
+		return plan.Root.Close()
+	}
+	go func() {
+		defer close(rowCh)
+		// REQ001604: if the plan is vectorized, drain via NextBatch()
+		// instead of per-row Next() to avoid goroutine-per-row overhead.
+		if bp, ok := plan.Root.(UT.BatchProducer); ok {
+			for {
+				batch, err := bp.NextBatch(ctx)
+				if err != nil {
+					return
+				}
+				if batch == nil {
+					break
+				}
+				rows := batch.ToRows()
+				for i := range rows {
+					OP.WithExecContext(&rows[i], execCtx)
+					select {
+					case rowCh <- rows[i]:
+					case <-ctx.Done():
+						return
+					}
+				}
+				if batch.Pooled {
+					batch.Put()
+				}
+			}
+			return
+		}
+		for {
+			closeMu.Lock()
+			if closed {
+				closeMu.Unlock()
+				return
+			}
+			closeMu.Unlock()
+			r, err := plan.Root.Next(ctx)
+			if err != nil {
+				return
+			}
+			OP.WithExecContext(&r, execCtx)
+			select {
+			case rowCh <- r:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return &streamIterator{
+		cols:   cols,
+		types:  types,
+		rowCh:  rowCh,
+		closer: closer,
+	}, nil
 }
 
 // QueryStreamCompiled runs a CompiledPlan through the streaming path,
@@ -409,7 +410,7 @@ func (e *Executor) QueryStreamCompiled(ctx context.Context, cp *CompiledPlan, ar
 	if plan == nil || plan.Root == nil {
 		return nil, errors.New("ex: QueryStreamCompiled: plan produced no root")
 	}
-	propagateParams(plan.Root, args)
+	propagateParams(plan.Root, args, &e.paramBuf)
 	propagatePlanner(plan.Root, e.planner)
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	execCtx.RowArena = e.ensureArena()
@@ -485,25 +486,25 @@ func (e *Executor) QueryStreamCompiled(ctx context.Context, cp *CompiledPlan, ar
 // For very small result sets this is optimal because the caller can
 // iterate over the slice without operator tree overhead.
 func (e *Executor) syncStreamPath(ctx context.Context, plan *pl.PlanResult, execCtx *DT.ExecContext, firstRow DT.Row, cols []string, types []LX.TokenType) (*streamIterator, error) {
-    rows := []DT.Row{firstRow}
-    for {
-        r, err := plan.Root.Next(ctx)
-        if err != nil {
-            if err == DT.ErrNoRows {
-                break
-            }
-            plan.Root.Close()
-            return nil, err
-        }
-        OP.WithExecContext(&r, execCtx)
-        rows = append(rows, r)
-    }
-    plan.Root.Close()
+	rows := []DT.Row{firstRow}
+	for {
+		r, err := plan.Root.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				break
+			}
+			plan.Root.Close()
+			return nil, err
+		}
+		OP.WithExecContext(&r, execCtx)
+		rows = append(rows, r)
+	}
+	plan.Root.Close()
 	return &streamIterator{
-		cols: cols,
+		cols:  cols,
 		types: types,
-		rows: rows,
-		idx:  0, // start from firstRow
+		rows:  rows,
+		idx:   0, // start from firstRow
 	}, nil
 }
 
@@ -538,86 +539,86 @@ func (e *Executor) streamFromOperator(ctx context.Context, plan *pl.PlanResult, 
 // for large/complex queries, and slice-based sync (rows/idx) for small
 // queries to avoid goroutine + channel overhead.
 type streamIterator struct {
-    cols   []string
-    types  []LX.TokenType
-    rowCh  chan DT.Row
-    closer func() error
-    rows   []DT.Row
-    idx    int
+	cols   []string
+	types  []LX.TokenType
+	rowCh  chan DT.Row
+	closer func() error
+	rows   []DT.Row
+	idx    int
 
-    // REQ001425: lazy stream path — pulls from operator tree on demand
-    // instead of pre-buffering all rows. Set by streamFromOperator.
-    lazyRow      *DT.Row      // first row (already fetched)
-    lazyPlan     *pl.PlanResult
-    lazyCtx      context.Context
-    lazyExecCtx  *DT.ExecContext
+	// REQ001425: lazy stream path — pulls from operator tree on demand
+	// instead of pre-buffering all rows. Set by streamFromOperator.
+	lazyRow     *DT.Row // first row (already fetched)
+	lazyPlan    *pl.PlanResult
+	lazyCtx     context.Context
+	lazyExecCtx *DT.ExecContext
 
-    done bool
-    mu   sync.Mutex
+	done bool
+	mu   sync.Mutex
 }
 
 func (s *streamIterator) Cols() []string        { return s.cols }
 func (s *streamIterator) Types() []LX.TokenType { return s.types }
 func (s *streamIterator) Next() (DT.Row, error) {
-    if s == nil || s.done {
-        return DT.Row{}, DT.ErrNoRows
-    }
-    // Lazy (operator-pull) path: stream without pre-buffering.
-    if s.lazyPlan != nil {
-        // Return the already-fetched first row.
-        if s.lazyRow != nil {
-            r := *s.lazyRow
-            s.lazyRow = nil
-            return r, nil
-        }
-        r, err := s.lazyPlan.Root.Next(s.lazyCtx)
-        if err != nil {
-            if err == DT.ErrNoRows {
-                s.done = true
-                if s.closer != nil {
-                    s.closer()
-                }
-                return DT.Row{}, DT.ErrNoRows
-            }
-            s.done = true
-            if s.closer != nil {
-                s.closer()
-            }
-            return DT.Row{}, err
-        }
-        OP.WithExecContext(&r, s.lazyExecCtx)
-        return r, nil
-    }
-    // Sync (slice-backed) path
-    if s.rows != nil {
-        if s.idx >= len(s.rows) {
-            s.done = true
-            return DT.Row{}, DT.ErrNoRows
-        }
-        r := s.rows[s.idx]
-        s.idx++
-        return r, nil
-    }
-    // Channel path
-    if s.rowCh == nil {
-        s.done = true
-        return DT.Row{}, DT.ErrNoRows
-    }
-    r, ok := <-s.rowCh
-    if !ok {
-        s.done = true
-        return DT.Row{}, DT.ErrNoRows
-    }
-    return r, nil
+	if s == nil || s.done {
+		return DT.Row{}, DT.ErrNoRows
+	}
+	// Lazy (operator-pull) path: stream without pre-buffering.
+	if s.lazyPlan != nil {
+		// Return the already-fetched first row.
+		if s.lazyRow != nil {
+			r := *s.lazyRow
+			s.lazyRow = nil
+			return r, nil
+		}
+		r, err := s.lazyPlan.Root.Next(s.lazyCtx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				s.done = true
+				if s.closer != nil {
+					s.closer()
+				}
+				return DT.Row{}, DT.ErrNoRows
+			}
+			s.done = true
+			if s.closer != nil {
+				s.closer()
+			}
+			return DT.Row{}, err
+		}
+		OP.WithExecContext(&r, s.lazyExecCtx)
+		return r, nil
+	}
+	// Sync (slice-backed) path
+	if s.rows != nil {
+		if s.idx >= len(s.rows) {
+			s.done = true
+			return DT.Row{}, DT.ErrNoRows
+		}
+		r := s.rows[s.idx]
+		s.idx++
+		return r, nil
+	}
+	// Channel path
+	if s.rowCh == nil {
+		s.done = true
+		return DT.Row{}, DT.ErrNoRows
+	}
+	r, ok := <-s.rowCh
+	if !ok {
+		s.done = true
+		return DT.Row{}, DT.ErrNoRows
+	}
+	return r, nil
 }
 
 func (s *streamIterator) Close() error {
-    if s == nil {
-        return nil
-    }
-    s.done = true
-    if s.closer != nil {
-        return s.closer()
-    }
-    return nil
+	if s == nil {
+		return nil
+	}
+	s.done = true
+	if s.closer != nil {
+		return s.closer()
+	}
+	return nil
 }

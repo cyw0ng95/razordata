@@ -27,7 +27,7 @@ func (s *staticOperator) Next(_ context.Context) (pl.Row, error) {
 func (s *staticOperator) Close() error { return nil }
 
 func makeRow(cols []string, data []any) DT.Row {
-	return pl.Row{Cols: cols, Data: valueFromAnySlice(data)}
+	return pl.Row{Cols: cols, Data: valueFromAnySlice(data, nil)}
 }
 
 func TestWindow_RowNumber(t *testing.T) {
@@ -202,11 +202,11 @@ func TestWindow_RangeFrame(t *testing.T) {
 
 	// Input: 5 rows with ORDER BY val: [1, 1, 2, 3, 3]
 	rows := []pl.Row{
-		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(1), int64(1)})},
-		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(2), int64(1)})},
-		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(3), int64(2)})},
-		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(4), int64(3)})},
-		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(5), int64(3)})},
+		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(1), int64(1)}, nil)},
+		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(2), int64(1)}, nil)},
+		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(3), int64(2)}, nil)},
+		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(4), int64(3)}, nil)},
+		{Cols: []string{"id", "val"}, Data: valueFromAnySlice([]any{int64(5), int64(3)}, nil)},
 	}
 	input := &staticOperator{rows: rows}
 
@@ -444,7 +444,7 @@ func TestWindow_GroupsFrame(t *testing.T) {
 	spec := &PS.WindowSpec{
 		OrderBy: []PS.OrderItem{{Expr: &PS.Ident{Name: "v"}}},
 		Frame: &PS.WindowFrame{
-			Type: "GROUPS",
+			Type:  "GROUPS",
 			Start: PS.FrameBound{Type: "PRECEDING", Offset: &PS.NumberLiteral{Val: 1}},
 			End:   PS.FrameBound{Type: "CURRENT_ROW"},
 		},

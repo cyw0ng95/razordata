@@ -16,13 +16,12 @@ import (
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 
-	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
-
 
 var ErrNotImplemented = errors.New("ex: not implemented")
 var ErrClosed = errors.New("ex: operator closed")
@@ -92,9 +91,21 @@ func valueFromAny(a any) DT.Value {
 }
 
 // valueFromAnySlice converts a []any to []DT.Value.
-func valueFromAnySlice(a []any) []DT.Value {
+// REQ001580: uses buf to avoid per-query make([]DT.Value, N).
+// Pass nil for buf to allocate a new slice.
+func valueFromAnySlice(a []any, buf *[]DT.Value) []DT.Value {
 	if a == nil {
 		return nil
+	}
+	if buf != nil {
+		if cap(*buf) < len(a) {
+			*buf = make([]DT.Value, len(a))
+		}
+		*buf = (*buf)[:len(a)]
+		for i, v := range a {
+			(*buf)[i] = valueFromAny(v)
+		}
+		return *buf
 	}
 	out := make([]DT.Value, len(a))
 	for i, v := range a {
@@ -242,6 +253,13 @@ type Executor struct {
 	// arena writes propagate to the Engine's field and persist across
 	// queries without per-query slab allocation (REQ001419).
 	rowArena **DT.RowArena
+
+	// REQ001579: paramBuf is a reusable buffer for propagating params
+	// to the operator tree, avoiding per-query make([]any, N) in asAnySlice.
+	paramBuf []any
+	// REQ001580: valueParamBuf is a reusable buffer for converting
+	// []any params to []DT.Value, avoiding per-query make([]DT.Value, N).
+	valueParamBuf []DT.Value
 
 	closed atomic.Bool
 }
@@ -946,7 +964,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 				if err != nil {
 					return Result{}, err
 				}
-				propagateParams(op, args)
+				propagateParams(op, args, &e.paramBuf)
 				defer op.Close()
 				var count int64
 				for {
@@ -966,7 +984,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 			if err != nil {
 				return Result{}, err
 			}
-			propagateParams(op, args)
+			propagateParams(op, args, &e.paramBuf)
 			propagatePlanner(op, e.planner)
 			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 			execCtx.RowArena = e.ensureArena()
@@ -1004,7 +1022,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 		if err != nil {
 			return Result{}, err
 		}
-		propagateParams(op, args)
+		propagateParams(op, args, &e.paramBuf)
 		defer op.Close()
 		var count int64
 		for {
@@ -1027,12 +1045,12 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	// R16-1: thread args down to the operator tree so `?`
 	// placeholders resolve. Writers (INSERT/UPDATE/DELETE) also
 	// support placeholders (e.g. INSERT ... VALUES (?,?)).
-	propagateParams(op, args)
+	propagateParams(op, args, &e.paramBuf)
 	propagatePlanner(op, e.planner)
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(op, execCtx)
-	
+
 	if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
 		return Result{}, err
 	}
@@ -1064,7 +1082,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	// on cache hit. Mirrors QueryAll's fast-path at ex.go:1162-1172.
 	if e.textPlanCache != nil {
 		if plan := e.getTextPlan(sql); plan != nil {
-			propagateParams(plan.Root, args)
+			propagateParams(plan.Root, args, &e.paramBuf)
 			propagatePlanner(plan.Root, e.planner)
 			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			execCtx.RowArena = e.ensureArena()
@@ -1091,7 +1109,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 				if err != nil {
 					return nil, err
 				}
-				propagateParams(op, args)
+				propagateParams(op, args, &e.paramBuf)
 				defer op.Close()
 				var out []DT.Row
 				for {
@@ -1117,7 +1135,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 			if plan == nil || plan.Root == nil {
 				return nil, errors.New("ex: plan produced no root")
 			}
-			propagateParams(plan.Root, args)
+			propagateParams(plan.Root, args, &e.paramBuf)
 			propagatePlanner(plan.Root, e.planner)
 			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			execCtx.RowArena = e.ensureArena()
@@ -1152,7 +1170,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 		if err != nil {
 			return nil, err
 		}
-		propagateParams(op, args)
+		propagateParams(op, args, &e.paramBuf)
 		defer op.Close()
 		var out []DT.Row
 		for {
@@ -1180,7 +1198,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	}
 	// R16-1: thread args down to the operator tree so `?`
 	// placeholders resolve during Eval.
-	propagateParams(plan.Root, args)
+	propagateParams(plan.Root, args, &e.paramBuf)
 	propagatePlanner(plan.Root, e.planner)
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	execCtx.RowArena = e.ensureArena()
@@ -1207,7 +1225,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 			propEctx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			propEctx.RowArena = e.ensureArena()
 			propagateExecContext(plan.Root, propEctx)
-			propagateParams(plan.Root, args)
+			propagateParams(plan.Root, args, &e.paramBuf)
 			propagatePlanner(plan.Root, e.planner)
 			defer plan.Root.Close()
 			return e.drainPlanExecCtx(ctx, plan, propEctx)
@@ -1229,7 +1247,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 			if plan.Root != nil && !isConstRowPlan(plan.Root) {
 				e.putTextPlan(sql, plan)
 			}
-			propagateParams(plan.Root, args)
+			propagateParams(plan.Root, args, &e.paramBuf)
 			propagatePlanner(plan.Root, e.planner)
 			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			execCtx.RowArena = e.ensureArena()
@@ -1259,7 +1277,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 	if plan.Root != nil && !isConstRowPlan(plan.Root) {
 		e.putTextPlan(sql, plan)
 	}
-	propagateParams(plan.Root, args)
+	propagateParams(plan.Root, args, &e.paramBuf)
 	// REQ000366: thread the main-plan planner so SeqScan rows
 	// carry it into subquery evals. propagatePlanner is a
 	// depth-first walk that calls WithPlanner on every node
@@ -1380,7 +1398,7 @@ func (e *Executor) ExecCompiled(ctx context.Context, cp *CompiledPlan, args ...a
 		op := cp.op
 		// R16-1: thread args down to the operator tree so `?`
 		// placeholders resolve.
-		propagateParams(op, args)
+		propagateParams(op, args, &e.paramBuf)
 
 		if hasReturning(cp.stmt) {
 			defer op.Close()
@@ -1417,7 +1435,7 @@ func (e *Executor) ExecCompiled(ctx context.Context, cp *CompiledPlan, args ...a
 
 	// SELECT/compound path
 	plan := cp.plan
-	propagateParams(plan.Root, args)
+	propagateParams(plan.Root, args, &e.paramBuf)
 	propagatePlanner(plan.Root, e.planner)
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	execCtx.RowArena = e.ensureArena()
@@ -1605,14 +1623,15 @@ func replaceLiteralsOnTree(root DT.Operator, vals []any) {
 // (R16-1..2). The walk is depth-first, children-first so the
 // args reach every leaf operator. Operators without a
 // WithParams method are skipped silently.
-func propagateParams(root DT.Operator, args []any) {
+// REQ001579: use buf to avoid per-query make([]any, N).
+func propagateParams(root DT.Operator, args []any, buf *[]any) {
 	if root == nil {
 		return
 	}
 	if args == nil {
 		return
 	}
-	p := asAnySlice(args)
+	p := asAnySlice(args, buf)
 	if w, ok := root.(interface{ WithParams([]any) DT.Operator }); ok {
 		w.WithParams(p)
 	}
@@ -1622,7 +1641,7 @@ func propagateParams(root DT.Operator, args []any) {
 		Child() DT.Operator
 	}
 	if c, ok := root.(childer); ok {
-		propagateParams(c.Child(), args)
+		propagateParams(c.Child(), args, buf)
 	}
 	// Some operators expose children via a `child` field; we
 	// rely on the explain.go walk for those via Child(). Operators
@@ -1632,16 +1651,20 @@ func propagateParams(root DT.Operator, args []any) {
 
 // asAnySlice converts []any to []any for type-stability
 // across the WithParams interface boundary. Avoids an allocation
-// when the slice is already nil.
-func asAnySlice(args []any) []any {
+// when the slice is already nil. REQ001579: uses buf to avoid
+// per-query make([]any, N).
+func asAnySlice(args []any, buf *[]any) []any {
 	if args == nil {
 		return nil
 	}
-	out := make([]any, len(args))
-	for i, a := range args {
-		out[i] = a
+	if cap(*buf) < len(args) {
+		*buf = make([]any, len(args))
 	}
-	return out
+	*buf = (*buf)[:len(args)]
+	for i, a := range args {
+		(*buf)[i] = a
+	}
+	return *buf
 }
 
 // Explain plans the statement and returns a human-readable
