@@ -91,3 +91,29 @@ func TestBatch_ToRows_NilAndEmpty(t *testing.T) {
 		t.Errorf("empty batch: got len=%d want 0", len(rows))
 	}
 }
+
+// TestBatch_GetBatch_ClearsStaleColumnNames verifies REQ001582:
+// GetBatch clears stale Name fields from pooled columns. A previous
+// owner (e.g. a 2-column SeqScan) leaves Name on column 1; after
+// GetBatch(1) the stale name must be gone so ColNames() returns only
+// column 0's name.
+func TestBatch_GetBatch_ClearsStaleColumnNames(t *testing.T) {
+	// Simulate a previous owner: a 2-column batch with names set.
+	b1 := GetBatch(2)
+	b1.SetColumnName(0, "count")
+	b1.SetColumnName(1, "name")
+	b1.Put()
+
+	// Get a 1-column batch from the pool. The stale "name" on column 1
+	// must be cleared.
+	b2 := GetBatch(1)
+	b2.SetColumnName(0, "count")
+	names := b2.ColNames()
+	if len(names) != 1 {
+		t.Fatalf("ColNames() returned %d columns, want 1: %v", len(names), names)
+	}
+	if names[0] != "count" {
+		t.Errorf("ColNames()[0] = %q, want %q", names[0], "count")
+	}
+	b2.Put()
+}
