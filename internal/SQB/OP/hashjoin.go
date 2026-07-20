@@ -488,6 +488,8 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	var firstRightCols []string
 	var firstRightTypes []LX.TokenType
 	var firstRightData []pl.Value
+	// REQ001649: ctx cancellation check every 1024 rows.
+	var ctxCheckRight int
 	for {
 		row, err := j.right.Next(ctx)
 		if err == ErrNoRows {
@@ -495,6 +497,13 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		}
 		if err != nil {
 			return err
+		}
+		ctxCheckRight++
+		if ctxCheckRight >= 1024 {
+			ctxCheckRight = 0
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 		}
 		if rightCount == 0 {
 			firstRightCols = row.Cols
@@ -550,6 +559,8 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 	// append to prevent Go slice growth from allocating a block that
 	// exceeds the remaining budget (OOM observed at hashjoin.go:263
 	// when slice doubling allocated 79 MB in a 1 GB GOMEMLIMIT process).
+	// REQ001649: ctx cancellation check every 1024 rows.
+	var ctxCheckLeft int
 	for {
 		row, err := j.left.Next(ctx)
 		if err == ErrNoRows {
@@ -557,6 +568,13 @@ func (j *HashJoin) buildAndProbe(ctx context.Context) error {
 		}
 		if err != nil {
 			return err
+		}
+		ctxCheckLeft++
+		if ctxCheckLeft >= 1024 {
+			ctxCheckLeft = 0
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 		}
 		// REQ0011XX: check budget BEFORE append. The old check ran
 		// AFTER append and every 1024 rows, allowing Go's slice
