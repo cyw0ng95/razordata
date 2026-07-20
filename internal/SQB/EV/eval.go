@@ -13,8 +13,8 @@ import (
 	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
-	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -44,20 +44,47 @@ func cachedSubqueryKey(e *PS.SubqueryExpr) string {
 	return key
 }
 
-// subqueryColRefCache memoizes the correlated column references for each
-// *PS.SubqueryExpr. extractCorrelatedColumns is an O(n) AST traversal;
-// caching per pointer avoids repeated analysis.
-var subqueryColRefCache sync.Map
+// subqueryColRefCache memoizes the correlated column references and
+// inner table column set for each *PS.SubqueryExpr. extractCorrelatedColumns
+// is an O(n) AST traversal; caching per pointer avoids repeated analysis.
+// REQ001568: stores inner table column set alongside correlated columns.
+var subqueryColRefCache sync.Map // map[*PS.SubqueryExpr]*subqueryColRef
+
+// subqueryColRef holds the correlated column names and inner table column
+// set for a single SubqueryExpr. Both are computed once and reused.
+// REQ001568.
+type subqueryColRef struct {
+	cols      []string
+	innerCols map[string]struct{}
+}
 
 // cachedCorrelatedCols returns the memoized list of correlated column
 // names for the given SubqueryExpr.
 func cachedCorrelatedCols(e *PS.SubqueryExpr) []string {
 	if v, ok := subqueryColRefCache.Load(e); ok {
-		return v.([]string)
+		return v.(*subqueryColRef).cols
 	}
-	cols := extractCorrelatedColumns(e.Subquery.(*PS.Select))
-	subqueryColRefCache.Store(e, cols)
+	sel := e.Subquery.(*PS.Select)
+	cols := extractCorrelatedColumns(sel)
+	innerCols := getInnerTableCols(sel.From)
+	subqueryColRefCache.Store(e, &subqueryColRef{cols: cols, innerCols: innerCols})
 	return cols
+}
+
+// cachedInnerTableCols returns the memoized inner table column set for
+// the given SubqueryExpr. The result is computed once and cached alongside
+// the correlated columns (REQ001568).
+func cachedInnerTableCols(e *PS.SubqueryExpr) map[string]struct{} {
+	if v, ok := subqueryColRefCache.Load(e); ok {
+		return v.(*subqueryColRef).innerCols
+	}
+	// Force computation by calling cachedCorrelatedCols, which populates
+	// the cache entry with both fields.
+	cachedCorrelatedCols(e)
+	if v, ok := subqueryColRefCache.Load(e); ok {
+		return v.(*subqueryColRef).innerCols
+	}
+	return nil
 }
 
 // correlatedColIndicesCache memoizes, per SubqueryExpr pointer, the
@@ -116,6 +143,8 @@ func resolveColIndices(row *Row, names []string) []int {
 
 // getInnerTableCols returns a set of column names for the given table.
 // Returns an empty map when the table is not found or has no columns.
+// The result is cached per subquery expression via cachedInnerTableCols
+// (REQ001568), so this function's allocation is paid once per subquery.
 func getInnerTableCols(from string) map[string]struct{} {
 	if from == "" {
 		return nil
@@ -370,9 +399,9 @@ var ErrEval = errors.New("ex: eval error")
 var ErrEvalDivByZero = errors.New("ex: division by zero")
 var ErrTypeMismatch = errors.New("ex: type mismatch")
 var ErrSubquery = errors.New("ex: subquery not supported here")
- var ErrIgnoreRow = errors.New("ex: ignore row")
- var ErrRaiseRollback = errors.New("ex: raise rollback")
- var ErrRaiseFail = errors.New("ex: raise fail")
+var ErrIgnoreRow = errors.New("ex: ignore row")
+var ErrRaiseRollback = errors.New("ex: raise rollback")
+var ErrRaiseFail = errors.New("ex: raise fail")
 
 func Eval(expr PS.Expr, row *Row, params []any) (any, error) {
 	if expr == nil {
@@ -556,7 +585,7 @@ func evalFallbackEvalValue(expr PS.Expr, row *Row, params []any) (Value, error) 
 	case *PS.WindowFunc:
 		return evalWindowFunc(e, row, params)
 	case *PS.FunctionCall:
-		return EvalFunction(e, row, params)
+		return EvalFunction(e, row, params, nil)
 	case *PS.RaiseFunc:
 		return evalRaise(e, row, params)
 	case *PS.CastExpr:
@@ -1541,7 +1570,11 @@ func valueFromAnyWrap(v any, err error) (Value, error) {
 	return DT.ValueFromAny(v), nil
 }
 
-func EvalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
+// EvalFunction evaluates a function call expression, returning the
+// result as a Value. When buf is non-nil and len(buf) >= len(e.Args),
+// it is reused for argument storage to avoid per-call allocation.
+// REQ001567.
+func EvalFunction(e *PS.FunctionCall, row *Row, params []any, buf []any) (Value, error) {
 	// REQ000978: registry-based dispatch. Adding a new function is
 	// a one-line registration in function_registry.go's init(),
 	// not an edit to a switch block.
@@ -1549,7 +1582,11 @@ func EvalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 		return impl(e.Args, row, params)
 	}
 	if UT.IsDateTimeFunc(e.Name) {
-		args := make([]any, len(e.Args))
+		args := buf
+		if len(args) < len(e.Args) {
+			args = make([]any, len(e.Args))
+		}
+		args = args[:len(e.Args)]
 		for i, arg := range e.Args {
 			v, err := evalFallbackEvalValue(arg, row, params)
 			if err != nil {
@@ -1564,7 +1601,11 @@ func EvalFunction(e *PS.FunctionCall, row *Row, params []any) (Value, error) {
 		return DT.ValueFromAny(v), nil
 	}
 	if UT.IsJSONFunc(e.Name) {
-		args := make([]any, len(e.Args))
+		args := buf
+		if len(args) < len(e.Args) {
+			args = make([]any, len(e.Args))
+		}
+		args = args[:len(e.Args)]
 		for i, arg := range e.Args {
 			v, err := evalFallbackEvalValue(arg, row, params)
 			if err != nil {

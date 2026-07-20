@@ -138,7 +138,7 @@ func TestFunctionRegistry_AggregateDispatch(t *testing.T) {
 // dispatch via the registry.
 func TestFunctionRegistry_FunctionDispatch(t *testing.T) {
 	expr := &PS.FunctionCall{Name: "UPPER", Args: []PS.Expr{&PS.StringLiteral{Val: "hello"}}}
-	v, err := EV.EvalFunction(expr, nil, nil)
+	v, err := EV.EvalFunction(expr, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("UPPER: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestFunctionRegistry_FunctionDispatch(t *testing.T) {
 // function returns ErrEval.
 func TestFunctionRegistry_UnknownFunction(t *testing.T) {
 	expr := &PS.FunctionCall{Name: "NONEXISTENT", Args: []PS.Expr{}}
-	_, err := EV.EvalFunction(expr, nil, nil)
+	_, err := EV.EvalFunction(expr, nil, nil, nil)
 	if !strings.Contains(err.Error(), "eval") && err != EV.ErrEval {
 		t.Errorf("expected ErrEval, got %v", err)
 	}
@@ -162,7 +162,7 @@ func TestFunctionRegistry_UnknownFunction(t *testing.T) {
 // paths (smoke test).
 func TestFunctionRegistry_DispatchUnknownFails(t *testing.T) {
 	expr := &PS.FunctionCall{Name: "NOT_A_REAL_FUNC", Args: nil}
-	v, err := EV.EvalFunction(expr, nil, nil)
+	v, err := EV.EvalFunction(expr, nil, nil, nil)
 	if err == nil {
 		t.Errorf("expected error for unknown function, got %v", v)
 	}
