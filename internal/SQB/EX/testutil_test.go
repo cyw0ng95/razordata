@@ -58,7 +58,7 @@ func newEngineExecutor(t testing.TB) (*Executor, *ls.Engine) {
 }
 
 // mustExec runs a statement and fails the test on error.
-func mustExec(t *testing.T, exec *Executor, ctx context.Context, sql string) {
+func mustExec(t testing.TB, exec *Executor, ctx context.Context, sql string) {
 	t.Helper()
 	if _, err := exec.Exec(ctx, sql); err != nil {
 		t.Fatalf("exec %q: %v", sql, err)
@@ -66,7 +66,7 @@ func mustExec(t *testing.T, exec *Executor, ctx context.Context, sql string) {
 }
 
 // mustQueryAll runs a query and fails the test on error.
-func mustQueryAll(t *testing.T, exec *Executor, ctx context.Context, sql string) []DT.Row {
+func mustQueryAll(t testing.TB, exec *Executor, ctx context.Context, sql string) []DT.Row {
 	t.Helper()
 	rows, err := exec.QueryAll(ctx, sql)
 	if err != nil {

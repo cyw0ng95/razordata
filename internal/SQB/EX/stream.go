@@ -39,12 +39,14 @@ func isEligibleForSyncStream(stmt PS.Stmt, plan *pl.PlanResult, p *Planner) bool
 	if els {
 		return false
 	}
-	// No complex operators in plan tree
-	if hasComplexOperator(plan.Root) {
+	// No complex operators in plan tree — but for small result sets
+	// the goroutine+channel overhead dominates, so skip the check.
+	// REQ001633.
+	estimatedRows := estimateRowCount(sel, p)
+	if hasComplexOperator(plan.Root) && estimatedRows >= syncStreamRowThreshold {
 		return false
 	}
 	// Estimate row count below threshold
-	estimatedRows := estimateRowCount(sel, p)
 	if estimatedRows >= syncStreamRowThreshold {
 		return false
 	}
