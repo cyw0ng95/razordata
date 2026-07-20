@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
@@ -202,5 +203,31 @@ func TestDrainBatch_OperatorFallback_empty(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("got %d rows, want 0", len(rows))
+	}
+}
+
+// BenchmarkDrain_Prealloc_NoGrowslice benchmarks drainPlanRows with
+// N = engineBatchSize rows, verifying zero growslice reallocations.
+// REQ001637: pre-allocated output slice should eliminate all growslice copies.
+func BenchmarkDrain_Prealloc_NoGrowslice(b *testing.B) {
+	rows := make([]DT.Row, OP.EngineBatchSize())
+	for i := range rows {
+		rows[i] = DT.Row{Data: make([]DT.Value, 1)}
+		rows[i].Data[0].I64 = int64(i)
+	}
+	fo := &fakeRowOp{rows: rows}
+	ctx := context.Background()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		fo.idx = 0
+		out, err := drainBatch(ctx, fo, nil)
+		if err != nil {
+			b.Fatalf("drainBatch: %v", err)
+		}
+		if len(out) != OP.EngineBatchSize() {
+			b.Fatalf("got %d rows, want %d", len(out), OP.EngineBatchSize())
+		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
@@ -91,8 +92,9 @@ func drainBatchProducer(ctx context.Context, bp UT.BatchProducer, execCtx *DT.Ex
 }
 
 // drainPlanRows drains a row-based pl.Operator into []DT.Row via Next().
+// REQ001637: pre-allocate output slice to eliminate growslice copies.
 func drainPlanRows(ctx context.Context, root pl.Operator, execCtx *DT.ExecContext) ([]DT.Row, error) {
-	var out []DT.Row
+	out := make([]DT.Row, 0, OP.EngineBatchSize())
 	for {
 		row, err := root.Next(ctx)
 		if err != nil {
