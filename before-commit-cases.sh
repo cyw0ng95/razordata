@@ -24,72 +24,57 @@ quick_fail() {
   fi
 }
 
-# ── Fast: core engine tests ──
+# Fast: core engine tests
 run_step "internal" "go test ./internal/..." \
   go test ./internal/... -count=1 -timeout 180s "$@"
 quick_fail
 
+# Fast: SQL parser/rewriter tests (no SLT corpus needed)
+run_step "sqlcmp" "go test ./tests/sqlcmp/ -run 'Test(DDL|DML|Select|Lexer|Rewriter)'" \
+  go test ./tests/sqlcmp/ -count=1 -timeout 30s -run 'Test(DDL|DML|Select|Lexer|Rewriter)' "$@"
+quick_fail
+
 cd "$ROOT/tests/sqlcmp"
 
-# ── Fast: evidence SLT files (~500ms each) ──
-run_step "evidence/in1" "SLT evidence/in1" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/evidence/in1' -count=1 -timeout 30s ./slt/
-quick_fail
+# Fast: SLT evidence files (~500ms each)
+EVIDENCE_CASES=(
+  "in1:evidence/in1"
+  "in2:evidence/in2"
+  "aggfunc:evidence/slt_lang_aggfunc"
+  "createtrigger:evidence/slt_lang_createtrigger"
+  "createview:evidence/slt_lang_createview"
+  "dropindex:evidence/slt_lang_dropindex"
+  "droptable:evidence/slt_lang_droptable"
+  "droptrigger:evidence/slt_lang_droptrigger"
+  "dropview:evidence/slt_lang_dropview"
+  "reindex:evidence/slt_lang_reindex"
+  "replace:evidence/slt_lang_replace"
+  "update:evidence/slt_lang_update"
+)
 
-run_step "evidence/in2" "SLT evidence/in2" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/evidence/in2' -count=1 -timeout 30s ./slt/
-quick_fail
+for case_def in "${EVIDENCE_CASES[@]}"; do
+  label="${case_def%%:*}"
+  path="${case_def##*:}"
+  run_step "evidence/$label" "SLT $path" \
+    go test -tags slt_corpus -run "TestSLT_PerFile/$path" -count=1 -timeout 30s ./slt/
+  quick_fail
+done
 
-run_step "evidence/aggfunc" "SLT evidence/slt_lang_aggfunc" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/evidence/slt_lang_aggfunc' -count=1 -timeout 30s ./slt/
-quick_fail
+# Medium: select1/2 (~60s each)
+SELECT_FAST_CASES=(
+  "select1:select1"
+  "select2:select2"
+)
 
-run_step "evidence/createtrigger" "SLT evidence/slt_lang_createtrigger" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/evidence/slt_lang_createtrigger' -count=1 -timeout 30s ./slt/
-quick_fail
+for case_def in "${SELECT_FAST_CASES[@]}"; do
+  label="${case_def%%:*}"
+  path="${case_def##*:}"
+  run_step "$label" "SLT $path" \
+    go test -tags slt_corpus -run "TestSLT_PerFile/$path" -count=1 -timeout 60s ./slt/
+  quick_fail
+done
 
-run_step "evidence/createview" "SLT evidence/slt_lang_createview" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/evidence/slt_lang_createview' -count=1 -timeout 30s ./slt/
-quick_fail
-
-run_step "evidence/dropindex" "SLT evidence/slt_lang_dropindex" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/evidence/slt_lang_dropindex' -count=1 -timeout 30s ./slt/
-quick_fail
-
-run_step "evidence/droptable" "SLT evidence/slt_lang_droptable" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/evidence/slt_lang_droptable' -count=1 -timeout 30s ./slt/
-quick_fail
-
-run_step "evidence/droptrigger" "SLT evidence/slt_lang_droptrigger" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/evidence/slt_lang_droptrigger' -count=1 -timeout 30s ./slt/
-quick_fail
-
-run_step "evidence/dropview" "SLT evidence/slt_lang_dropview" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/evidence/slt_lang_dropview' -count=1 -timeout 30s ./slt/
-quick_fail
-
-run_step "evidence/reindex" "SLT evidence/slt_lang_reindex" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/evidence/slt_lang_reindex' -count=1 -timeout 30s ./slt/
-quick_fail
-
-run_step "evidence/replace" "SLT evidence/slt_lang_replace" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/evidence/slt_lang_replace' -count=1 -timeout 30s ./slt/
-quick_fail
-
-run_step "evidence/update" "SLT evidence/slt_lang_update" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/evidence/slt_lang_update' -count=1 -timeout 30s ./slt/
-quick_fail
-
-# ── Medium: select1/2 (~60s each) ──
-run_step "select1" "SLT select1" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/select1' -count=1 -timeout 60s ./slt/
-quick_fail
-
-run_step "select2" "SLT select2" \
-  go test -tags slt_corpus -run 'TestSLT_PerFile/select2' -count=1 -timeout 60s ./slt/
-quick_fail
-
-# ── Slow: select3/4 (~300s / ~600s) ──
+# Slow: select3/4 (~300s / ~600s)
 run_step "select3" "SLT select3" \
   go test -tags slt_corpus -run 'TestSLT_PerFile/select3' -count=1 -timeout 300s ./slt/
 
