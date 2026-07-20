@@ -665,8 +665,20 @@ func (e *Executor) planWithCache(stmt PS.Stmt) (*pl.PlanResult, error) {
 		}
 		key := pl.SerializeKey(paramStmt)
 		if cached := e.getCachedPlan(key); cached != nil {
-			replaceLiteralsOnTree(cached.Root, params)
-			return cached, nil
+			// REQ001585: the cached PlanResult shares the same AdaptiveOp
+			// wrapper instance across all callers. After the first execution,
+			// the AdaptiveOp is in a "compiled" state (direct=true) and its
+			// Inner operator tree is drained. Create a fresh PlanResult with
+			// a new AdaptiveOp wrapping the same inner tree so the operator
+			// is reusable. Without this, the second call to QueryAll for
+			// the same SQL returns 0 rows.
+			fresh := &pl.PlanResult{
+				Root:    AD.NewAdaptiveOp(cached.Root.(*AD.AdaptiveOp).Child(), key),
+				Cost:    cached.Cost,
+				MemoKey: cached.MemoKey,
+			}
+			replaceLiteralsOnTree(fresh.Root, params)
+			return fresh, nil
 		}
 		plan, err := e.planner.Plan(stmt)
 		if err != nil {

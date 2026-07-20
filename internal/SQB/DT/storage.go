@@ -937,11 +937,7 @@ func (h *TableHandle) UpdateRowBatch(oldRows, newRows []Row) (keys [][]byte, buf
 	if n == 0 {
 		return nil, nil, nil
 	}
-	// REQ001577: extract each row's PK exactly once and reuse it for
-	// both the heap-row key construction (line 814) and the
-	// batched secondary-index maintenance pass (line 836). Previously
-	// ExtractPKForUpdate was called twice per row — once for the row
-	// key and again inside the per-row MaintainIndexesOnUpdate loop.
+	// REQ001576: pre-allocate PK storage for batched index maintenance.
 	pks := make([]any, n)
 	keys = make([][]byte, n)
 	bufs = make([][]byte, n)

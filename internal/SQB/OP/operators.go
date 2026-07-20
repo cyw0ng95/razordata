@@ -461,6 +461,13 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			}
 		}
 		s.currentKey = s.it.Key()
+		// REQ001583: deep-copy currentKey — s.it.Key() returns a slice
+		// into the LSM iterator's internal buffer. Without the copy,
+		// StoreKey on every row in Filter.refillBatch's batchBuf aliases
+		// the same iterator buffer and gets silently overwritten.
+		keyCopy := make([]byte, len(s.currentKey))
+		copy(keyCopy, s.currentKey)
+		s.currentKey = keyCopy
 		v := s.it.Value()
 		row, err := DecodeRow(v, s.schema)
 		if err != nil {
@@ -654,6 +661,16 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		// REQ000501: save the raw key so Update/Delete can
 		// preserve the original row key for hidden-PK DT.Tables.
 		s.currentKey = s.it.Key()
+		// REQ001583: deep-copy currentKey — s.it.Key() returns a slice
+		// into the LSM iterator's internal buffer that is only valid
+		// until the next Next() call. Without the copy, StoreKey on
+		// every row in Filter.refillBatch's batchBuf aliases the same
+		// iterator buffer and gets silently overwritten, causing
+		// ExtractPKForUpdate to see an empty StoreKey and allocate a
+		// new synthetic rowid for every UPDATE.
+		keyCopy := make([]byte, len(s.currentKey))
+		copy(keyCopy, s.currentKey)
+		s.currentKey = keyCopy
 		v := s.it.Value()
 		// REQ001225: apply raw-byte filter before decoding to avoid
 		// unnecessary DecodeRowInto work for rows that will be filtered.
@@ -1401,6 +1418,17 @@ func (i *IndexScan) nextFromStore(ctx context.Context) (Row, error) {
 		}
 		i.lastDataSlice = row.Data
 		row.TableName = i.table
+		// REQ001583: save StoreKey so Update/Delete can preserve the
+		// original row key for hidden-PK tables. Deep-copy because
+		// i.it.Key() returns a slice into the iterator's internal buffer.
+		if i.it != nil {
+			key := i.it.Key()
+			if key != nil {
+				sk := make([]byte, len(key))
+				copy(sk, key)
+				row.StoreKey = sk
+			}
+		}
 
 		// REQ000790: record index usage for diagnostics.
 		if i.iu != nil && i.idx != "" {
@@ -1519,6 +1547,10 @@ func (i *IndexScan) nextFromIndex(ctx context.Context) (Row, error) {
 		}
 		i.lastDataSlice = row.Data
 		row.TableName = i.table
+		// REQ001583: save StoreKey so Update/Delete can preserve the
+		// original row key for hidden-PK tables. RowKey is already a
+		// deep copy (append([]byte{}, i.prefix...), pk...).
+		row.StoreKey = RowKey
 		// REQ001108: residual predicates. Skip rows that don't
 		// match; the next loop iteration fetches the next index
 		// entry. With residual==nil this is a single bool check

@@ -698,6 +698,16 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 		if r.Data != nil {
 			r.Data = append([]DT.Value(nil), r.Data...)
 		}
+		// REQ001583: deep-copy StoreKey — it aliases the SeqScan's
+		// internal iterator buffer which is only valid until the
+		// next SeqScan.Next() call. Without the copy, every row
+		// in batchBuf shares the same StoreKey backing array and
+		// gets silently overwritten on the next Next().
+		if r.StoreKey != nil {
+			sk := make([]byte, len(r.StoreKey))
+			copy(sk, r.StoreKey)
+			r.StoreKey = sk
+		}
 		f.batchBuf = append(f.batchBuf, r)
 	}
 	// Tight loop: predicate evaluation, no per-row Eval dispatch.
@@ -732,15 +742,31 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 				if arena, ok := f.execCtx.RowArena.(*DT.RowArena); ok && arena != nil {
 					// REQ001233: batch clone row via arena instead of per-row alloc
 					cloned := arena.CloneRowsBatch([]DT.Row{r})
+					// REQ001583: CloneRowsBatch does not preserve StoreKey.
+					// Copy it from the source row so ExtractPKForUpdate can
+					// use it for hidden-PK UPDATE key generation.
+					for i := range cloned {
+						cloned[i].StoreKey = r.StoreKey
+					}
 					f.batchEmit = append(f.batchEmit, cloned...)
 					continue
 				}
 			}
-			// Only Data needs a per-row deep copy (it varies per row).
 			if r.Data != nil {
-				r.Data = append([]Value(nil), r.Data...)
-			}
-			f.batchEmit = append(f.batchEmit, r)
+			r.Data = append([]Value(nil), r.Data...)
+		}
+		// REQ001583: deep-copy StoreKey — it aliases the SeqScan's
+		// internal iterator buffer which is only valid until the
+		// next Next() call. Without the copy, ExtractPKForUpdate
+		// sees an empty StoreKey and allocates a new synthetic
+		// rowid for every UPDATE, creating new rows instead of
+		// overwriting old ones.
+		if r.StoreKey != nil {
+			sk := make([]byte, len(r.StoreKey))
+			copy(sk, r.StoreKey)
+			r.StoreKey = sk
+		}
+		f.batchEmit = append(f.batchEmit, r)
 		}
 	}
 	return nil
