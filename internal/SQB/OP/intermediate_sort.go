@@ -152,20 +152,26 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 		if allIntKeys {
 			// Int-only path: extract int64 keys directly, compare with <
 			flatIntKeys := make([]int64, n*numKeys)
-			intKeyCache := make([][]int64, n)
 			for i, r := range s.buf {
-				ik := flatIntKeys[i*numKeys : (i+1)*numKeys]
+				base := i * numKeys
 				for j := range s.keys {
-					ik[j] = r.Data[keyAccess[j].slotIdx].I64
+					flatIntKeys[base+j] = r.Data[keyAccess[j].slotIdx].I64
 				}
-				intKeyCache[i] = ik
 			}
-			indices := make([]int, n)
+			// REQ001634: for N ≤ 64, use stack-allocated index array
+			// to avoid heap allocation.
+			var indices []int
+			var smallBuf [64]int
+			if n <= 64 {
+				indices = smallBuf[:n]
+			} else {
+				indices = make([]int, n)
+			}
 			for i := range indices {
 				indices[i] = i
 			}
 			slices.SortStableFunc(indices, func(ai, bi int) int {
-				ka, kb := intKeyCache[ai], intKeyCache[bi]
+				ka, kb := flatIntKeys[ai*numKeys:(ai+1)*numKeys], flatIntKeys[bi*numKeys:(bi+1)*numKeys]
 				for ki := range ka {
 					if ka[ki] < kb[ki] {
 						if s.keys[ki].Desc {
@@ -182,11 +188,9 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 				}
 				return 0
 			})
-			reordered := make([]Row, n)
-			for i, idx := range indices {
-				reordered[i] = s.buf[idx]
-			}
-			s.buf = reordered
+			// REQ001634: apply permutation in-place by following cycles.
+			// Eliminates the reordered allocation and full buffer copy.
+			applyPermutation(s.buf, indices)
 		} else {
 			keyCache := make([][]Value, n)
 			flatKeys := make([]Value, n*numKeys)
@@ -214,7 +218,13 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 					return Row{}, err
 				}
 			} else {
-				indices := make([]int, n)
+				var indices []int
+				var smallBuf [64]int
+				if n <= 64 {
+					indices = smallBuf[:n]
+				} else {
+					indices = make([]int, n)
+				}
 				for i := range indices {
 					indices[i] = i
 				}
@@ -250,11 +260,7 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 					return 0
 				})
 
-				reordered := make([]Row, n)
-				for i, idx := range indices {
-					reordered[i] = s.buf[idx]
-				}
-				s.buf = reordered
+				applyPermutation(s.buf, indices)
 			}
 		}
 		s.materialized = true
@@ -265,6 +271,33 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 	r := s.buf[s.pos]
 	s.pos++
 	return r, nil
+}
+
+// applyPermutation reorders buf in-place according to indices.
+// After the call, buf[i] is the element that was at indices[i].
+// Uses cycle-following — O(n) time, O(1) extra space.
+// REQ001634: eliminates the reordered allocation and full buffer copy.
+func applyPermutation[T any](buf []T, indices []int) {
+	n := len(indices)
+	for i := 0; i < n; i++ {
+		if indices[i] == i {
+			continue
+		}
+		// Start a cycle at i.
+		curr := i
+		saved := buf[i]
+		for {
+			next := indices[curr]
+			if next == i {
+				buf[curr] = saved
+				indices[curr] = curr
+				break
+			}
+			buf[curr] = buf[next]
+			indices[curr] = curr
+			curr = next
+		}
+	}
 }
 
 // ParallelSortThreshold is the minimum row count for parallel sort.
