@@ -56,6 +56,11 @@ type VectorizedHashJoin struct {
 
 	// REQ001622: parallel build phase.
 	pool *UT.WorkerPool
+
+	// REQ001645: explicit parallelism setting for the build phase.
+	// When > 0, it overrides the pool's default worker count.
+	// This is set by the planner when the build side is large (> 10K rows).
+	parallelism int
 }
 
 // NewVectorizedHashJoin creates a vectorized inner hash join.

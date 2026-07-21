@@ -31,6 +31,7 @@ var includedCases = []includedCase{
 	{Label: "in2", Path: "evidence/in2", Timeout: 30},
 	{Label: "reindex", Path: "evidence/slt_lang_reindex", Timeout: 30},
 	{Label: "replace", Path: "evidence/slt_lang_replace", Timeout: 30},
+	{Label: "rsel124", Path: "random/select/slt_good_124", Timeout: 30},
 	{Label: "rsel125", Path: "random/select/slt_good_125", Timeout: 30},
 	{Label: "rsel126", Path: "random/select/slt_good_126", Timeout: 30},
 	{Label: "select1", Path: "select1", Timeout: 120},
