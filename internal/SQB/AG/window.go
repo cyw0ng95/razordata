@@ -43,6 +43,15 @@ func (w *WindowOperator) Input() Operator { return w.input }
 // FuncName returns the name of the window function (ROW_NUMBER, RANK, etc.).
 func (w *WindowOperator) FuncName() string { return w.funcName }
 
+// Args returns the window function arguments.
+func (w *WindowOperator) Args() []PS.Expr { return w.args }
+
+// Spec returns the window specification.
+func (w *WindowOperator) Spec() *PS.WindowSpec { return w.spec }
+
+// Cols returns the column names.
+func (w *WindowOperator) Cols() []string { return w.cols }
+
 func (w *WindowOperator) Next(ctx context.Context) (Row, error) {
 	if w.rows == nil {
 		if err := w.materialize(ctx); err != nil {

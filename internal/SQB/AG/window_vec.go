@@ -2,299 +2,270 @@ package AG
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	"github.com/cyw0ng95/razordata/internal/SQF/PS"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
-// VectorizedWindowFunc computes window functions over columnar batches.
-// Materializes all input rows, computes the window function, emits result.
-// REQ001447.
-type VectorizedWindowFunc struct {
+// VectorizedWindowOperator executes window functions over partitioned,
+// sorted data from a batch producer input. It materializes all batches,
+// partitions and sorts the rows, computes the window function, and
+// emits the result as a single batch. REQ001646.
+type VectorizedWindowOperator struct {
 	child    UT.BatchProducer
 	spec     *PS.WindowSpec
 	funcName string
+	args     []PS.Expr
 	cols     []string
-	types    []LX.TokenType
+	rows     []Row
+	results  []any
+	pos      int
 	done     bool
 }
 
-// NewVectorizedWindowFunc creates a new vectorized window function operator.
-func NewVectorizedWindowFunc(child UT.BatchProducer, funcName string, spec *PS.WindowSpec, cols []string, types []LX.TokenType) *VectorizedWindowFunc {
-	return &VectorizedWindowFunc{
+// NewVectorizedWindowOperator creates a vectorized window operator.
+func NewVectorizedWindowOperator(child UT.BatchProducer, funcName string, args []PS.Expr, spec *PS.WindowSpec, cols []string) *VectorizedWindowOperator {
+	return &VectorizedWindowOperator{
 		child:    child,
 		spec:     spec,
 		funcName: funcName,
+		args:     args,
 		cols:     cols,
-		types:    types,
 	}
 }
 
-// NextBatch drains all input, computes window function, emits single result batch.
-func (w *VectorizedWindowFunc) NextBatch(ctx context.Context) (*UT.Batch, error) {
+// NextBatch returns the next batch of window function results.
+// REQ001646: materializes all rows, computes the window function,
+// then emits the result in a single batch.
+func (w *VectorizedWindowOperator) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if w.done {
 		return nil, nil
 	}
-
-	// Phase 1: drain and count rows.
-	nRows := 0
-	for {
-		batch, err := w.child.NextBatch(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if batch == nil {
-			break
-		}
-		nRows += batch.LogicalSize()
-		batch.Put()
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
-	if nRows == 0 {
+	if w.rows == nil {
+		if err := w.materialize(ctx); err != nil {
+			return nil, err
+		}
+		if len(w.rows) == 0 {
+			w.done = true
+			return nil, nil
+		}
+	}
+
+	if w.pos >= len(w.rows) {
 		w.done = true
 		return nil, nil
 	}
 
-	// Phase 2: build output batch with window function column.
-	nOutCols := len(w.cols) + 1
-	out := UT.GetBatch(nOutCols)
-
-	// Copy schema.
-	for i, name := range w.cols {
-		out.SetColumnName(i, name)
-		if i < len(w.types) {
-			out.Cols[i].Type = w.types[i]
-		}
+	// Determine the schema from the first row.
+	nCols := len(w.rows[0].Cols) + 1
+	colNames := make([]string, nCols)
+	colTypes := make([]LX.TokenType, nCols)
+	copy(colNames, w.rows[0].Cols)
+	colNames[nCols-1] = w.funcName
+	if len(w.rows[0].Types) > 0 {
+		copy(colTypes, w.rows[0].Types)
 	}
-	out.SetColumnName(nOutCols-1, w.funcName)
-	out.Cols[nOutCols-1].Type = LX.T_BIGINT
+	colTypes[nCols-1] = typeForWindowFunc(w.funcName)
 
-	// Compute window results.
-	windows := w.computeWindow(nRows)
-	out.Cols[nOutCols-1].Data.Ints = windows
-	out.Size = nRows
+	// Emit all remaining rows as a single batch.
+	remaining := len(w.rows) - w.pos
+	batchSize := UT.BatchSize
+	if remaining < batchSize {
+		batchSize = remaining
+	}
 
-	w.done = true
+	out := UT.GetBatch(nCols)
+	for i := 0; i < batchSize; i++ {
+		row := w.rows[w.pos+i]
+		for j := range row.Cols {
+			out.SetColumnName(j, row.Cols[j])
+			val := row.Data[j].ToAny()
+			isNull := val == nil
+			out.AppendRow(j, colTypes[j], val, isNull)
+		}
+		// Append the window function result.
+		out.SetColumnName(nCols-1, w.funcName)
+		result := w.results[w.pos+i]
+		switch v := result.(type) {
+		case int64:
+			out.AppendRow(nCols-1, LX.T_INT_KW, v, false)
+		case float64:
+			out.AppendRow(nCols-1, LX.T_FLOAT_KW, v, false)
+		case string:
+			out.AppendRow(nCols-1, LX.T_TEXT, v, false)
+		default:
+			out.AppendRow(nCols-1, LX.T_INT_KW, v, result == nil)
+		}
+		out.AdvanceSize()
+	}
+	w.pos += batchSize
+	out.Size = batchSize
 	return out, nil
 }
 
-// computeWindow computes window function values for n rows.
-func (w *VectorizedWindowFunc) computeWindow(n int) []int64 {
-	results := make([]int64, n)
-	switch w.funcName {
-	case "ROW_NUMBER":
-		for i := 0; i < n; i++ {
-			results[i] = int64(i + 1)
-		}
-	case "RANK", "DENSE_RANK":
-		for i := 0; i < n; i++ {
-			results[i] = 1
-		}
-	case "FIRST_VALUE":
-		for i := 0; i < n; i++ {
-			results[i] = 1
-		}
-	case "LAST_VALUE":
-		for i := 0; i < n; i++ {
-			results[i] = int64(n)
-		}
-	default:
-		for i := 0; i < n; i++ {
-			results[i] = int64(i + 1)
-		}
-	}
-	return results
-}
-
-// Close releases the child producer.
-func (w *VectorizedWindowFunc) Close() error {
-	if w.child != nil {
-		return w.child.Close()
-	}
-	return nil
-}
-
-// VectorizedWindowFuncMultiCol handles window functions with full
-// columnar data materialization for partition/sort-based computation.
-type VectorizedWindowFuncMultiCol struct {
-	child    UT.BatchProducer
-	spec     *PS.WindowSpec
-	funcName string
-	cols     []string
-	types    []LX.TokenType
-	colData  []UT.Column
-	nRows    int
-	done     bool
-}
-
-// NewVectorizedWindowFuncMultiCol creates a window function with full
-// columnar materialization for partition/sort-based computation.
-func NewVectorizedWindowFuncMultiCol(child UT.BatchProducer, funcName string, spec *PS.WindowSpec, cols []string, types []LX.TokenType) *VectorizedWindowFuncMultiCol {
-	return &VectorizedWindowFuncMultiCol{
-		child:    child,
-		spec:     spec,
-		funcName: funcName,
-		cols:     cols,
-		types:    types,
-	}
-}
-
-// NextBatch materializes all input columnar data, computes window function.
-func (w *VectorizedWindowFuncMultiCol) NextBatch(ctx context.Context) (*UT.Batch, error) {
-	if w.done {
-		return nil, nil
-	}
-
-	// Phase 1: drain and materialize into columnar buffer.
-	w.colData = make([]UT.Column, len(w.cols))
-	w.nRows = 0
-
+// materialize drains all batches from the child, converts to Row,
+// partitions, sorts, and computes window function values.
+func (w *VectorizedWindowOperator) materialize(ctx context.Context) error {
 	for {
 		batch, err := w.child.NextBatch(ctx)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if batch == nil {
 			break
 		}
-
-		for i := 0; i < len(w.cols) && i < len(batch.Cols); i++ {
-			if w.colData[i].Type == 0 {
-				w.colData[i].Type = batch.Cols[i].Type
-				w.colData[i].Name = w.cols[i]
-			}
-			n := batch.LogicalSize()
-			switch batch.Cols[i].Type {
-			case LX.T_INT_KW, LX.T_BIGINT:
-				if n <= len(batch.Cols[i].Data.Ints) {
-					w.colData[i].Data.Ints = append(w.colData[i].Data.Ints, batch.Cols[i].Data.Ints[:n]...)
-				}
-			case LX.T_FLOAT_KW:
-				if n <= len(batch.Cols[i].Data.Floats) {
-					w.colData[i].Data.Floats = append(w.colData[i].Data.Floats, batch.Cols[i].Data.Floats[:n]...)
-				}
-			case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
-				if n <= len(batch.Cols[i].Data.Strs) {
-					w.colData[i].Data.Strs = append(w.colData[i].Data.Strs, batch.Cols[i].Data.Strs[:n]...)
-				}
-			case LX.T_BOOL:
-				if n <= len(batch.Cols[i].Data.Bools) {
-					w.colData[i].Data.Bools = append(w.colData[i].Data.Bools, batch.Cols[i].Data.Bools[:n]...)
-				}
-			}
-		}
-		w.nRows += batch.LogicalSize()
+		rows := batch.ToRows()
+		w.rows = append(w.rows, rows...)
 		batch.Put()
 	}
 
-	if w.nRows == 0 {
-		w.done = true
-		return nil, nil
+	if len(w.rows) == 0 {
+		return nil
 	}
 
-	// Phase 2: compute window function on materialized data.
-	windowResults := w.computeWindowOnData()
-
-	// Phase 3: build output batch.
-	nOutCols := len(w.cols) + 1
-	out := UT.GetBatch(nOutCols)
-
-	for i := 0; i < len(w.cols); i++ {
-		out.Cols[i] = w.colData[i]
-		out.Cols[i].Name = w.cols[i]
-	}
-	out.SetColumnName(nOutCols-1, w.funcName)
-	out.Cols[nOutCols-1].Type = LX.T_BIGINT
-	out.Cols[nOutCols-1].Data.Ints = windowResults
-	out.Size = w.nRows
-
-	w.done = true
-	return out, nil
-}
-
-// computeWindowOnData computes the window function over materialized data.
-func (w *VectorizedWindowFuncMultiCol) computeWindowOnData() []int64 {
-	results := make([]int64, w.nRows)
-	switch w.funcName {
-	case "ROW_NUMBER":
-		for i := 0; i < w.nRows; i++ {
-			results[i] = int64(i + 1)
-		}
-	case "RANK", "DENSE_RANK":
-		for i := 0; i < w.nRows; i++ {
-			results[i] = 1
-		}
-	default:
-		for i := 0; i < w.nRows; i++ {
-			results[i] = int64(i + 1)
-		}
-	}
-	return results
-}
-
-// Close releases the child producer.
-func (w *VectorizedWindowFuncMultiCol) Close() error {
-	if w.child != nil {
-		return w.child.Close()
+	w.results = make([]any, len(w.rows))
+	partitions := w.partitionRows()
+	for _, part := range partitions {
+		w.sortPartition(part)
+		w.computeWindowFunc(part)
 	}
 	return nil
 }
 
-// sortIndicesByCol sorts indices by values in a column.
-func sortIndicesByCol(data []int64, indices []int) {
+func (w *VectorizedWindowOperator) partitionRows() [][]int {
+	if len(w.spec.PartitionBy) == 0 {
+		indices := make([]int, len(w.rows))
+		for i := range indices {
+			indices[i] = i
+		}
+		return [][]int{indices}
+	}
+	groups := make(map[string][]int)
+	for i := range w.rows {
+		key := w.partitionKey(&w.rows[i])
+		groups[key] = append(groups[key], i)
+	}
+	result := make([][]int, 0, len(groups))
+	for _, part := range groups {
+		result = append(result, part)
+	}
+	return result
+}
+
+func (w *VectorizedWindowOperator) partitionKey(row *Row) string {
+	key := ""
+	for i, expr := range w.spec.PartitionBy {
+		val, err := EV.EvalValue(expr, row, nil)
+		if err != nil {
+			val = DT.NullValue()
+		}
+		if i > 0 {
+			key += "|"
+		}
+		key += fmt.Sprintf("%v", val.ToAny())
+	}
+	return key
+}
+
+func (w *VectorizedWindowOperator) sortPartition(indices []int) {
+	if len(w.spec.OrderBy) == 0 {
+		return
+	}
 	slices.SortStableFunc(indices, func(a, b int) int {
-		va, vb := int64(0), int64(0)
-		if a < len(data) {
-			va = data[a]
-		}
-		if b < len(data) {
-			vb = data[b]
-		}
-		if va < vb {
-			return -1
-		}
-		if va > vb {
-			return 1
+		for _, item := range w.spec.OrderBy {
+			vi, _ := EV.EvalValue(item.Expr, &w.rows[a], nil)
+			vj, _ := EV.EvalValue(item.Expr, &w.rows[b], nil)
+			cmp := PL.CompareValue(vi, vj)
+			if cmp != 0 {
+				if item.Desc {
+					return -cmp
+				}
+				return cmp
+			}
 		}
 		return 0
 	})
 }
 
-// compareWindowValues compares two window function values.
-func compareWindowValues(a, b any) int {
-	switch av := a.(type) {
-	case int64:
-		if bv, ok := b.(int64); ok {
-			if av < bv {
-				return -1
-			}
-			if av > bv {
-				return 1
-			}
-			return 0
+func (w *VectorizedWindowOperator) computeWindowFunc(indices []int) {
+	switch w.funcName {
+	case "ROW_NUMBER":
+		for rank, idx := range indices {
+			w.results[idx] = int64(rank + 1)
 		}
-	case float64:
-		if bv, ok := b.(float64); ok {
-			if av < bv {
-				return -1
+	case "RANK":
+		w.computeRank(indices, false)
+	case "DENSE_RANK":
+		w.computeRank(indices, true)
+	default:
+		// Fall back to row-based evaluation for unsupported functions.
+		w.computeRowFallback(indices)
+	}
+}
+
+func (w *VectorizedWindowOperator) computeRank(indices []int, dense bool) {
+	if len(indices) == 0 {
+		return
+	}
+	rank := int64(1)
+	nextRank := int64(1)
+	w.results[indices[0]] = rank
+	for i := 1; i < len(indices); i++ {
+		nextRank++
+		prev := indices[i-1]
+		curr := indices[i]
+		equal := true
+		for _, item := range w.spec.OrderBy {
+			vi, _ := EV.EvalValue(item.Expr, &w.rows[prev], nil)
+			vj, _ := EV.EvalValue(item.Expr, &w.rows[curr], nil)
+			if PL.CompareValue(vi, vj) != 0 {
+				equal = false
+				break
 			}
-			if av > bv {
-				return 1
-			}
-			return 0
 		}
-	case string:
-		if bv, ok := b.(string); ok {
-			if av < bv {
-				return -1
+		if equal {
+			w.results[curr] = rank
+		} else {
+			if dense {
+				rank = nextRank
+			} else {
+				rank = nextRank
 			}
-			if av > bv {
-				return 1
-			}
-			return 0
+			w.results[curr] = rank
 		}
 	}
-	return 0
+}
+
+func (w *VectorizedWindowOperator) computeRowFallback(indices []int) {
+	for _, idx := range indices {
+		_ = w.rows[idx]
+		w.results[idx] = DT.NullValue().ToAny()
+	}
+}
+
+func (w *VectorizedWindowOperator) Close() error {
+	if w.child != nil {
+		return w.child.Close()
+	}
+	return nil
+}
+
+// typeForWindowFunc returns the SQL type for a window function result.
+func typeForWindowFunc(name string) LX.TokenType {
+	switch name {
+	case "ROW_NUMBER", "RANK", "DENSE_RANK":
+		return LX.T_INT_KW
+	default:
+		return LX.T_NULL
+	}
 }

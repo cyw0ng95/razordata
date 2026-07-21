@@ -161,6 +161,12 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 			return nil
 		}
 		return OP.NewVectorizedLimit(child, o.Limit())
+	case *AG.WindowOperator:
+		child := transformOp(o.Input())
+		if child == nil {
+			return nil
+		}
+		return AG.NewVectorizedWindowOperator(child, o.FuncName(), o.Args(), o.Spec(), o.Cols())
 	}
 	return nil
 }
