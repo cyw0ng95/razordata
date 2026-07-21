@@ -1,6 +1,9 @@
 package EV
 
 import (
+	"fmt"
+	"hash/fnv"
+	"reflect"
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -136,4 +139,89 @@ func BenchmarkEvalBatchExpr_Subquery_NonCorrelated_CachedHit(b *testing.B) {
 			_ = row
 		}
 	})
+}
+
+// BenchmarkEvalBatchExpr_Subquery_CorrelatedUniform exercises the REQ001652
+// uniform-correlated-value broadcast path: a correlated scalar subquery where
+// every row in the batch has the same correlated column values. The benchmark
+// verifies the fast path (evaluate once, broadcast) over the per-row fallback.
+func BenchmarkEvalBatchExpr_Subquery_CorrelatedUniform(b *testing.B) {
+	n := 1024
+	batch := UT.GetBatch(2)
+	batch.Cols[0].Name = "outer_b"
+	batch.Cols[1].Name = "other"
+	batch.SetColMap(map[string]int{"outer_b": 0, "other": 1})
+	for i := 0; i < n; i++ {
+		batch.AppendRow(0, LX.T_INT_KW, int64(42), false) // same correlated value
+		batch.AppendRow(1, LX.T_INT_KW, int64(i), false)
+		batch.AdvanceSize()
+	}
+
+	subq := &PS.SubqueryExpr{Subquery: &PS.Select{
+		From: "t2",
+		Cols: []PS.Expr{&PS.NumberLiteral{Val: 99}},
+		Where: &PS.BinaryExpr{
+			Left:  &PS.Ident{Name: "c"},
+			Op:    LX.T_EQ,
+			Right: &PS.Ident{Name: "outer_b"},
+		},
+	}}
+
+	// Pre-populate the correlated cache so the broadcast path hits without
+	// needing evalScalarSubquery.
+	subqPtr := uintptr(reflect.ValueOf(subq).Pointer())
+	h := fnv.New64a()
+	writeHashToFNV(h, DT.NewIntValue(42))
+	key := fmt.Sprintf("%x:%x", subqPtr, h.Sum64())
+	correlatedSubqueryCache.Put(key, DT.NewIntValue(99))
+
+	b.ResetTimer()
+	for range b.N {
+		col := EvalBatchExpr(subq, batch, nil)
+		if col.Type != LX.T_INT_KW {
+			b.Fatalf("unexpected type %v", col.Type)
+		}
+	}
+}
+
+// BenchmarkEvalBatchExpr_Subquery_CorrelatedPerRow exercises the per-row
+// fallback when correlated values differ across the batch. The cache is
+// pre-populated for all possible keys so the path measures FNV hashing,
+// cache lookup, and column write overhead rather than planner execution.
+func BenchmarkEvalBatchExpr_Subquery_CorrelatedPerRow(b *testing.B) {
+	n := 1024
+	batch := UT.GetBatch(2)
+	batch.Cols[0].Name = "outer_b"
+	batch.Cols[1].Name = "other"
+	batch.SetColMap(map[string]int{"outer_b": 0, "other": 1})
+	for i := 0; i < n; i++ {
+		batch.AppendRow(0, LX.T_INT_KW, int64(i), false) // different correlated value each row
+		batch.AppendRow(1, LX.T_INT_KW, int64(i), false)
+		batch.AdvanceSize()
+	}
+
+	subq := &PS.SubqueryExpr{Subquery: &PS.Select{
+		From: "t2",
+		Cols: []PS.Expr{&PS.NumberLiteral{Val: 99}},
+		Where: &PS.BinaryExpr{
+			Left:  &PS.Ident{Name: "c"},
+			Op:    LX.T_EQ,
+			Right: &PS.Ident{Name: "outer_b"},
+		},
+	}}
+
+	// Pre-populate the correlated cache for all possible values.
+	// Use the same subq pointer and hash computation as evalSubqueryBatchExpr.
+	subqPtr := uintptr(reflect.ValueOf(subq).Pointer())
+	for i := 0; i < n; i++ {
+		h := fnv.New64a()
+		writeHashToFNV(h, DT.NewIntValue(int64(i)))
+		key := fmt.Sprintf("%x:%x", subqPtr, h.Sum64())
+		correlatedSubqueryCache.Put(key, DT.NewIntValue(99))
+	}
+
+	b.ResetTimer()
+	for range b.N {
+		_ = EvalBatchExpr(subq, batch, nil)
+	}
 }

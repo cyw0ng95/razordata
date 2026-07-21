@@ -1065,6 +1065,8 @@ case *PS.SubqueryExpr:
 //
 // Correlated subqueries use per-row evaluation with a local cache
 // keyed by the outer row's correlated column values (REQ001610).
+// REQ001652: adds uniform-correlated-value broadcast — when all rows in the
+// batch share the same correlated values, evaluate once and broadcast.
 func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any) UT.Column {
 	if subq == nil {
 		return FillNullColumn(batch)
@@ -1090,18 +1092,35 @@ func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any)
 		}
 		return evalRowFallbackColumn(subq, batch, params)
 	}
-	// REQ001610: correlated subquery with per-row cache.
-	// Build result column by evaluating each row, caching results
-	// by the outer row's correlated column values.
 	subqPtr := uintptr(reflect.ValueOf(subq).Pointer())
+
+	// Resolve correlated column indices once from the first logical row
+	// (shared schema across the batch).
+	firstRow := batchToRow(batch, 0)
+	corIdx := cachedCorrelatedColIndices(subq, firstRow)
+
+	// REQ001652: quick uniformity check — if every row shares the same
+	// correlated values, evaluate the subquery once and broadcast.
+	allUniform := true
+	for pos := 0; pos < n; pos++ {
+		if !corrValuesEqual(batch, pos, corIdx) {
+			allUniform = false
+			break
+		}
+	}
+	if allUniform {
+		v, err := evalScalarSubquery(subq, firstRow, params)
+		if err == nil {
+			return broadcastValueColumn(batch, v)
+		}
+		// On eval failure, fall through to per-row fallback.
+	}
+
+	// Per-row path with shared cache.
 	var out UT.Column
 	allocated := false
 	for i := 0; i < n; i++ {
-		phys := i
-		if batch.Sel != nil && i < len(batch.Sel) {
-			phys = int(batch.Sel[i])
-		}
-		row := batchToRow(batch, phys)
+		row := batchToRow(batch, i)
 		// Compute hash of correlated column values for cache key.
 		h := fnv.New64a()
 		for _, col := range corrCols {
@@ -1147,6 +1166,64 @@ func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any)
 		writeValueToColumnData(&out, i, v)
 	}
 	return out
+}
+
+// corrValuesEqual returns true when the correlated values at the given logical
+// position equal those at position 0 in the same batch. Selection vectors are
+// honored. Returns false for positions beyond the batch size.
+func corrValuesEqual(batch *UT.Batch, logicalPos int, corIdx []int) bool {
+	phys := logicalPos
+	if batch.Sel != nil && logicalPos < len(batch.Sel) {
+		phys = int(batch.Sel[logicalPos])
+	}
+	if phys >= batch.Size {
+		return false
+	}
+	for _, idx := range corIdx {
+		if idx < 0 || idx >= len(batch.Cols) {
+			return false
+		}
+		col := &batch.Cols[idx]
+		v0 := BatchValueAt(*col, 0)
+		v1 := BatchValueAt(*col, phys)
+		if !valuesEqual(v0, v1) {
+			return false
+		}
+	}
+	return true
+}
+
+// valuesEqual compares two any values for correlated-key equality. It treats
+// integer types as compatible with float types by numeric value so that
+// cache hits persist across type promotions in the batch path.
+func valuesEqual(a, b any) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if reflect.DeepEqual(a, b) {
+		return true
+	}
+	switch av := a.(type) {
+	case int64:
+		if bv, ok := b.(float64); ok {
+			return float64(av) == bv
+		}
+	case uint64:
+		if bv, ok := b.(float64); ok {
+			return float64(av) == bv
+		}
+	case float64:
+		if bv, ok := b.(int64); ok {
+			return av == float64(bv)
+		}
+		if bv, ok := b.(uint64); ok {
+			return av == float64(bv)
+		}
+	}
+	return false
 }
 
 // broadcastValueColumn creates a constant column filled with v for
