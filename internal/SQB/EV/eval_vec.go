@@ -41,7 +41,7 @@ func EvalBatch(expr PS.Expr, batch *UT.Batch, params []any) []uint16 {
 		if e.Subquery != nil || len(e.List) == 0 {
 			return evalRowFallback(expr, batch, params)
 		}
-		col, ok := extractColumnRef(e.Expr, batch)
+		col, ok := ExtractColumnRef(e.Expr, batch)
 		if !ok {
 			return evalRowFallback(expr, batch, params)
 		}
@@ -74,8 +74,8 @@ func evalBinaryBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
 		return evalOrBatch(e, batch, params)
 	}
 
-	leftCol, leftIsCol := extractColumnRef(e.Left, batch)
-	rightCol, rightIsCol := extractColumnRef(e.Right, batch)
+	leftCol, leftIsCol := ExtractColumnRef(e.Left, batch)
+	rightCol, rightIsCol := ExtractColumnRef(e.Right, batch)
 
 	// Both columns: column-column vectorized comparison
 	if leftIsCol && rightIsCol {
@@ -143,7 +143,7 @@ func evalUnaryBatch(e *PS.UnaryExpr, batch *UT.Batch, params []any) []uint16 {
 // Uses the pre-computed column index from the batch's colMap
 // (set by VectorizedSeqScan), enabling O(1) lookup. Falls back
 // to a linear scan if the map is not available.
-func extractColumnRef(expr PS.Expr, batch *UT.Batch) (UT.Column, bool) {
+func ExtractColumnRef(expr PS.Expr, batch *UT.Batch) (UT.Column, bool) {
 	ident, ok := expr.(*PS.Ident)
 	if !ok {
 		return UT.Column{}, false
@@ -1000,31 +1000,31 @@ func EvalBatchExpr(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
 	switch e := expr.(type) {
 	case *PS.Ident:
 		// Column reference: shallow copy of source column.
-		if col, ok := extractColumnRef(e, batch); ok {
+		if col, ok := ExtractColumnRef(e, batch); ok {
 			return col
 		}
 		return UT.Column{Type: LX.T_NULL}
 
 	case *PS.NumberLiteral:
-		return fillLiteralColumn(batch, LX.T_INT_KW, e.Val)
+		return FillLiteralColumn(batch, LX.T_INT_KW, e.Val)
 
 	case *PS.FloatLiteral:
-		return fillLiteralColumn(batch, LX.T_FLOAT_KW, e.Val)
+		return FillLiteralColumn(batch, LX.T_FLOAT_KW, e.Val)
 
 	case *PS.StringLiteral:
-		return fillLiteralColumn(batch, LX.T_TEXT, e.Val)
+		return FillLiteralColumn(batch, LX.T_TEXT, e.Val)
 
 	case *PS.BoolLiteral:
-		return fillLiteralColumn(batch, LX.T_BOOL, e.Val)
+		return FillLiteralColumn(batch, LX.T_BOOL, e.Val)
 
 	case *PS.NullLiteral:
-		return fillNullColumn(batch)
+		return FillNullColumn(batch)
 
 	case *PS.Param:
 		if e.Index < len(params) {
 			return evalAnyLiteral(params[e.Index], batch)
 		}
-		return fillNullColumn(batch)
+		return FillNullColumn(batch)
 
 	case *PS.BinaryExpr:
 		return evalBinaryBatchExpr(e, batch, params)
@@ -1067,7 +1067,7 @@ case *PS.SubqueryExpr:
 // keyed by the outer row's correlated column values (REQ001610).
 func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any) UT.Column {
 	if subq == nil {
-		return fillNullColumn(batch)
+		return FillNullColumn(batch)
 	}
 	n := batch.LogicalSize()
 	if n == 0 {
@@ -1154,9 +1154,9 @@ func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any)
 // flag rather than producing zero-typed NULLs.
 func broadcastValueColumn(batch *UT.Batch, v Value) UT.Column {
 	if v.Kind == KindNull {
-		return fillNullColumn(batch)
+		return FillNullColumn(batch)
 	}
-	return fillLiteralColumn(batch, tokenTypeFromValue(v), v.ToAny())
+	return FillLiteralColumn(batch, tokenTypeFromValue(v), v.ToAny())
 }
 
 // evalBinaryBatchExpr dispatches binary expression evaluation to the
@@ -1440,8 +1440,8 @@ func evalComparisonBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) UT.Col
 
 	// Scan for NULL operands. For column-based comparisons, rows where
 	// either operand column has NULL must yield NULL, not false.
-	leftCol, leftIsCol := extractColumnRef(e.Left, batch)
-	rightCol, rightIsCol := extractColumnRef(e.Right, batch)
+	leftCol, leftIsCol := ExtractColumnRef(e.Left, batch)
+	rightCol, rightIsCol := ExtractColumnRef(e.Right, batch)
 	if leftIsCol || rightIsCol {
 		for i := 0; i < n; i++ {
 			isNullRow := false
@@ -1768,7 +1768,7 @@ func evalRowFallbackColumn(expr PS.Expr, batch *UT.Batch, params []any) UT.Colum
 
 // fillLiteralColumn creates a column filled with a constant literal value
 // for all logical rows in the batch.
-func fillLiteralColumn(batch *UT.Batch, typ LX.TokenType, val any) UT.Column {
+func FillLiteralColumn(batch *UT.Batch, typ LX.TokenType, val any) UT.Column {
 	n := batch.LogicalSize()
 	out := UT.Column{Name: "", Type: typ}
 	allocateColumnData(&out, batch.Size)
@@ -1807,7 +1807,7 @@ func fillLiteralColumn(batch *UT.Batch, typ LX.TokenType, val any) UT.Column {
 }
 
 // fillNullColumn creates a column with all NULLs for all logical rows.
-func fillNullColumn(batch *UT.Batch) UT.Column {
+func FillNullColumn(batch *UT.Batch) UT.Column {
 	n := batch.LogicalSize()
 	out := UT.Column{Name: "", Type: LX.T_NULL, Data: UT.ColumnData{}}
 	if n == 0 {
@@ -1831,17 +1831,17 @@ func fillNullColumn(batch *UT.Batch) UT.Column {
 func evalAnyLiteral(v any, batch *UT.Batch) UT.Column {
 	switch x := v.(type) {
 	case int64:
-		return fillLiteralColumn(batch, LX.T_INT_KW, x)
+		return FillLiteralColumn(batch, LX.T_INT_KW, x)
 	case float64:
-		return fillLiteralColumn(batch, LX.T_FLOAT_KW, x)
+		return FillLiteralColumn(batch, LX.T_FLOAT_KW, x)
 	case string:
-		return fillLiteralColumn(batch, LX.T_TEXT, x)
+		return FillLiteralColumn(batch, LX.T_TEXT, x)
 	case bool:
-		return fillLiteralColumn(batch, LX.T_BOOL, x)
+		return FillLiteralColumn(batch, LX.T_BOOL, x)
 	case nil:
-		return fillNullColumn(batch)
+		return FillNullColumn(batch)
 	default:
-		return fillLiteralColumn(batch, LX.T_TEXT, fmt.Sprint(x))
+		return FillLiteralColumn(batch, LX.T_TEXT, fmt.Sprint(x))
 	}
 }
 

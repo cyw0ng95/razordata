@@ -545,24 +545,91 @@ func SchemaFromRowSchema(types []LX.TokenType) []LX.TokenType {
 // columns. Each expression is evaluated over the child batch to
 // produce one output column.
 // REQ001212 satisfied: vectorized projection operator.
+// REQ001591: compiledEvals caches fast-path evaluators for simple
+// expressions (column refs, literals), avoiding EvalBatchExpr dispatch
+// overhead on every batch.
 type VectorizedProject struct {
-	child UT.BatchProducer
-	exprs []PS.Expr
-	names []string
-	done  bool
+	child         UT.BatchProducer
+	exprs         []PS.Expr
+	names         []string
+	done          bool
+	compiledEvals []batchEvalFunc
 	// REQ001460: per-execution state for subquery evaluation in
 	// row-fallback paths. Set by transformOp from the original
 	// row-based Project, propagated to childBatch before eval.
 	execCtx *pl.ExecContext
 }
 
+// batchEvalFunc is a compiled fast-path evaluator for a single
+// projection expression. Returns the evaluated column for a batch.
+// REQ001591.
+type batchEvalFunc func(batch *UT.Batch) UT.Column
+
 // NewVectorizedProject creates a vectorized projection operator.
+// REQ001591: compiles simple expressions to fast-path evaluators
+// on construction.
 func NewVectorizedProject(child UT.BatchProducer, exprs []PS.Expr, names []string) *VectorizedProject {
-	return &VectorizedProject{
+	p := &VectorizedProject{
 		child: child,
 		exprs: exprs,
 		names: names,
 	}
+	p.compiledEvals = make([]batchEvalFunc, len(exprs))
+	for i, expr := range exprs {
+		p.compiledEvals[i] = compileProjectExpr(expr)
+	}
+	return p
+}
+
+// compileProjectExpr compiles a projection expression to a fast-path
+// batch evaluator. Returns nil for complex expressions that must use
+// the EvalBatchExpr fallback. REQ001591.
+func compileProjectExpr(expr PS.Expr) batchEvalFunc {
+	if expr == nil {
+		return func(batch *UT.Batch) UT.Column {
+			return UT.Column{Type: LX.T_NULL}
+		}
+	}
+	switch e := expr.(type) {
+	case *PS.Ident:
+		return func(batch *UT.Batch) UT.Column {
+			if col, ok := EV.ExtractColumnRef(e, batch); ok {
+				return col
+			}
+			return UT.Column{Type: LX.T_NULL}
+		}
+	case *PS.NumberLiteral:
+		val := e.Val
+		return func(batch *UT.Batch) UT.Column {
+			return EV.FillLiteralColumn(batch, LX.T_INT_KW, val)
+		}
+	case *PS.FloatLiteral:
+		val := e.Val
+		return func(batch *UT.Batch) UT.Column {
+			return EV.FillLiteralColumn(batch, LX.T_FLOAT_KW, val)
+		}
+	case *PS.StringLiteral:
+		val := e.Val
+		return func(batch *UT.Batch) UT.Column {
+			return EV.FillLiteralColumn(batch, LX.T_TEXT, val)
+		}
+	case *PS.BoolLiteral:
+		val := e.Val
+		return func(batch *UT.Batch) UT.Column {
+			return EV.FillLiteralColumn(batch, LX.T_BOOL, val)
+		}
+	case *PS.NullLiteral:
+		return func(batch *UT.Batch) UT.Column {
+			return EV.FillNullColumn(batch)
+		}
+	case *PS.AliasedExpr:
+		inner := compileProjectExpr(e.Expr)
+		if inner != nil {
+			return inner
+		}
+		return nil
+	}
+	return nil
 }
 
 // SetExecCtx attaches an ExecContext for subquery evaluation in
@@ -599,7 +666,14 @@ func (p *VectorizedProject) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	output := UT.GetBatch(len(p.exprs))
 	output.Size = n
 	for i, expr := range p.exprs {
-		col := EV.EvalBatchExpr(expr, childBatch, nil)
+		// REQ001591: use compiled fast-path evaluator when available,
+		// fall back to EvalBatchExpr for complex expressions.
+		var col UT.Column
+		if i < len(p.compiledEvals) && p.compiledEvals[i] != nil {
+			col = p.compiledEvals[i](childBatch)
+		} else {
+			col = EV.EvalBatchExpr(expr, childBatch, nil)
+		}
 		col.Name = p.names[i]
 		if childBatch.Sel != nil && n < childBatch.Size {
 			col = compactColumn(col, childBatch.Sel, childBatch.Size)

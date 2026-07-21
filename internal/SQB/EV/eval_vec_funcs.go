@@ -26,9 +26,9 @@ func evalFunctionBatchExpr(e *PS.FunctionCall, batch *UT.Batch, params []any) UT
 	case "OCTET_LENGTH":
 		return evalOctetLengthBatch(e, batch, params)
 	case "SQLITE_VERSION":
-		return fillLiteralColumn(batch, LX.T_TEXT, "0.26.7")
+		return FillLiteralColumn(batch, LX.T_TEXT, "0.26.7")
 	case "SQLITE_SOURCE_ID":
-		return fillLiteralColumn(batch, LX.T_TEXT, "razordata-v0.26.7")
+		return FillLiteralColumn(batch, LX.T_TEXT, "razordata-v0.26.7")
 	default:
 		return evalRowFallbackColumn(e, batch, params)
 	}
