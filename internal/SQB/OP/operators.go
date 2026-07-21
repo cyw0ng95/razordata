@@ -171,6 +171,10 @@ type SeqScan struct {
 	// under which subsetSchema was built. When the seq alias or
 	// prefixedCols state changes, we rebuild the subset.
 	subsetSchemaAliasKey string
+	// REQ001640: subsetWantedSet caches the wantedIdx→pos map
+	// used by DecodeRowSubsetInto. Built once alongside subsetSchema
+	// to eliminate the per-row make(map[int]int) allocation.
+	subsetWantedSet map[int]int
 
 	// REQ001225: rawByteFilter is a predicate compiled from a filter
 	// conjunct that can be evaluated on raw encoded bytes without
@@ -832,6 +836,8 @@ func (s *SeqScan) decodeRowSubsetBuffered(data []byte) (Row, error) {
 			ColTypes: make([]LX.TokenType, n),
 		}
 		subset.ColIndex = make(map[string]int, n*2)
+		// REQ001640: build wantedSet alongside subsetSchema.
+		wantedSet := make(map[int]int, n)
 		prefix := ""
 		if s.alias != "" {
 			prefix = s.alias + "."
@@ -843,12 +849,14 @@ func (s *SeqScan) decodeRowSubsetBuffered(data []byte) (Row, error) {
 				subset.ColTypes[pos] = s.schema.ColTypes[fullIdx]
 			}
 			subset.ColIndex[subset.Cols[pos]] = pos
+			wantedSet[fullIdx] = pos
 		}
 		s.subsetSchema = subset
 		s.subsetSchemaAliasKey = s.aliasCacheKey()
+		s.subsetWantedSet = wantedSet
 	}
 	row := s.rowArena.AllocRow(n, s.subsetSchema)
-	err := DT.DecodeRowSubsetInto(&row, data, s.schema, wanted)
+	err := DT.DecodeRowSubsetInto(&row, data, s.schema, wanted, s.subsetWantedSet)
 	if err != nil {
 		return Row{}, err
 	}

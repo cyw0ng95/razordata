@@ -33,7 +33,7 @@ func TestDecodeRowSubsetInto_Primitives(t *testing.T) {
 	wanted := []int{1, 4}
 	data := make([]DT.Value, len(wanted))
 	row := &DT.Row{Cols: []string{"b", "e"}, Data: data}
-	if err := DT.DecodeRowSubsetInto(row, payload, schema, wanted); err != nil {
+	if err := DT.DecodeRowSubsetInto(row, payload, schema, wanted, nil); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if row.Cols[0] != "b" || row.Cols[1] != "e" {
@@ -73,7 +73,7 @@ func TestDecodeRowSubsetInto_FullSetMatchesFullDecode(t *testing.T) {
 
 	subsetData := make([]DT.Value, 3)
 	subsetRow := &DT.Row{Cols: schema.Cols, Data: subsetData}
-	if err := DT.DecodeRowSubsetInto(subsetRow, payload, schema, []int{0, 1, 2}); err != nil {
+	if err := DT.DecodeRowSubsetInto(subsetRow, payload, schema, []int{0, 1, 2}, nil); err != nil {
 		t.Fatalf("subset decode: %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestDecodeRowSubsetInto_SkipLeadingCols(t *testing.T) {
 
 	// Decode only col 3 ("d") — must skip cols 0, 1, 2.
 	row := &DT.Row{Cols: []string{"d"}, Data: make([]DT.Value, 1)}
-	if err := DT.DecodeRowSubsetInto(row, payload, schema, []int{3}); err != nil {
+	if err := DT.DecodeRowSubsetInto(row, payload, schema, []int{3}, nil); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if row.Data[0].S != "fourth" {
@@ -149,7 +149,7 @@ func BenchmarkDecodeRowSubsetInto_OneColumn(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		row := &DT.Row{Cols: []string{"b"}, Data: make([]DT.Value, 1)}
-		if err := DT.DecodeRowSubsetInto(row, payload, schema, wanted); err != nil {
+		if err := DT.DecodeRowSubsetInto(row, payload, schema, wanted, nil); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -232,7 +232,7 @@ func BenchmarkDecodeRowManyTextColumns_SubsetDecodeOneInt(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		row := &DT.Row{Cols: []string{"b"}, Data: make([]DT.Value, 1)}
-		if err := DT.DecodeRowSubsetInto(row, payload, schema, []int{1}); err != nil {
+		if err := DT.DecodeRowSubsetInto(row, payload, schema, []int{1}, nil); err != nil {
 			b.Fatal(err)
 		}
 	}

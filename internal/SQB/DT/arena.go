@@ -307,20 +307,9 @@ func DecodeRowInto(row *Row, data []byte, schema *StoreSchema) error {
 // from the encoded row into row.Data. wantedIdx are indices into
 // schema.Cols; the row.Data slice must have length == len(wantedIdx).
 // Columns outside wantedIdx are skipped (bytes advanced) without
-// allocating values.
-//
-// REQ001434: per pprof, decodeRowBuffered is the top hot spot in
-// SeqScan (~45% of SeqScan.nextFromStore wall time). For projections
-// that reference only a subset of columns (common in SELECT a, b,
-// c FROM t), decoding all columns and then pruning wastes work:
-// string/blob columns allocate their decoded form needlessly, and
-// the encoder's per-column switch overhead scales with column count
-// regardless of need.
-//
-// The passed row must already have its Cols, Types, ColIndex set
-// by the caller (typically from a derived StoreSchema containing
-// only the wanted subset). The function only mutates row.Data.
-func DecodeRowSubsetInto(row *Row, data []byte, schema *StoreSchema, wantedIdx []int) error {
+// allocation. REQ001640: wantedSet is a pre-built map from fullIdx
+// to position in the subset; if nil, it is built from wantedIdx.
+func DecodeRowSubsetInto(row *Row, data []byte, schema *StoreSchema, wantedIdx []int, wantedSet map[int]int) error {
 	nFull := len(schema.Cols)
 	if len(row.Data) != len(wantedIdx) {
 		return fmt.Errorf("DT: subset row has %d cols, wantedIdx has %d", len(row.Data), len(wantedIdx))
@@ -349,9 +338,12 @@ func DecodeRowSubsetInto(row *Row, data []byte, schema *StoreSchema, wantedIdx [
 	if int(colCount) != nFull {
 		return fmt.Errorf("DT: row has %d cols, schema %d", colCount, nFull)
 	}
-	wantedSet := make(map[int]int, len(wantedIdx))
-	for pos, fullIdx := range wantedIdx {
-		wantedSet[fullIdx] = pos
+	// REQ001640: use cached wantedSet when available.
+	if wantedSet == nil {
+		wantedSet = make(map[int]int, len(wantedIdx))
+		for pos, fullIdx := range wantedIdx {
+			wantedSet[fullIdx] = pos
+		}
 	}
 	for i := 0; i < nFull; i++ {
 		if off >= len(data) {
