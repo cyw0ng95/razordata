@@ -868,6 +868,15 @@ func (it *sstIterator) Err() error {
 	return nil
 }
 
+// BlockColumnStats returns the min/max value for the given column
+// index in the current block. Returns (nil, nil, false) if the stats
+// are not available. REQ001657.
+func (it *sstIterator) BlockColumnStats(colIdx int) (min, max []byte, ok bool) {
+	// Not yet implemented; requires block-level stats in the SST reader.
+	// Will be populated from the stats blob stored in the catalog.
+	return nil, nil, false
+}
+
 var _ io.Closer = (*sstReader)(nil)
 
 func (r *sstReader) Close() error {

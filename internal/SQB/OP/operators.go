@@ -3,6 +3,7 @@ package OP
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"sync"
@@ -65,7 +66,13 @@ func getTableSchema(table string, src []Row) *tableSchemaEntry {
 	return entry
 }
 
-// REQ001650: Skipper is implemented by operators that can skip
+// REQ001657: BlockStatProvider is implemented by iterators that can
+// report per-block column statistics for range predicate pruning.
+type BlockStatProvider interface {
+	// BlockColumnStats returns the min/max value for the given column
+	// in the current block. Returns (nil, nil, false) if not available.
+	BlockColumnStats(colIdx int) (min, max []byte, ok bool)
+}
 // rows without decoding (e.g., SeqScan, IndexScan).
 type Skipper interface {
 	Skip(ctx context.Context, n int64) error
@@ -709,6 +716,30 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 			s.ctxCheckCounter = 0
 			if err := ctx.Err(); err != nil {
 				return Row{}, err
+			}
+		}
+		// REQ001657: block-level range skipping. Check if the iterator
+		// supports block-level stats and if the current block's column
+		// range is disjoint from the predicate.
+		if s.predicateIsSet {
+			if bp, ok := s.it.(BlockStatProvider); ok {
+				if min, max, ok := bp.BlockColumnStats(s.predicateCol); ok && len(min) > 0 && len(max) > 0 {
+					// Compare predicate range with block's column range.
+					// If the predicate range is entirely above max or
+					// entirely below min, skip the rest of this block.
+					// For int64 values stored as big-endian bytes.
+					blockMin := int64(binary.BigEndian.Uint64(min))
+					blockMax := int64(binary.BigEndian.Uint64(max))
+					if s.predicateMin > blockMax || s.predicateMax < blockMin {
+						// Block is entirely outside the predicate range.
+						// The iterator will advance to the next block.
+						// We need to skip to the end of this block.
+						// Since we can't easily skip a block, we just
+						// continue — the iterator will load the next
+						// block on the next Next() call.
+						continue
+					}
+				}
 			}
 		}
 		// REQ000501: save the raw key so Update/Delete can
