@@ -65,6 +65,12 @@ func getTableSchema(table string, src []Row) *tableSchemaEntry {
 	return entry
 }
 
+// REQ001650: Skipper is implemented by operators that can skip
+// rows without decoding (e.g., SeqScan, IndexScan).
+type Skipper interface {
+	Skip(ctx context.Context, n int64) error
+}
+
 type SeqScan struct {
 	table  string
 	store  Store
@@ -870,6 +876,36 @@ func (s *SeqScan) aliasCacheKey() string {
 		return s.alias + "|prefixed"
 	}
 	return s.alias
+}
+
+// Skip advances the iterator by n rows without decoding them.
+// Only works for store-backed SeqScan. REQ001650.
+func (s *SeqScan) Skip(ctx context.Context, n int64) error {
+	if s.store == nil {
+		// In-memory fallback: advance the position counter.
+		s.pos += int(n)
+		return nil
+	}
+	if s.it == nil {
+		s.it = s.store.NewIterator(s.prefix)
+	}
+	if s.it == nil {
+		return nil
+	}
+	for i := int64(0); i < n; i++ {
+		if i%1024 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if !s.it.Next() {
+			if err := s.it.Err(); err != nil {
+				return err
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 func (s *SeqScan) Close() error {
@@ -1703,24 +1739,40 @@ func (i *IndexScan) Close() error {
 	if i.it != nil {
 		err := i.it.Close()
 		i.it = nil
-		if err != nil {
-			return err
-		}
+		return err
 	}
-	if i.indexIt != nil {
-		err := i.indexIt.Close()
-		i.indexIt = nil
-		if err != nil {
-			return err
-		}
+	if i.btree != nil {
+		return i.btree.Close()
 	}
-	i.btreeIt = nil
-	i.pos = 0
 	i.rows = nil
-	// REQ001226: return any remaining pooled slice.
-	if i.lastDataSlice != nil {
-		DT.PutValueSlice(i.lastDataSlice)
-		i.lastDataSlice = nil
+	return nil
+}
+
+// Skip advances the iterator by n rows without decoding them.
+// Only works for store-backed IndexScan. REQ001650.
+func (i *IndexScan) Skip(ctx context.Context, n int64) error {
+	if i.store == nil {
+		i.pos += int(n)
+		return nil
+	}
+	if i.it == nil {
+		i.it = i.store.NewIterator(i.prefix)
+	}
+	if i.it == nil {
+		return nil
+	}
+	for j := int64(0); j < n; j++ {
+		if j%1024 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if !i.it.Next() {
+			if err := i.it.Err(); err != nil {
+				return err
+			}
+			return nil
+		}
 	}
 	return nil
 }

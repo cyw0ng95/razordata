@@ -86,6 +86,13 @@ func (o *Offset) WithParams(p []any) Operator {
 
 func (o *Offset) Next(ctx context.Context) (Row, error) {
 	ec.BUG_ON(o.closed.Load(), "Offset.Next() after Close()")
+	// REQ001650: fast path — use Skipper when child supports it.
+	if skipper, ok := o.child.(Skipper); ok && o.skipped < o.offset {
+		if err := skipper.Skip(ctx, o.offset-o.skipped); err != nil {
+			return Row{}, err
+		}
+		o.skipped = o.offset
+	}
 	for o.skipped < o.offset {
 		if err := ctx.Err(); err != nil {
 			return Row{}, err
