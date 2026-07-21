@@ -26,10 +26,12 @@ type Aggregate struct {
 	pos        int
 	params     []any
 	expandStar bool
+	// REQ001636: scalar aggregate (no GROUP BY) uses fast path.
+	scalar bool
 }
 
 func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
-	return &Aggregate{child: child, groupCols: groupCols, aggs: aggs}
+	return &Aggregate{child: child, groupCols: groupCols, aggs: aggs, scalar: len(groupCols) == 0}
 }
 
 // Child returns the input operator feeding this aggregate.
@@ -84,6 +86,42 @@ type groupBucket struct {
 }
 
 func (a *Aggregate) materialize(ctx context.Context) error {
+	// REQ001636: scalar aggregate fast path — no GROUP BY.
+	// Skip group key computation, groupIndex map, and sort.
+	// Accumulate aggregate state directly from input rows.
+	if a.scalar {
+		var allRows []Row
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			row, err := a.child.Next(ctx)
+			if err != nil {
+				if err == ErrNoRows {
+					break
+				}
+				return err
+			}
+			allRows = append(allRows, row)
+		}
+		if allRows == nil {
+			allRows = []Row{} // ensure non-nil for EvalAggregateOver
+		}
+		// Build output row directly from accumulated state.
+		out := Row{Cols: make([]string, 0, len(a.aggs))}
+		for _, ag := range a.aggs {
+			v, err := EvalAggregateOver(ag, allRows, a.params)
+			if err != nil {
+				return err
+			}
+			name := aggregateColName(ag)
+			out.Cols = append(out.Cols, name)
+			out.Data = append(out.Data, DT.ValueFromAny(v))
+		}
+		a.buf = []Row{out}
+		return nil
+	}
+
 	var groups []groupBucket
 	groupIndex := make(map[string]int)
 	for {
