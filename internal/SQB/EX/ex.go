@@ -576,7 +576,15 @@ func (e *Executor) putCachedPlan(key string, result *pl.PlanResult) {
 		e.planCache.lru = append([]*planCacheEntry{ent}, e.planCache.lru...)
 		return
 	}
-	ent := &planCacheEntry{result: result}
+	// REQ001587: create a copy of the plan result so that later
+	// mutations (tryVectorizePlan replacing plan.Root in-place) do
+	// not corrupt the cached entry. Clone the AdaptiveOp wrapper
+	// so it stays pristine.
+	cachedResult := *result
+	if aop, ok := result.Root.(*AD.AdaptiveOp); ok {
+		cachedResult.Root = AD.NewAdaptiveOp(aop.Child(), key)
+	}
+	ent := &planCacheEntry{result: &cachedResult}
 	e.planCache.entries[key] = ent
 	e.planCache.lru = append([]*planCacheEntry{ent}, e.planCache.lru...)
 	for len(e.planCache.lru) > e.planCache.maxSize {

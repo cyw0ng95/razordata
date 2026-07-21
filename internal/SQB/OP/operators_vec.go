@@ -125,6 +125,59 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			batch.Put()
 			return nil, err
 		}
+		// REQ001587: when no schema was provided at construction
+		// (in-memory tables without StoreSchema), derive the
+		// column names and types from the first row on the fly.
+		// This allows VectorizedSeqScan to work correctly with
+		// in-memory tables where the schema is only known at
+		// runtime from the first row's Cols/Types fields.
+		if len(schema) == 0 && len(row.Cols) > 0 {
+			schema = row.Cols
+			// REQ001587: when the row has no Types metadata (common
+			// for in-memory tables created via DT.Row literals),
+			// infer the column types from the Value Kind of each
+			// Data element. Without this, types[i] panics with
+			// index-out-of-range when types is nil/empty.
+			if len(row.Types) > 0 {
+				types = row.Types
+			} else {
+				types = make([]LX.TokenType, len(row.Cols))
+				for i, v := range row.Data {
+					switch v.Kind {
+					case pl.KindInt:
+						types[i] = LX.T_INT_KW
+					case pl.KindFloat:
+						types[i] = LX.T_FLOAT_KW
+					case pl.KindText:
+						types[i] = LX.T_TEXT
+					case pl.KindBool:
+						types[i] = LX.T_BOOL
+					case pl.KindBlob:
+						types[i] = LX.T_BLOB
+					default:
+						types[i] = LX.T_NULL
+					}
+				}
+			}
+			// Rebuild colMap from the discovered schema so that
+			// upstream operators (VectorizedProject, etc.) can
+			// resolve column references by name. Without this,
+			// extractColumnRef finds an empty colMap, returns
+			// false, and downstream EvalBatchExpr returns NULL.
+			colMap := make(map[string]int, len(schema))
+			for i, name := range schema {
+				colMap[name] = i
+			}
+			v.colMap = colMap
+			// Re-allocate the batch with the correct column count.
+			batch.Put()
+			batch = UT.GetBatch(len(schema))
+			batch.Size = 0
+			for i, name := range schema {
+				batch.SetColumnName(i, name)
+			}
+			batch.SetColMap(v.colMap)
+		}
 		for i := range schema {
 			val := row.Data[i].ToAny()
 			isNull := val == nil

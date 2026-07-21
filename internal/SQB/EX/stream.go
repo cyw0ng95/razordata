@@ -344,7 +344,16 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 		defer close(rowCh)
 		// REQ001604: if the plan is vectorized, drain via NextBatch()
 		// instead of per-row Next() to avoid goroutine-per-row overhead.
-		if bp, ok := plan.Root.(UT.BatchProducer); ok {
+		// REQ001587: exclude *UT.BatchToRowAdapter from the fast-path —
+		// the schema-discovery Next() at line 300 above already consumed
+		// the first batch via BatchToRowAdapter.Next and materialised the
+		// rest into adapter.rows. Calling NextBatch() here would drain
+		// the underlying BatchProducer independently, losing the rows
+		// already cached in the adapter. Use the row path to consume the
+		// adapter's buffered rows correctly.
+		bp, isBP := plan.Root.(UT.BatchProducer)
+		_, isAdapter := plan.Root.(*UT.BatchToRowAdapter)
+		if isBP && !isAdapter {
 			for {
 				batch, err := bp.NextBatch(ctx)
 				if err != nil {

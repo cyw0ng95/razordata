@@ -28,6 +28,9 @@ func tryVectorizePlan(root DT.Operator) DT.Operator {
 	// produce here already supersedes ADQC's specialized codegen path
 	// (which targets the same batch shape), so unwrapping the
 	// AdaptiveOp wrapper is semantically equivalent and faster.
+	// REQ001587: when the inner plan starts with a SeqScan that has
+	// no store schema (in-memory tables without column metadata),
+	// transformOp returns nil, so the original AdaptiveOp is kept.
 	vec := transformRoot(root)
 	if vec != nil {
 		return UT.NewBatchToRowAdapter(vec)
@@ -39,43 +42,17 @@ func tryVectorizePlan(root DT.Operator) DT.Operator {
 // transformOp on the actual data operator. For AdaptiveOp the inner
 // is what gets vectorized — the BatchProducer result replaces the
 // AdaptiveOp entirely because vec execution already supersedes ADQC.
+// REQ001587: always unwrap AdaptiveOp — no join gate.
 func transformRoot(root DT.Operator) UT.BatchProducer {
 	if root == nil {
 		return nil
 	}
 	if aop, ok := root.(*AD.AdaptiveOp); ok {
-		// REQ001581: only unwrap AdaptiveOp for plans that contain
-		// a join operator. Non-join plans (Sort, Filter, Project,
-		// SeqScan) are well-tested with the row-based path and would
-		// expose latent vec bugs in CrossJoin, Sort, etc.
-		// This is a conservative gate; expand as vec operators mature.
-		if !hasJoinOp(aop.Inner) {
-			return nil
-		}
 		return transformOp(aop.Inner)
 	}
 	return transformOp(root)
 }
 
-// hasJoinOp walks the operator tree for join operators.
-// REQ001581: used by transformRoot to gate AdaptiveOp unwrapping.
-func hasJoinOp(op DT.Operator) bool {
-	if op == nil {
-		return false
-	}
-	switch op.(type) {
-	case *OP.HashJoin, *OP.NestedLoopJoin, *OP.MergeJoin:
-		return true
-	}
-	for _, child := range childrenOf(op) {
-		if hasJoinOp(child) {
-			return true
-		}
-	}
-	return false
-}
-
-// REQ001614: isEligible removed — tryVectorizePlan always succeeds.
 // All operators are now vectorized or wrapped in ScalarBatchProducer.
 
 // transformOp transforms a row operator tree into a BatchProducer chain.
