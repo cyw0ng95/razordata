@@ -95,6 +95,9 @@ type SeqScan struct {
 	// most recently decoded row. Preserved so Update/Delete
 	// can reuse the original row key for hidden-PK DT.Tables.
 	currentKey []byte
+	// keyBuf is a reusable buffer for geometric-growth key copies.
+	// REQ001635: eliminates the per-row make([]byte, len(key)) allocation.
+	keyBuf []byte
 	// alias is the table alias (e.g. "x" in "FROM t1 AS x").
 	// When set, produced rows have column names prefixed with
 	// "alias." so correlated subquery eval can resolve x.col.
@@ -228,6 +231,23 @@ func (s *SeqScan) WithAlias(alias string) *SeqScan {
 
 func NewSeqScan(table string) *SeqScan {
 	return &SeqScan{table: table, shallow: true}
+}
+
+// growKeyBuf grows buf to at least n bytes using geometric growth.
+// Returns a slice of length n. REQ001635: eliminates per-row
+// make([]byte, n) allocation by reusing a pre-sized buffer.
+func growKeyBuf(buf []byte, n int) []byte {
+	if cap(buf) >= n {
+		return buf[:n]
+	}
+	newCap := cap(buf) * 2
+	if newCap < n {
+		newCap = n
+	}
+	if newCap < 64 {
+		newCap = 64
+	}
+	return make([]byte, n, newCap)
 }
 
 // WithPointLookup sets up point-lookup filtering on an in-memory table.
@@ -464,9 +484,10 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		// into the LSM iterator's internal buffer. Without the copy,
 		// StoreKey on every row in Filter.refillBatch's batchBuf aliases
 		// the same iterator buffer and gets silently overwritten.
-		keyCopy := make([]byte, len(s.currentKey))
-		copy(keyCopy, s.currentKey)
-		s.currentKey = keyCopy
+		// REQ001635: use geometric growth to avoid per-row allocation.
+		s.keyBuf = growKeyBuf(s.keyBuf, len(s.currentKey))
+		copy(s.keyBuf, s.currentKey)
+		s.currentKey = s.keyBuf
 		v := s.it.Value()
 		row, err := DecodeRow(v, s.schema)
 		if err != nil {
@@ -667,9 +688,10 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		// iterator buffer and gets silently overwritten, causing
 		// ExtractPKForUpdate to see an empty StoreKey and allocate a
 		// new synthetic rowid for every UPDATE.
-		keyCopy := make([]byte, len(s.currentKey))
-		copy(keyCopy, s.currentKey)
-		s.currentKey = keyCopy
+		// REQ001635: use geometric growth to avoid per-row allocation.
+		s.keyBuf = growKeyBuf(s.keyBuf, len(s.currentKey))
+		copy(s.keyBuf, s.currentKey)
+		s.currentKey = s.keyBuf
 		v := s.it.Value()
 		// REQ001225: apply raw-byte filter before decoding to avoid
 		// unnecessary DecodeRowInto work for rows that will be filtered.
