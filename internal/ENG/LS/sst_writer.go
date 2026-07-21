@@ -14,7 +14,7 @@ var crc32Koopman = crc32.MakeTable(crc32.Koopman) // REQ000588: pre-allocated
 
 const (
 	sstBlockSize             = 4 * 1024
-	sstFooterSize            = 44 // REQ001008: extended from 28 to 44 (added range tombstone offset/size + version)
+	sstFooterSize            = 52 // REQ001008: 44 + 8 for stats block offset/size (REQ001656)
 	sstFooterSizeOld         = 28 // legacy footer size for backward compatibility
 	sstMagic                 = 0x52545453
 	sstVersionRangeTombstone = 1 // REQ001008: SST version with range tombstone support
@@ -348,6 +348,17 @@ func (w *sstWriter) Finish() ([]byte, error) {
 	binary.LittleEndian.PutUint32(footer[36:40], sstMagic)
 	// [40:44] version
 	binary.LittleEndian.PutUint32(footer[40:44], uint32(w.version))
+	// [44:52] stats_block_offset/size (REQ001656)
+	statsBlob := w.BlockStatsBlob()
+	statsOffset := buf.Len()
+	if len(statsBlob) > 0 {
+		buf.Write(statsBlob)
+		binary.LittleEndian.PutUint64(footer[44:52], uint64(statsOffset))
+		binary.LittleEndian.PutUint32(footer[48:52], uint32(len(statsBlob)))
+	} else {
+		binary.LittleEndian.PutUint64(footer[44:52], 0)
+		binary.LittleEndian.PutUint32(footer[48:52], 0)
+	}
 	buf.Write(footer)
 
 	return buf.Bytes(), nil
