@@ -20,6 +20,7 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -405,6 +406,9 @@ func (c *CompoundOp) Reset(ctx context.Context) error {
 
 // drainAll pulls up to maxRows rows from op. maxRows=0 means unlimited.
 // expectedRows is used for pre-sizing the output slice. REQ001437.
+// REQ001651: when op implements UT.BatchProducer, drain via NextBatch +
+// ToRows to amortize the per-row BatchToRowAdapter overhead. Each
+// NextBatch call materializes a full batch at once.
 func drainAll(ctx context.Context, op Operator, maxRows int64, maxMemory int64, expectedRows int64) ([]Row, error) {
 	if maxRows <= 0 {
 		maxRows = 1_000_000 // safety cap: 1M rows ≈ 50MB per drain
@@ -414,6 +418,33 @@ func drainAll(ctx context.Context, op Operator, maxRows int64, maxMemory int64, 
 		out = make([]Row, 0, expectedRows)
 	}
 	var memUsed int64
+
+	// REQ001651: batch drain path for vectorized operators.
+	if bp, ok := op.(UT.BatchProducer); ok {
+		for {
+			if int64(len(out)) >= maxRows {
+				return out, nil
+			}
+			batch, err := bp.NextBatch(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if batch == nil {
+				return out, nil
+			}
+			rows := batch.ToRows()
+			for _, r := range rows {
+				out = append(out, r)
+				memUsed += int64(len(r.Data))*24 + 64
+				if maxMemory > 0 && memUsed > maxMemory {
+					return out, fmt.Errorf("compound operator materialized %d rows (~%d bytes), exceeds memory limit=%d", len(out), memUsed, maxMemory)
+				}
+			}
+			batch.Put()
+		}
+	}
+
+	// Row-based fallback for non-BatchProducer operators.
 	for {
 		if int64(len(out)) >= maxRows {
 			return out, nil
@@ -426,7 +457,6 @@ func drainAll(ctx context.Context, op Operator, maxRows int64, maxMemory int64, 
 			return nil, err
 		}
 		out = append(out, r)
-		// Estimate memory: each Row ≈ len(Data) * 24 bytes + 64 base.
 		memUsed += int64(len(r.Data))*24 + 64
 		if maxMemory > 0 && memUsed > maxMemory {
 			return out, fmt.Errorf("compound operator materialized %d rows (~%d bytes), exceeds memory limit=%d", len(out), memUsed, maxMemory)
