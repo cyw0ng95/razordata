@@ -318,3 +318,80 @@ func TestHashTable_CompositeEntries(t *testing.T) {
 		t.Fatal("expected both group keys present")
 	}
 }
+
+// REQ001590: RobinHoodHashTable basic insert and lookup.
+func TestRobinHoodHashTable_InsertAndLookup(t *testing.T) {
+	ht := NewRobinHoodHashTable(16)
+	key := int64(42)
+	hash := uint64(42)
+	idx, found, ok := ht.Lookup([]int64{key}, hash)
+	if found {
+		t.Fatal("expected not found on empty table")
+	}
+	if !ok {
+		t.Fatal("expected ok (slot available for insert)")
+	}
+	// Insert via ProbeInt64
+	ht.Payloads = append(ht.Payloads, nil)
+	ht.ProbeInt64([]int64{key}, []uint64{hash}, 1, func(idx, row int) {})
+
+	// Lookup again
+	idx2, found2, ok2 := ht.Lookup([]int64{key}, hash)
+	if !found2 {
+		t.Fatal("expected found after insert")
+	}
+	if !ok2 {
+		t.Fatal("expected ok")
+	}
+	if idx2 != idx {
+		t.Logf("slot may differ from empty-slot hint: empty=%d, found=%d", idx, idx2)
+	}
+}
+
+// REQ001590: RobinHoodHashTable handles collisions.
+func TestRobinHoodHashTable_Collision(t *testing.T) {
+	ht := NewRobinHoodHashTable(16)
+	k1, h1 := int64(0), uint64(0)
+	k2, h2 := int64(16), uint64(16)
+
+	ht.Payloads = append(ht.Payloads, nil, nil)
+	ht.ProbeInt64([]int64{k1, k2}, []uint64{h1, h2}, 2, func(idx, row int) {})
+
+	idx1, found1, _ := ht.Lookup([]int64{k1}, h1)
+	if !found1 {
+		t.Fatal("expected to find k1")
+	}
+	idx2, found2, _ := ht.Lookup([]int64{k2}, h2)
+	if !found2 {
+		t.Fatal("expected to find k2")
+	}
+	if idx1 == idx2 {
+		t.Fatal("colliding keys should occupy different slots")
+	}
+}
+
+// REQ001590: RobinHoodHashTable Probe with composite keys.
+func TestRobinHoodHashTable_CompositeKey(t *testing.T) {
+	ht := NewRobinHoodHashTableWithCols(16, 2)
+	// Insert two composite keys: (1, 10) and (2, 20)
+	keys := []int64{1, 10, 2, 20}
+	hashes := []uint64{
+		HashComposite(keys[0:2]),
+		HashComposite(keys[2:4]),
+	}
+	ht.Payloads = append(ht.Payloads, nil, nil)
+	ht.Probe(keys, hashes, 2, func(idx, row int) {})
+
+	// Lookup each composite key
+	for i := 0; i < 2; i++ {
+		keySlice := keys[i*2 : i*2+2]
+		h := hashes[i]
+		_, found, ok := ht.Lookup(keySlice, h)
+		if !found {
+			t.Fatalf("expected to find composite key %v", keySlice)
+		}
+		if !ok {
+			t.Fatal("expected ok")
+		}
+	}
+}

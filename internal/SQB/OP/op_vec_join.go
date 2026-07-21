@@ -20,7 +20,7 @@ type VectorizedHashJoin struct {
 	buildKeys []int
 	probeKeys []int
 
-	ht        *UT.HashTable
+	ht        UT.HashTableInterface
 	bloom     *UT.BloomFilter
 	buildCols []UT.Column
 	rowIDs    [][]uint32
@@ -213,8 +213,14 @@ func (j *VectorizedHashJoin) buildHashTable(ctx context.Context) error {
 	if numKeyCols < 1 {
 		numKeyCols = 1
 	}
-	j.ht = UT.NewHashTableWithCols(uint32(totalRows), numKeyCols)
-	j.rowIDs = make([][]uint32, j.ht.Capacity)
+	// REQ001590: use Robin Hood hashing for large tables, linear probing
+	// for small tables where open-addressing overhead is lower.
+	if totalRows >= 64 {
+		j.ht = UT.NewRobinHoodHashTableWithCols(uint32(totalRows), numKeyCols)
+	} else {
+		j.ht = UT.NewHashTableWithCols(uint32(totalRows), numKeyCols)
+	}
+	j.rowIDs = make([][]uint32, j.ht.Cap())
 
 	// REQ001619: allocate matchedBuild for LEFT/FULL outer joins.
 	if j.kind == JoinKindLeft || j.kind == JoinKindFull {
@@ -234,8 +240,12 @@ func (j *VectorizedHashJoin) buildHashTable(ctx context.Context) error {
 		}
 	} else {
 		// Build composite key values for each row (sequential).
-		j.ht = UT.NewHashTableWithCols(uint32(totalRows), numKeyCols)
-		j.rowIDs = make([][]uint32, j.ht.Capacity)
+		if totalRows >= 64 {
+			j.ht = UT.NewRobinHoodHashTableWithCols(uint32(totalRows), numKeyCols)
+		} else {
+			j.ht = UT.NewHashTableWithCols(uint32(totalRows), numKeyCols)
+		}
+		j.rowIDs = make([][]uint32, j.ht.Cap())
 		totalUnique := 0
 		for i := 0; i < totalRows; i++ {
 			allNonNull := true
@@ -283,8 +293,12 @@ func (j *VectorizedHashJoin) buildHashTable(ctx context.Context) error {
 // REQ001622.
 func (j *VectorizedHashJoin) buildHashTableParallel(totalRows int, numKeyCols int) error {
 	// Create the global hash table.
-	j.ht = UT.NewHashTableWithCols(uint32(totalRows), numKeyCols)
-	j.rowIDs = make([][]uint32, j.ht.Capacity)
+	if totalRows >= 64 {
+		j.ht = UT.NewRobinHoodHashTableWithCols(uint32(totalRows), numKeyCols)
+	} else {
+		j.ht = UT.NewHashTableWithCols(uint32(totalRows), numKeyCols)
+	}
+	j.rowIDs = make([][]uint32, j.ht.Cap())
 
 	// Determine number of workers.
 	numWorkers := j.pool.Workers()
@@ -299,7 +313,7 @@ func (j *VectorizedHashJoin) buildHashTableParallel(totalRows int, numKeyCols in
 	}
 
 	type localResult struct {
-		ht      *UT.HashTable
+		ht      UT.HashTableInterface
 		rowIDs  [][]uint32
 		start   int
 		end     int
@@ -330,8 +344,8 @@ func (j *VectorizedHashJoin) buildHashTableParallel(totalRows int, numKeyCols in
 			defer wg.Done()
 			keyVals := make([]int64, numKeyCols)
 			local := localResult{
-				ht:     UT.NewHashTableWithCols(uint32(wEnd-wStart), numKeyCols),
-				rowIDs: make([][]uint32, UT.NewHashTableWithCols(uint32(wEnd-wStart), numKeyCols).Capacity),
+				ht:     UT.NewRobinHoodHashTableWithCols(uint32(wEnd-wStart), numKeyCols),
+				rowIDs: make([][]uint32, UT.NewRobinHoodHashTableWithCols(uint32(wEnd-wStart), numKeyCols).Cap()),
 				start:  wStart,
 				end:    wEnd,
 			}
@@ -370,7 +384,7 @@ func (j *VectorizedHashJoin) buildHashTableParallel(totalRows int, numKeyCols in
 	totalUnique := 0
 	bloomVals := make([]int64, 0, totalRows)
 	for _, res := range results {
-		if res.ht == nil || res.ht.Occupied == 0 {
+		if res.ht == nil || res.ht.OccupiedCount() == 0 {
 			continue
 		}
 		entries := res.ht.Entries()

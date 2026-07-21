@@ -2,10 +2,27 @@ package UT
 
 import "math/bits"
 
+// HashTableInterface is the common interface for hash tables used by
+// VectorizedHashJoin. Both HashTable (linear probing) and
+// RobinHoodHashTable (Robin Hood hashing) implement this interface.
+// REQ001590.
+type HashTableInterface interface {
+	Cap() uint32
+	OccupiedCount() uint32
+	Lookup(cols []int64, hash uint64) (idx int, found bool, ok bool)
+	Probe(keys []int64, hashes []uint64, n int, update func(idx int, row int))
+	ProbeInt64(keys []int64, hashes []uint64, n int, update func(idx int, row int))
+	Entries() []HashEntry
+}
+
 // HashTable is an open-addressing hash table with linear probing.
 // Capacity is always power-of-2; lookups use hash & (cap-1).
 // Stored hash codes avoid false key comparisons during probe.
 // Keys are flat-packed: slot i's column c lives at Keys[i*NumCols + c].
+//
+// Use RobinHoodHashTable for better probe performance on large tables.
+// REQ001590: HashTable is kept for small tables (< 64 entries) where
+// open-addressing overhead is lower than Robin Hood's swap cost.
 type HashTable struct {
 	Capacity uint32
 	Occupied uint32
@@ -41,6 +58,12 @@ func NewHashTableWithCols(minCapacity uint32, numCols int) *HashTable {
 func NewHashTable(minCapacity uint32) *HashTable {
 	return NewHashTableWithCols(minCapacity, 1)
 }
+
+// Cap returns the hash table capacity. Implements HashTableInterface.
+func (ht *HashTable) Cap() uint32 { return ht.Capacity }
+
+// OccupiedCount returns the number of occupied slots. Implements HashTableInterface.
+func (ht *HashTable) OccupiedCount() uint32 { return ht.Occupied }
 
 func nextPow2(v uint32) uint32 {
 	if v == 0 {
