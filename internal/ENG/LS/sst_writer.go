@@ -358,6 +358,35 @@ func (w *sstWriter) Finish() ([]byte, error) {
 // REQ001653.
 func (w *sstWriter) BlockStats() [][]byte { return w.blockStats }
 
+// BlockStatsBlob encodes the per-block column stats as a compact binary blob.
+// Format: [numBlocks:varint] [for each block: [numCols:varint] [colIdx:varint] [minLen:varint] [minBytes] [maxLen:varint] [maxBytes]...]
+// Returns nil if no blocks have stats. REQ001656.
+func (w *sstWriter) BlockStatsBlob() []byte {
+	// Count blocks with stats.
+	n := 0
+	for _, s := range w.blockStats {
+		if len(s) > 0 {
+			n++
+		}
+	}
+	if n == 0 {
+		return nil
+	}
+	var buf bytes.Buffer
+	buf.Write(encodeVarint(int64(len(w.blockStats))))
+	for _, s := range w.blockStats {
+		if len(s) == 0 {
+			buf.Write(encodeVarint(0)) // numCols = 0
+			continue
+		}
+		// Stats are stored as opaque bytes. The caller determines
+		// the format. For now, just store the raw stats blob.
+		buf.Write(encodeVarint(int64(len(s))))
+		buf.Write(s)
+	}
+	return buf.Bytes()
+}
+
 func (w *sstWriter) Reset() {
 	w.blocks = w.blocks[:0]
 	w.indexEntries = w.indexEntries[:0]

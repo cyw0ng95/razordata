@@ -881,3 +881,37 @@ func (r *sstReader) Close() error {
 	}
 	return nil
 }
+
+
+// ParseBlockStatsBlob decodes a block stats blob produced by
+// sstWriter.BlockStatsBlob(). Returns per-block stats as a slice
+// of byte slices. REQ001656.
+func ParseBlockStatsBlob(data []byte) [][]byte {
+	if len(data) == 0 {
+		return nil
+	}
+	numBlocks, n := decodeVarint(data)
+	if n <= 0 || numBlocks <= 0 {
+		return nil
+	}
+	pos := n
+	stats := make([][]byte, numBlocks)
+	for i := int64(0); i < numBlocks; i++ {
+		if pos >= len(data) {
+			break
+		}
+		blobLen, m := decodeVarint(data[pos:])
+		if m <= 0 {
+			break
+		}
+		pos += m
+		if blobLen > 0 {
+			if pos+int(blobLen) > len(data) {
+				break
+			}
+			stats[i] = data[pos : pos+int(blobLen)]
+			pos += int(blobLen)
+		}
+	}
+	return stats
+}
