@@ -187,12 +187,31 @@ type SeqScan struct {
 	// decoding the row. Set by NewFilter when pushdown is possible.
 	rawByteFilter func([]byte) bool
 
+	// REQ001654: predicate metadata for block-level range skipping.
+	// Set by the planner when a range predicate is pushed down.
+	// -1 means no predicate is set.
+	predicateCol   int
+	predicateMin   int64
+	predicateMax   int64
+	predicateIsSet bool
+
 	closed atomic.Bool
 }
 
 // SetRawByteFilter sets a raw-byte predicate filter. REQ001225.
 func (s *SeqScan) SetRawByteFilter(f func([]byte) bool) {
 	s.rawByteFilter = f
+}
+
+// SetRangePredicate sets the column and range for block-level skipping.
+// REQ001654. colIdx is the column index in the schema; min/max are the
+// range bounds. The SeqScan will skip blocks whose column min/max are
+// entirely outside this range.
+func (s *SeqScan) SetRangePredicate(colIdx int, min, max int64) {
+	s.predicateCol = colIdx
+	s.predicateMin = min
+	s.predicateMax = max
+	s.predicateIsSet = true
 }
 
 // WithParams propagates the bound `?` placeholders to this
