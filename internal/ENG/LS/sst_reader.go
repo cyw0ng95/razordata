@@ -30,6 +30,10 @@ type sstReader struct {
 	// REQ001242: shared block cache for decompressed SST blocks
 	blockCache *BlockCache
 
+	// REQ001659: per-block column stats blob (opaque to reader).
+	// Set by the caller before opening. One entry per block.
+	blockStats [][]byte
+
 	lazyFD File // cached fd for lazy readers, nil if using mmap/data
 }
 
@@ -777,10 +781,11 @@ func decodeBlock(data []byte) ([]kvPair, error) {
 }
 
 type sstIterator struct {
-	reader   *sstReader
-	blockIdx int      // current block index in reader.indexBlock
-	pairIdx  int      // current pair index within the loaded block
-	pairs    []kvPair // pairs for the current block; nil until first block is loaded
+	reader          *sstReader
+	blockIdx        int      // current block index in reader.indexBlock
+	pairIdx         int      // current pair index within the loaded block
+	pairs           []kvPair // pairs for the current block; nil until first block is loaded
+	currentBlockStats []byte // column stats for the current block; nil if not available
 }
 
 func (r *sstReader) Iterator() *sstIterator {
@@ -789,6 +794,21 @@ func (r *sstReader) Iterator() *sstIterator {
 		blockIdx: -1, // sentinel: no block loaded yet
 		pairIdx:  0,
 		pairs:    nil,
+	}
+}
+
+// SetBlockStats sets the per-block column stats blob. The stats are
+// one entry per block in the order they were written. REQ001659.
+func (r *sstReader) SetBlockStats(stats [][]byte) {
+	if len(stats) == 0 {
+		r.blockStats = nil
+		return
+	}
+	r.blockStats = make([][]byte, len(stats))
+	for i, s := range stats {
+		if len(s) > 0 {
+			r.blockStats[i] = append([]byte(nil), s...)
+		}
 	}
 }
 
@@ -801,11 +821,18 @@ func (it *sstIterator) loadBlock(blockIdx int) bool {
 	pairs, err := decodeBlock(blockData)
 	if err != nil {
 		it.pairs = nil
+		it.currentBlockStats = nil
 		return false
 	}
 	it.pairs = pairs
 	it.blockIdx = blockIdx
 	it.pairIdx = 0
+	// REQ001659: populate per-block column stats for range skipping.
+	if blockIdx < len(it.reader.blockStats) {
+		it.currentBlockStats = it.reader.blockStats[blockIdx]
+	} else {
+		it.currentBlockStats = nil
+	}
 	return true
 }
 
@@ -870,10 +897,77 @@ func (it *sstIterator) Err() error {
 
 // BlockColumnStats returns the min/max value for the given column
 // index in the current block. Returns (nil, nil, false) if the stats
-// are not available. REQ001657.
+// are not available. REQ001657/REQ001659.
 func (it *sstIterator) BlockColumnStats(colIdx int) (min, max []byte, ok bool) {
-	// Not yet implemented; requires block-level stats in the SST reader.
-	// Will be populated from the stats blob stored in the catalog.
+	if len(it.currentBlockStats) == 0 {
+		return nil, nil, false
+	}
+	// Format: [numCols:varint] [colIdx:varint] [minLen:varint] [minBytes] [maxLen:varint] [maxBytes]...
+	data := it.currentBlockStats
+	pos := 0
+	numCols, n := decodeVarint(data)
+	if n <= 0 {
+		return nil, nil, false
+	}
+	pos += n
+	for i := int64(0); i < numCols; i++ {
+		if pos >= len(data) {
+			return nil, nil, false
+		}
+		cIdx, n := decodeVarint(data[pos:])
+		if n <= 0 {
+			return nil, nil, false
+		}
+		pos += n
+		if cIdx != int64(colIdx) {
+			// Skip min/max for this column.
+			if pos+2 > len(data) {
+				return nil, nil, false
+			}
+			_, n1 := decodeVarint(data[pos:])
+			if n1 <= 0 {
+				return nil, nil, false
+			}
+			pos += n1 + int(n1)
+			if pos+1 > len(data) {
+				return nil, nil, false
+			}
+			_, n2 := decodeVarint(data[pos:])
+			if n2 <= 0 {
+				return nil, nil, false
+			}
+			pos += n2 + int(n2)
+			continue
+		}
+		// Found the column. Read min and max.
+		if pos >= len(data) {
+			return nil, nil, false
+		}
+		minLen, n := decodeVarint(data[pos:])
+		if n <= 0 {
+			return nil, nil, false
+		}
+		pos += n
+		if pos+int(minLen) > len(data) {
+			return nil, nil, false
+		}
+		min = data[pos : pos+int(minLen)]
+		pos += int(minLen)
+		if pos >= len(data) {
+			return nil, nil, false
+		}
+		maxLen, n := decodeVarint(data[pos:])
+		if n <= 0 {
+			return nil, nil, false
+		}
+		pos += n
+		if pos+int(maxLen) > len(data) {
+			return nil, nil, false
+		}
+		max = data[pos : pos+int(maxLen)]
+		pos += int(maxLen)
+		return min, max, true
+	}
 	return nil, nil, false
 }
 
