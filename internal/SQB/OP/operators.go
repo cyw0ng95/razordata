@@ -1070,6 +1070,18 @@ func (s *SeqScan) nextColumnarBatch(ctx context.Context, batch *UT.Batch, wanted
 				return rowIdx, err
 			}
 		}
+		// REQ001658: block-level range skipping for vectorized path.
+		if s.predicateIsSet {
+			if bp, ok := s.it.(BlockStatProvider); ok {
+				if min, max, ok := bp.BlockColumnStats(s.predicateCol); ok && len(min) > 0 && len(max) > 0 {
+					blockMin := int64(binary.BigEndian.Uint64(min))
+					blockMax := int64(binary.BigEndian.Uint64(max))
+					if s.predicateMin > blockMax || s.predicateMax < blockMin {
+						continue
+					}
+				}
+			}
+		}
 		v := s.it.Value()
 		if s.rawByteFilter != nil && !s.rawByteFilter(v) {
 			continue

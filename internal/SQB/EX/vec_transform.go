@@ -91,6 +91,12 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		if child == nil {
 			return nil
 		}
+		// REQ001658: push down range predicate to SeqScan when possible.
+		if ss, ok := o.Child().(*OP.SeqScan); ok && ss.Store() != nil {
+			if colIdx, min, max, ok := extractRangePredicate(o.Predicate()); ok {
+				ss.SetRangePredicate(colIdx, min, max)
+			}
+		}
 		return OP.NewVectorizedFilter(child, o.Predicate())
 	case *OP.Project:
 		child := transformOp(o.Child())
@@ -559,4 +565,44 @@ func extractSchemaFromOp(op DT.Operator) ([]string, []LX.TokenType) {
 		return extractSchemaFromOp(o.LeftChild())
 	}
 	return nil, nil
+}
+
+// extractRangePredicate extracts a simple range predicate from a
+// filter expression. Returns the column index and the min/max range
+// bounds. Returns ok=false if the predicate is not a simple range.
+// Only handles int64 comparisons for now. REQ001658.
+func extractRangePredicate(expr PS.Expr) (colIdx int, min, max int64, ok bool) {
+	bin, ok := expr.(*PS.BinaryExpr)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	// Extract column and literal from the binary expression.
+	var ident *PS.Ident
+	var literal *PS.NumberLiteral
+	if id, ok := bin.Left.(*PS.Ident); ok {
+		if lit, ok := bin.Right.(*PS.NumberLiteral); ok {
+			ident = id
+			literal = lit
+		}
+	}
+	if id, ok := bin.Right.(*PS.Ident); ok {
+		if lit, ok := bin.Left.(*PS.NumberLiteral); ok {
+			ident = id
+			literal = lit
+		}
+	}
+	if ident == nil || literal == nil {
+		return 0, 0, 0, false
+	}
+	_ = ident
+	val := literal.Val
+	switch bin.Op {
+	case LX.T_GT, LX.T_GE:
+		return 0, val + 1, 1<<63 - 1, true
+	case LX.T_LT, LX.T_LE:
+		return 0, 0, val - 1, true
+	case LX.T_EQ:
+		return 0, val, val, true
+	}
+	return 0, 0, 0, false
 }
