@@ -131,6 +131,135 @@ func (f *fakeBatchProducer) Close() error {
 	return nil
 }
 
+// REQ001640: VectorizedTopNSort returns only the top-N rows.
+func TestVectorizedTopNSort_Basic(t *testing.T) {
+	bp := &fakeBatchProducer{
+		batches: []*UT.Batch{
+			func() *UT.Batch {
+				b := UT.GetBatch(1)
+				b.SetColumnName(0, "val")
+				b.Cols[0].Type = LX.T_INT_KW
+				for _, v := range []int64{9, 3, 7, 1, 5, 8, 2, 6, 4, 0} {
+					b.AppendRow(0, LX.T_INT_KW, v, false)
+					b.AdvanceSize()
+				}
+				return b
+			}(),
+		},
+	}
+	keys := []PS.OrderItem{{Expr: &PS.Ident{Name: "val"}, Desc: false}}
+	topn := NewVectorizedTopNSort(bp, keys, 3)
+
+	var vals []int64
+	for {
+		batch, err := topn.NextBatch(context.Background())
+		if err != nil {
+			t.Fatalf("NextBatch: %v", err)
+		}
+		if batch == nil {
+			break
+		}
+		for i := 0; i < batch.Size; i++ {
+			vals = append(vals, batch.Cols[0].Data.Ints[i])
+		}
+	}
+	expected := []int64{0, 1, 2}
+	if len(vals) != len(expected) {
+		t.Fatalf("got %d rows, want %d", len(vals), len(expected))
+	}
+	for i, v := range vals {
+		if v != expected[i] {
+			t.Errorf("row %d: got %d, want %d", i, v, expected[i])
+		}
+	}
+}
+
+// REQ001640: VectorizedTopNSort with DESC ordering.
+func TestVectorizedTopNSort_Desc(t *testing.T) {
+	bp := &fakeBatchProducer{
+		batches: []*UT.Batch{
+			func() *UT.Batch {
+				b := UT.GetBatch(1)
+				b.SetColumnName(0, "val")
+				b.Cols[0].Type = LX.T_INT_KW
+				for _, v := range []int64{9, 3, 7, 1, 5, 8, 2, 6, 4, 0} {
+					b.AppendRow(0, LX.T_INT_KW, v, false)
+					b.AdvanceSize()
+				}
+				return b
+			}(),
+		},
+	}
+	keys := []PS.OrderItem{{Expr: &PS.Ident{Name: "val"}, Desc: true}}
+	topn := NewVectorizedTopNSort(bp, keys, 3)
+
+	var vals []int64
+	for {
+		batch, err := topn.NextBatch(context.Background())
+		if err != nil {
+			t.Fatalf("NextBatch: %v", err)
+		}
+		if batch == nil {
+			break
+		}
+		for i := 0; i < batch.Size; i++ {
+			vals = append(vals, batch.Cols[0].Data.Ints[i])
+		}
+	}
+	expected := []int64{9, 8, 7}
+	if len(vals) != len(expected) {
+		t.Fatalf("got %d rows, want %d", len(vals), len(expected))
+	}
+	for i, v := range vals {
+		if v != expected[i] {
+			t.Errorf("row %d: got %d, want %d", i, v, expected[i])
+		}
+	}
+}
+
+// REQ001640: VectorizedTopNSort when N > number of rows.
+func TestVectorizedTopNSort_LargerThanDataset(t *testing.T) {
+	bp := &fakeBatchProducer{
+		batches: []*UT.Batch{
+			func() *UT.Batch {
+				b := UT.GetBatch(1)
+				b.SetColumnName(0, "val")
+				b.Cols[0].Type = LX.T_INT_KW
+				for _, v := range []int64{3, 1, 2} {
+					b.AppendRow(0, LX.T_INT_KW, v, false)
+					b.AdvanceSize()
+				}
+				return b
+			}(),
+		},
+	}
+	keys := []PS.OrderItem{{Expr: &PS.Ident{Name: "val"}, Desc: false}}
+	topn := NewVectorizedTopNSort(bp, keys, 10)
+
+	var vals []int64
+	for {
+		batch, err := topn.NextBatch(context.Background())
+		if err != nil {
+			t.Fatalf("NextBatch: %v", err)
+		}
+		if batch == nil {
+			break
+		}
+		for i := 0; i < batch.Size; i++ {
+			vals = append(vals, batch.Cols[0].Data.Ints[i])
+		}
+	}
+	expected := []int64{1, 2, 3}
+	if len(vals) != len(expected) {
+		t.Fatalf("got %d rows, want %d", len(vals), len(expected))
+	}
+	for i, v := range vals {
+		if v != expected[i] {
+			t.Errorf("row %d: got %d, want %d", i, v, expected[i])
+		}
+	}
+}
+
 func intToStr2(n int) string {
 	if n == 0 {
 		return "0"

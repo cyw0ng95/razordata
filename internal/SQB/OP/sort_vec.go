@@ -442,14 +442,33 @@ func (s *VectorizedTopNSort) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		for i := 0; i < n; i++ {
 			s.heap[i] = i
 		}
-		// Heapify: for heap[0] = min (for ASC), we keep the largest N.
-		// For DESC, we reverse the comparison.
+		// Heapify: for ASC we keep the smallest N using a min-heap;
+		// for DESC we keep the largest N using a min-heap.
+		// REQ001640: heapifyDown uses lessThan which respects DESC.
 		for i := n/2 - 1; i >= 0; i-- {
 			s.heapifyDown(i, n)
 		}
-		// Process remaining rows: if row > heap[0], replace and heapify.
+		// Process remaining rows. For ASC (max-heap), if val[i] < heap[0]
+		// (i is smaller than the current largest), replace.
+		// For DESC (min-heap), if val[i] > heap[0] (i is larger than the
+		// current smallest), replace.
+		allDesc := true
+		for _, k := range s.keys {
+			if !k.Desc {
+				allDesc = false
+				break
+			}
+		}
 		for i := n; i < s.numRows; i++ {
-			if s.lessThan(0, i) {
+			replace := false
+			if allDesc {
+				// Min-heap: heap[0] = smallest. Replace if val[i] > heap[0].
+				replace = s.cmpKey(s.heap[0], i) < 0
+			} else {
+				// Max-heap: heap[0] = largest. Replace if val[i] < heap[0].
+				replace = s.cmpKey(i, s.heap[0]) < 0
+			}
+			if replace {
 				s.heap[0] = i
 				s.heapifyDown(0, n)
 			}
@@ -562,21 +581,53 @@ func (s *VectorizedTopNSort) lessThan(pos, otherIdx int) bool {
 }
 
 // heapifyDown maintains the heap property at position pos.
+// For ASC (keep smallest N): max-heap (heap[0] = largest).
+//   Any value < heap[0] replaces it.
+// For DESC (keep largest N): min-heap (heap[0] = smallest).
+//   Any value > heap[0] replaces it.
+// REQ001640.
 func (s *VectorizedTopNSort) heapifyDown(pos, n int) {
-	smallest := pos
+	allDesc := true
+	for _, k := range s.keys {
+		if !k.Desc {
+			allDesc = false
+			break
+		}
+	}
+	extremum := pos
 	left := 2*pos + 1
 	right := 2*pos + 2
 
-	if left < n && s.lessThan(left, s.heap[smallest]) {
-		smallest = left
+	if allDesc {
+		// Min-heap: heap[0] = smallest. Promote the smallest child.
+		if left < n && s.lessThanHeap(left, s.heap[extremum]) {
+			extremum = left
+		}
+		if right < n && s.lessThanHeap(right, s.heap[extremum]) {
+			extremum = right
+		}
+	} else {
+		// Max-heap: heap[0] = largest. Promote the largest child.
+		if left < n && !s.lessThanHeap(left, s.heap[extremum]) {
+			extremum = left
+		}
+		if right < n && !s.lessThanHeap(right, s.heap[extremum]) {
+			extremum = right
+		}
 	}
-	if right < n && s.lessThan(right, s.heap[smallest]) {
-		smallest = right
+
+	if extremum != pos {
+		s.heap[pos], s.heap[extremum] = s.heap[extremum], s.heap[pos]
+		s.heapifyDown(extremum, n)
 	}
-	if smallest != pos {
-		s.heap[pos], s.heap[smallest] = s.heap[smallest], s.heap[pos]
-		s.heapifyDown(smallest, n)
-	}
+}
+
+// lessThanHeap returns true if heap[pos] < otherIdx in natural order
+// (ASC). Unlike lessThan, this does NOT invert for DESC — it's used
+// purely for heap property maintenance, not for output ordering.
+func (s *VectorizedTopNSort) lessThanHeap(pos, otherIdx int) bool {
+	idx := s.heap[pos]
+	return s.cmpKey(idx, otherIdx) < 0
 }
 
 // sortHeap sorts the heap indices by the actual key order.
