@@ -48,6 +48,9 @@ type sstWriter struct {
 	currentBlockOffset int
 	version            int // REQ001169: SST format version
 	bitsPerKey         int // REQ001401: per-level bits/key for Ribbon filter
+	// REQ001653: per-block column stats; set by caller before finishCurrentBlock.
+	currentBlockStats []byte
+	blockStats       [][]byte // one entry per block, parallel to blocks
 }
 
 var sstWriterPool = sync.Pool{
@@ -57,6 +60,7 @@ var sstWriterPool = sync.Pool{
 			indexEntries:    make([]indexEntry, 0, 16),
 			keys:            make([][]byte, 0, 256),
 			rangeTombstones: make([][]byte, 0, 16),
+			blockStats:      make([][]byte, 0, 16),
 		}
 	},
 }
@@ -76,6 +80,7 @@ func newSSTWriter() *sstWriter {
 		indexEntries:    make([]indexEntry, 0, 16),
 		keys:            make([][]byte, 0, 256),
 		rangeTombstones: make([][]byte, 0, 16),
+		blockStats:      make([][]byte, 0, 16),
 	}
 }
 
@@ -171,6 +176,13 @@ func (w *sstWriter) setPrefixBloomBit(prefix []byte, size int) {
 	}
 }
 
+// SetCurrentBlockStats sets the column stats for the current block.
+// The stats are appended to the block before the checksum.
+// Must be called before each call to finishCurrentBlock. REQ001653.
+func (w *sstWriter) SetCurrentBlockStats(stats []byte) {
+	w.currentBlockStats = append(w.currentBlockStats[:0], stats...)
+}
+
 func (w *sstWriter) finishCurrentBlock() {
 	if len(w.blocks) == 0 {
 		return
@@ -179,6 +191,14 @@ func (w *sstWriter) finishCurrentBlock() {
 	block := w.blocks[len(w.blocks)-1]
 	if len(block) == 0 {
 		return
+	}
+
+	// REQ001653: save current block stats before clearing.
+	if len(w.currentBlockStats) > 0 {
+		w.blockStats = append(w.blockStats, append([]byte(nil), w.currentBlockStats...))
+		w.currentBlockStats = w.currentBlockStats[:0]
+	} else {
+		w.blockStats = append(w.blockStats, nil)
 	}
 
 	checksum := crc32.Checksum(block, crc32Koopman)
@@ -333,6 +353,11 @@ func (w *sstWriter) Finish() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// BlockStats returns the per-block column stats accumulated during writing.
+// Each entry corresponds to a block in the order they were written.
+// REQ001653.
+func (w *sstWriter) BlockStats() [][]byte { return w.blockStats }
+
 func (w *sstWriter) Reset() {
 	w.blocks = w.blocks[:0]
 	w.indexEntries = w.indexEntries[:0]
@@ -346,6 +371,8 @@ func (w *sstWriter) Reset() {
 	w.rangeTombstones = w.rangeTombstones[:0]
 	w.version = 0
 	w.bitsPerKey = 0
+	w.currentBlockStats = w.currentBlockStats[:0]
+	w.blockStats = w.blockStats[:0]
 }
 
 // compressBlock compresses a data block using flate (REQ000271).
