@@ -484,17 +484,21 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		// into the LSM iterator's internal buffer. Without the copy,
 		// StoreKey on every row in Filter.refillBatch's batchBuf aliases
 		// the same iterator buffer and gets silently overwritten.
-		// REQ001635: use geometric growth to avoid per-row allocation.
+		// REQ001635: use geometric growth for the temp copy, then
+		// allocate a separate StoreKey for the row so the key buffer
+		// can be reused without corrupting StoreKey.
 		s.keyBuf = growKeyBuf(s.keyBuf, len(s.currentKey))
 		copy(s.keyBuf, s.currentKey)
 		s.currentKey = s.keyBuf
+		// StoreKey is a per-row allocation — cannot share keyBuf.
+		storeKey := append([]byte(nil), s.currentKey...)
 		v := s.it.Value()
 		row, err := DecodeRow(v, s.schema)
 		if err != nil {
 			batch.Put()
 			return nil, err
 		}
-		row.StoreKey = s.currentKey
+		row.StoreKey = storeKey
 		if s.planner != nil {
 			row.Planner = s.planner
 		}
@@ -688,10 +692,13 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		// iterator buffer and gets silently overwritten, causing
 		// ExtractPKForUpdate to see an empty StoreKey and allocate a
 		// new synthetic rowid for every UPDATE.
-		// REQ001635: use geometric growth to avoid per-row allocation.
+		// REQ001635: use geometric growth for the temp copy, then
+		// allocate a separate StoreKey for the row so the key buffer
+		// can be reused without corrupting StoreKey.
 		s.keyBuf = growKeyBuf(s.keyBuf, len(s.currentKey))
 		copy(s.keyBuf, s.currentKey)
 		s.currentKey = s.keyBuf
+		storeKey := append([]byte(nil), s.currentKey...)
 		v := s.it.Value()
 		// REQ001225: apply raw-byte filter before decoding to avoid
 		// unnecessary DecodeRowInto work for rows that will be filtered.
@@ -704,7 +711,7 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		if err != nil {
 			return Row{}, err
 		}
-		row.StoreKey = s.currentKey
+		row.StoreKey = storeKey
 		// REQ000366: thread the planner so subquery evals see
 		// the same store/catalog.
 		if s.planner != nil {
