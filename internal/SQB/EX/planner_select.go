@@ -280,7 +280,14 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 			// no longer match extractedPreds). extractedPreds used
 			// indices into the original crossTablePredicates slice
 			// before reordering; now use the expressions themselves.
-			extractedPtrs := make(map[PS.Expr]bool)
+			// REQ001672: reuse scratch map to avoid per-plan alloc.
+			extractedPtrs := p.extractedPtrsScratch
+			if extractedPtrs == nil {
+				extractedPtrs = make(map[PS.Expr]bool)
+				p.extractedPtrsScratch = extractedPtrs
+			} else {
+				clear(extractedPtrs)
+			}
 			for i, c := range crossTablePredicates {
 				if extractedPreds[i] {
 					extractedPtrs[c] = true
@@ -310,7 +317,14 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 			// existsReplaced was keyed by index in the original
 			// conjuncts slice (line 142). After reordering the
 			// indices no longer match, so we skip by pointer instead.
-			existsReplacedPt := make(map[*PS.ExistsExpr]bool)
+			// REQ001672: reuse scratch map to avoid per-plan alloc.
+			existsReplacedPt := p.existsReplacedScratch
+			if existsReplacedPt == nil {
+				existsReplacedPt = make(map[*PS.ExistsExpr]bool)
+				p.existsReplacedScratch = existsReplacedPt
+			} else {
+				clear(existsReplacedPt)
+			}
 			for _, c := range conjuncts {
 				if ee, ok := c.(*PS.ExistsExpr); ok && existsReplacedPtr[ee] {
 					existsReplacedPt[ee] = true

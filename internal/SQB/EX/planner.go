@@ -101,6 +101,11 @@ type Planner struct {
 	// REQ001332: collations is a registry of user-defined collation
 	// functions keyed by name.
 	collations map[string]DT.CollateFunc
+
+	// REQ001672: reusable scratch maps for planSelect conjunct
+	// decomposition. Avoids per-plan make(map) allocations.
+	extractedPtrsScratch    map[PS.Expr]bool
+	existsReplacedScratch   map[*PS.ExistsExpr]bool
 }
 
 type tableInfo struct {
