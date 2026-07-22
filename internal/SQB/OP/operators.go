@@ -164,6 +164,13 @@ type SeqScan struct {
 	pruneBufData  []Value
 	pruneBufIndex map[string]int
 
+	// REQ001660: hold the most recent row.Data slice so we can return
+	// it to valueSlicePool on the next iteration (mirrors IndexScan's
+	// lastDataSlice pattern). DecodeRow pulls from the pool but nothing
+	// in the SeqScan hot path was returning the slice, leaking ~2.4GB
+	// per SLT select2 run.
+	lastDataSlice []Value
+
 	// REQ001221: rowArena replaces decodeBuf for bump-pointer
 	rowArena *DT.RowArena
 
@@ -529,11 +536,19 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		// StoreKey is a per-row allocation — cannot share keyBuf.
 		storeKey := append([]byte(nil), s.currentKey...)
 		v := s.it.Value()
+		// REQ001660: return the previous iteration's row.Data to the
+		// valueSlicePool before allocating a new one. DecodeRow pulls
+		// from the pool but never returned — leaking every slice.
+		if s.lastDataSlice != nil {
+			DT.PutValueSlice(s.lastDataSlice)
+			s.lastDataSlice = nil
+		}
 		row, err := DecodeRow(v, s.schema)
 		if err != nil {
 			batch.Put()
 			return nil, err
 		}
+		s.lastDataSlice = row.Data
 		row.StoreKey = storeKey
 		if s.planner != nil {
 			row.Planner = s.planner

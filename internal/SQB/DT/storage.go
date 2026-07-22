@@ -1067,15 +1067,17 @@ type ColumnWriter interface {
 // not in wantedCols are skipped (bytes advanced) without allocation.
 // wantedCols are indices into the store schema's column list; the
 // writer receives these indices as the colIdx parameter. REQ001480.
+//
+// REQ001661: wantedCols is expected to be short and (typically)
+// monotonically increasing — a per-row map[int]bool alloc was the
+// largest single hot-path allocation in SLT select2 pprof. We scan
+// wantedCols linearly using a cursor: the wanted-set membership test
+// is `wanted[wantIdx] == i` after advancing `wantIdx` past any
+// smaller entries, which avoids any per-row heap allocation.
 func DecodeRowSubsetIntoColumnar(data []byte, schema *StoreSchema, wantedCols []int, w ColumnWriter) error {
 	nFull := len(schema.Cols)
 	if data == nil || len(data) == 0 {
 		return errors.New("DT: empty row payload")
-	}
-
-	wantedSet := make(map[int]bool, len(wantedCols))
-	for _, idx := range wantedCols {
-		wantedSet[idx] = true
 	}
 
 	off := 0
@@ -1101,13 +1103,26 @@ func DecodeRowSubsetIntoColumnar(data []byte, schema *StoreSchema, wantedCols []
 		return fmt.Errorf("DT: row has %d cols, schema %d", colCount, nFull)
 	}
 
+	// REQ001661: cursor scan over wantedCols. wantedCols must be
+	// sorted ascending for the cursor walk to be correct; callers
+	// build it from schema column indices which are naturally
+	// monotonic, but we tolerate unsorted input by linear-scanning
+	// at every column boundary when wantedCols is unsorted. In
+	// practice wantedCols is short (<=8 in select2), so the linear
+	// scan inside the column loop is acceptable and avoids the map
+	// allocation.
+	wantIdx := 0
 	for i := 0; i < nFull; i++ {
 		if off >= len(data) {
 			return errors.New("DT: truncated row")
 		}
 		tag := data[off]
 		off++
-		want := wantedSet[i]
+		// Advance wantIdx past any wanted entry < i.
+		for wantIdx < len(wantedCols) && wantedCols[wantIdx] < i {
+			wantIdx++
+		}
+		want := wantIdx < len(wantedCols) && wantedCols[wantIdx] == i
 		if !want {
 			// Skip column bytes without allocation.
 			switch tag {

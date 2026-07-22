@@ -3,6 +3,7 @@ package AG
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -659,6 +660,15 @@ type VectorizedHashAggregate struct {
 	ht             *UT.HashTable
 	noGroupPayload *aggPayload // for no-GROUP-BY case (stride==0)
 	done           bool
+
+	// REQ001662: pooled scratch buffers reused across batches to
+	// avoid the four per-batch allocs in processBatch (keys,
+	// hashes, validRows, plus the redundant keysToPass/hashesToPass
+	// copies). Capacity grows monotonically; cleared between
+	// batches by re-slicing to 0.
+	scratchKeys    []int64
+	scratchHashes  []uint64
+	scratchValid   []int
 }
 
 // hashInt64 computes a uint64 hash of an int64 key using
@@ -744,10 +754,13 @@ func (a *VectorizedHashAggregate) processBatch(batch *UT.Batch) {
 	}
 
 	// Multi-column GROUP BY: build flat-packed keys
-	keys := make([]int64, n*stride)
-	hashes := make([]uint64, n)
-	validRows := make([]int, 0, n) // src indices for valid (non-NULL) rows
+	// REQ001662: reuse scratch buffers across batches instead of
+	// reallocating four slices per call. The two extra slices
+	// (keysToPass, hashesToPass) are eliminated entirely — we
+	// fill keys/hashes directly in validRow-compact order.
+	keys, hashes, validRows := a.acquireScratch(n, stride)
 
+	// Pass 1: collect valid (non-NULL) src indices.
 	for row := 0; row < n; row++ {
 		src := row
 		if batch.Sel != nil {
@@ -774,33 +787,55 @@ func (a *VectorizedHashAggregate) processBatch(batch *UT.Batch) {
 			continue
 		}
 		validRows = append(validRows, src)
-		// Index at the new validRows position (0-based, so last added index = len-1)
-		k := (len(validRows) - 1) * stride
-		for c, colIdx := range a.groupCols {
-			col := batch.Cols[colIdx]
-			keys[k+c] = col.Data.Ints[src]
-		}
 	}
 
 	if len(validRows) == 0 {
 		return
 	}
 
-	// Compute hashes for each valid row
-	for i := 0; i < len(validRows); i++ {
+	// Pass 2: pack keys directly into validRow-compact order so
+	// hashes/keys are aligned with validRows. This replaces the
+	// previous keysToPass copy.
+	for i, src := range validRows {
 		k := i * stride
+		for c, colIdx := range a.groupCols {
+			col := batch.Cols[colIdx]
+			keys[k+c] = col.Data.Ints[src]
+		}
 		hashes[i] = UT.HashComposite(keys[k : k+stride])
 	}
 
-	// Probe hash table
-	keysToPass := make([]int64, len(validRows)*stride)
-	hashesToPass := make([]uint64, len(validRows))
-	copy(keysToPass, keys[:len(validRows)*stride])
-	copy(hashesToPass, hashes[:len(validRows)])
-
-a.ht.Probe(keysToPass, hashesToPass, len(validRows), func(idx int, row int) {
+	// Probe hash table — pass the compact slice range directly.
+	a.ht.Probe(keys, hashes, len(validRows), func(idx int, row int) {
 		a.updateAggregates(batch, validRows[row], idx)
 	})
+}
+
+// acquireScratch returns reusable scratch buffers sized for the
+// current batch. REQ001662. Buffers grow monotonically via
+// slices.Grow and are reused across batches in the same
+// NextBatch call.
+func (a *VectorizedHashAggregate) acquireScratch(n, stride int) (keys []int64, hashes []uint64, validRows []int) {
+	keysLen := n * stride
+	if cap(a.scratchKeys) < keysLen {
+		a.scratchKeys = slices.Grow(a.scratchKeys, keysLen)[:keysLen]
+	} else {
+		a.scratchKeys = a.scratchKeys[:keysLen]
+	}
+	keys = a.scratchKeys
+	if cap(a.scratchHashes) < n {
+		a.scratchHashes = slices.Grow(a.scratchHashes, n)[:n]
+	} else {
+		a.scratchHashes = a.scratchHashes[:n]
+	}
+	hashes = a.scratchHashes
+	if cap(a.scratchValid) < n {
+		a.scratchValid = slices.Grow(a.scratchValid, n)[:0]
+	} else {
+		a.scratchValid = a.scratchValid[:0]
+	}
+	validRows = a.scratchValid
+	return
 }
 
 // updateAggregates updates aggregate accumulators for one row at the
