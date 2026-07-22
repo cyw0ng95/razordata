@@ -56,3 +56,53 @@ func ensureCorpusFile(b *testing.B, rel string) {
 		b.Skipf("corpus file not present at %s: %v", full, err)
 	}
 }
+
+// BenchmarkSLT_Idx1000_2 runs index/random/1000/slt_good_2.test via the
+// SLT runner. 5 tables with 1000 rows each, 10+ indexes, ~3000 records
+// per file. Heavy index + SELECT DISTINCT workload.
+func BenchmarkSLT_Idx1000_2(b *testing.B) {
+	recs := loadCorpusSLT(b, "index/random/1000/slt_good_2")
+	d := newSLTDriver(b)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for b.Loop() {
+		if err := d.Reset(ctx); err != nil {
+			b.Fatal(err)
+		}
+		runner := NewRunner(d, d.classifier, RazorEngineName)
+		_ = runner.Run(ctx, recs)
+	}
+}
+
+// BenchmarkSLT_Idx1000_3 mirrors Idx1000_2 for slt_good_3.
+func BenchmarkSLT_Idx1000_3(b *testing.B) {
+	recs := loadCorpusSLT(b, "index/random/1000/slt_good_3")
+	d := newSLTDriver(b)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for b.Loop() {
+		if err := d.Reset(ctx); err != nil {
+			b.Fatal(err)
+		}
+		runner := NewRunner(d, d.classifier, RazorEngineName)
+		_ = runner.Run(ctx, recs)
+	}
+}
+
+// BenchmarkSLT_Idx1000_4 mirrors Idx1000_2 for slt_good_4.
+func BenchmarkSLT_Idx1000_4(b *testing.B) {
+	recs := loadCorpusSLT(b, "index/random/1000/slt_good_4")
+	d := newSLTDriver(b)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for b.Loop() {
+		if err := d.Reset(ctx); err != nil {
+			b.Fatal(err)
+		}
+		runner := NewRunner(d, d.classifier, RazorEngineName)
+		_ = runner.Run(ctx, recs)
+	}
+}
