@@ -229,7 +229,12 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 		if refTables := collectReferencedTables(s); refTables != nil {
 			filtered := s.Joins[:0]
 			for _, j := range s.Joins {
-				if refTables[j.Right] {
+				// REQ001683: CROSS JOIN tables must NEVER be eliminated
+				// — they affect the cartesian product even when not
+				// referenced in SELECT/WHERE/ORDER BY/GROUP BY/HAVING.
+				if j.Kind == "CROSS" {
+					filtered = append(filtered, j)
+				} else if refTables[j.Right] {
 					filtered = append(filtered, j)
 				} else if j.RightAlias != "" && refTables[j.RightAlias] {
 					// REQ000835/836: when the same table is used
@@ -1101,6 +1106,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 	// re-extracted by the merge phase, causing the final WHERE filter
 	// to skip it and produce 0 rows.
 	consumedPreds := map[PS.Expr]bool{}
+	baseOccurrence := make(map[string]int)
 	for gi, group := range joinGroups {
 		baseTable := group[0]
 		var current DT.Operator
@@ -1144,9 +1150,9 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 		}
 		initialConjuncts := localConjuncts
 		tableOccurrence := make(map[string]int, len(group))
-		joinClauseIdx := make(map[string]int, len(joinClauses))
+		joinClauseIdx := make(map[string][]int, len(joinClauses))
 		for ci, jc := range joinClauses {
-			joinClauseIdx[jc.Right] = ci
+			joinClauseIdx[jc.Right] = append(joinClauseIdx[jc.Right], ci)
 		}
 		if gi == 0 {
 			current = filteredScan
@@ -1160,7 +1166,10 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			if ssc, err := OP.NewSeqScanWithStore(p.store, baseTable); err == nil {
 				baseOp = ssc
 			}
-			if baseCi, ok := joinClauseIdx[baseTable]; ok {
+			if baseIdxs, ok := joinClauseIdx[baseTable]; ok && len(baseIdxs) > 0 {
+				baseOcc := baseOccurrence[baseTable]
+				baseOccurrence[baseTable]++
+				baseCi := baseIdxs[baseOcc%len(baseIdxs)]
 				jc := joinClauses[baseCi]
 				if jc.RightAlias != "" {
 					if ss, ok := baseOp.(*OP.SeqScan); ok {
@@ -1192,10 +1201,14 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			}
 			occ := tableOccurrence[tbl]
 			tableOccurrence[tbl]++
-			ci, ok := joinClauseIdx[tbl]
+			indices, ok := joinClauseIdx[tbl]
 			if !ok {
 				continue
 			}
+			if occ >= len(indices) {
+				continue
+			}
+			ci := indices[occ]
 			joinedCounts := make(map[string]int, len(group))
 			for t := range joinedTables {
 				joinedCounts[t]++
