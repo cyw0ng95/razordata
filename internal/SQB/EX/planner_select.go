@@ -606,6 +606,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 	if s.IndexHint != nil {
 		if s.IndexHint.IndexedBy == "" {
 			if ssc, err := OP.NewSeqScanWithStore(p.store, s.From); err == nil {
+				ssc.SetNeedsStableKey(false) // REQ001667: read-only SELECT
 				return ssc, remaining
 			}
 			return nil, remaining
@@ -729,6 +730,7 @@ func (p *Planner) planSelectScan(s *PS.Select, whereExpr PS.Expr) (DT.Operator, 
 	}
 	if scan == nil {
 		if ssc, err := OP.NewSeqScanWithStore(p.store, s.From); err == nil {
+			ssc.SetNeedsStableKey(false) // REQ001667: read-only SELECT
 			scan = ssc
 		}
 	}
@@ -1176,8 +1178,11 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			}
 			joinedTables[s.From] = true
 		} else {
-			var baseOp DT.Operator = OP.NewSeqScan(baseTable)
+			baseScan := OP.NewSeqScan(baseTable)
+			baseScan.SetNeedsStableKey(false) // REQ001667: read-only SELECT
+			var baseOp DT.Operator = baseScan
 			if ssc, err := OP.NewSeqScanWithStore(p.store, baseTable); err == nil {
+				ssc.SetNeedsStableKey(false) // REQ001667: read-only SELECT
 				baseOp = ssc
 			}
 			if baseIdxs, ok := joinClauseIdx[baseTable]; ok && len(baseIdxs) > 0 {
@@ -1257,8 +1262,11 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			if j.RightAlias != "" {
 				rightTbl = j.RightAlias
 			}
-			var rightScan DT.Operator = OP.NewSeqScan(j.Right)
+			rScan := OP.NewSeqScan(j.Right)
+			rScan.SetNeedsStableKey(false) // REQ001667: read-only SELECT
+			var rightScan DT.Operator = rScan
 			if ssc, err := OP.NewSeqScanWithStore(p.store, j.Right); err == nil {
+				ssc.SetNeedsStableKey(false) // REQ001667: read-only SELECT
 				rightScan = ssc
 			}
 			if j.RightAlias != "" {

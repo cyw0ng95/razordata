@@ -73,6 +73,7 @@ type BlockStatProvider interface {
 	// in the current block. Returns (nil, nil, false) if not available.
 	BlockColumnStats(colIdx int) (min, max []byte, ok bool)
 }
+
 // rows without decoding (e.g., SeqScan, IndexScan).
 type Skipper interface {
 	Skip(ctx context.Context, n int64) error
@@ -139,6 +140,16 @@ type SeqScan struct {
 	// allocation in DT.CloneRow. Must be false for mutable operators
 	// (UPDATE/DELETE returning, ON CONFLICT DO UPDATE).
 	shallow bool
+
+	// REQ001667: when false, the planner guarantees this scan feeds a
+	// read-only subtree (no UPDATE/DELETE downstream). nextFromStore/
+	// NextBatch then alias row.StoreKey to s.currentKey (s.keyBuf)
+	// instead of allocating an independent copy, eliminating one
+	// per-row allocation. The Filter.refillBatch path still deep-copies
+	// StoreKey before retaining it, so aliasing is safe for SELECT.
+	// Default true (safe for UPDATE/DELETE which read StoreKey via
+	// ExtractPKForUpdate).
+	needsStableKey bool
 
 	// REQ001042: batched context check counter.
 	ctxCheckCounter int
@@ -276,8 +287,17 @@ func (s *SeqScan) WithAlias(alias string) *SeqScan {
 	return s
 }
 
+// SetNeedsStableKey controls whether nextFromStore makes an independent
+// copy of the iterator key for row.StoreKey. Set to false for read-only
+// SELECT plans to skip the per-row copy. REQ001667.
+func (s *SeqScan) SetNeedsStableKey(v bool) { s.needsStableKey = v }
+
+// NeedsStableKey reports whether the scan makes an independent StoreKey
+// copy per row. REQ001667.
+func (s *SeqScan) NeedsStableKey() bool { return s.needsStableKey }
+
 func NewSeqScan(table string) *SeqScan {
-	return &SeqScan{table: table, shallow: true}
+	return &SeqScan{table: table, shallow: true, needsStableKey: true}
 }
 
 // growKeyBuf grows buf to at least n bytes using geometric growth.
@@ -418,10 +438,11 @@ func NewSeqScanWithStore(store Store, table string) (*SeqScan, error) {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotRegisteredForStorage, table)
 	}
 	return &SeqScan{
-		table:  table,
-		store:  store,
-		schema: ss,
-		prefix: TablePrefix(table),
+		table:          table,
+		store:          store,
+		schema:         ss,
+		prefix:         TablePrefix(table),
+		needsStableKey: true,
 	}, nil
 }
 
@@ -537,8 +558,16 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		s.keyBuf = growKeyBuf(s.keyBuf, len(s.currentKey))
 		copy(s.keyBuf, s.currentKey)
 		s.currentKey = s.keyBuf
-		// StoreKey is a per-row allocation — cannot share keyBuf.
-		storeKey := append([]byte(nil), s.currentKey...)
+		// REQ001667: skip the independent StoreKey copy for read-only
+		// plans; alias s.currentKey directly. Filter.refillBatch
+		// deep-copies StoreKey before retaining it, so this is safe
+		// for SELECT. UPDATE/DELETE keep needsStableKey=true.
+		var storeKey []byte
+		if s.needsStableKey {
+			storeKey = append([]byte(nil), s.currentKey...)
+		} else {
+			storeKey = s.currentKey
+		}
 		v := s.it.Value()
 		// REQ001660: return the previous iteration's row.Data to the
 		// valueSlicePool before allocating a new one. DecodeRow pulls
@@ -777,7 +806,16 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		s.keyBuf = growKeyBuf(s.keyBuf, len(s.currentKey))
 		copy(s.keyBuf, s.currentKey)
 		s.currentKey = s.keyBuf
-		storeKey := append([]byte(nil), s.currentKey...)
+		// REQ001667: skip the independent StoreKey copy for read-only
+		// plans; alias s.currentKey directly. Filter.refillBatch
+		// deep-copies StoreKey before retaining it, so this is safe
+		// for SELECT. UPDATE/DELETE keep needsStableKey=true.
+		var storeKey []byte
+		if s.needsStableKey {
+			storeKey = append([]byte(nil), s.currentKey...)
+		} else {
+			storeKey = s.currentKey
+		}
 		v := s.it.Value()
 		// REQ001225: apply raw-byte filter before decoding to avoid
 		// unnecessary DecodeRowInto work for rows that will be filtered.
@@ -2045,7 +2083,7 @@ func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool, seq *SeqS
 func (s *SeqScan) Table() string               { return s.table }
 func (s *SeqScan) Store() DT.Store             { return s.store }
 func (s *SeqScan) Schema() *DT.StoreSchema     { return s.schema }
-func (s *SeqScan) Alias() string                { return s.alias }
+func (s *SeqScan) Alias() string               { return s.alias }
 func (s *SeqScan) UsedCols() []string          { return s.usedCols }
 func (s *SeqScan) UsedColSet() map[string]bool { return s.usedColSet }
 func (s *SeqScan) GetRequestedCols() []int     { return s.RequestedCols }

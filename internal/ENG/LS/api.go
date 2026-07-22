@@ -500,8 +500,8 @@ type mergeIterator struct {
 	prefix     []byte
 	sources    []RangeIter
 	h          mergeHeap // REQ001261 — manual min-heap, no any-boxing
-	curKey     []byte // owned copy (nil if none)
-	curVal     []byte // owned copy (nil if none)
+	curKey     []byte    // owned copy (nil if none)
+	curVal     []byte    // owned copy (nil if none)
 	err        error
 	closed     atomic.Bool
 	blockCache *BlockCache // REQ001242
@@ -559,34 +559,34 @@ func (mi *mergeIterator) init(memtables []*memtable, skipSST bool) {
 				if !fileOverlapsPrefix(f.MinKey, f.MaxKey, mi.prefix, upper) {
 					continue
 				}
-			sstPath := filepath.Join(mi.dir, fileName(&f))
-			var reader *sstReader
-			var sstData []byte
-			if mmapData, ok := mi.mmapCache[sstPath]; ok {
-				var err error
-				reader, err = openSSTWithPath(mmapData, sstPath)
-				if err != nil {
-					continue
+				sstPath := filepath.Join(mi.dir, fileName(&f))
+				var reader *sstReader
+				var sstData []byte
+				if mmapData, ok := mi.mmapCache[sstPath]; ok {
+					var err error
+					reader, err = openSSTWithPath(mmapData, sstPath)
+					if err != nil {
+						continue
+					}
+					reader.mmap = mmapData
+					sstData = mmapData
+				} else {
+					var err error
+					sstData, err = mi.fs.ReadFile(sstPath)
+					if err != nil {
+						continue
+					}
+					reader, err = openSST(sstData)
+					if err != nil {
+						continue
+					}
 				}
-				reader.mmap = mmapData
-				sstData = mmapData
-			} else {
-				var err error
-				sstData, err = mi.fs.ReadFile(sstPath)
-				if err != nil {
-					continue
-				}
-				reader, err = openSST(sstData)
-				if err != nil {
-					continue
-				}
-			}
-			reader.blockCache = mi.blockCache // REQ001242
-			// REQ001257: pull sstIter from the pool.
-			si := acquireSSTIter()
-			si.it = reader.Iterator()
-			si.data = sstData
-			mi.sources = append(mi.sources, si)
+				reader.blockCache = mi.blockCache // REQ001242
+				// REQ001257: pull sstIter from the pool.
+				si := acquireSSTIter()
+				si.it = reader.Iterator()
+				si.data = sstData
+				mi.sources = append(mi.sources, si)
 			}
 		}
 	}
@@ -703,21 +703,25 @@ func (mi *mergeIterator) Next() bool {
 		srcIdx := top.src
 		src := mi.sources[srcIdx]
 
-		// Deduplicate: remove all other sources with the same key.
-		// We must check dedup BEFORE advancing, because the
-		// dedup comparison uses the popped item's key, which is
-		// invalidated by the next copySourceSlot call. REQ001261:
-		// the heap top is mi.h.items[0]; peek before pop.
+		// Deduplicate: advance every other source whose current key
+		// equals the winner, in place — no pop/push churn. REQ001668:
+		// peek at items[0], advance its source, update the entry, and
+		// siftDown to restore order. If the source is exhausted, drop
+		// it via pop. Within one source keys are strictly ascending, so
+		// the advanced key is always > the dedup key (== top.key); the
+		// siftDown repositions it. top.key references a different
+		// source's slot (the popped winner's), which this loop never
+		// touches, so it stays valid — matching the REQ001258 invariant.
 		for mi.h.Len() > 0 && bytes.Equal(top.key, mi.h.items[0].key) {
-			dup := mi.h.pop()
-			dupSrc := mi.sources[dup.src]
+			dupIdx := mi.h.items[0].src
+			dupSrc := mi.sources[dupIdx]
 			if dupSrc.Next() {
-				mi.copySourceSlot(dup.src, dupSrc)
-				mi.h.push(iterHeapItem{
-					key:   mi.sourceKeys[dup.src],
-					value: mi.sourceVals[dup.src],
-					src:   dup.src,
-				})
+				mi.copySourceSlot(dupIdx, dupSrc)
+				mi.h.items[0].key = mi.sourceKeys[dupIdx]
+				mi.h.items[0].value = mi.sourceVals[dupIdx]
+				mi.h.siftDown(0)
+			} else {
+				mi.h.pop()
 			}
 		}
 
