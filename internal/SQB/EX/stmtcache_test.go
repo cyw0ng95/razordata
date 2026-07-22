@@ -163,6 +163,84 @@ func drainStream(rows *streamIterator) {
 	}
 }
 
+// TestStmtCache_LRU_Eviction verifies REQ001693: the container/list
+// LRU evicts the least-recently-used entry (not a random/oldest-inserted
+// one) and promotes entries on get. Drives putCachedStmt/getCachedStmt
+// past maxSize to exercise the evictBack path that replaced the old O(N)
+// map scan.
+func TestStmtCache_LRU_Eviction(t *testing.T) {
+	UnregisterAll()
+	ResetGlobalStmtCache()
+	defer func() {
+		UnregisterAll()
+		ResetGlobalStmtCache()
+	}()
+
+	dummy, err := PS.NewParser("SELECT 1").Parse()
+	if err != nil {
+		t.Fatalf("parse dummy: %v", err)
+	}
+
+	ex := NewExecutor()
+	maxSize := ex.stmtCache.maxSize
+
+	// Insert maxSize+1 unique entries. k0 is inserted first and never
+	// accessed, so it is the LRU and must be evicted.
+	for i := 0; i <= maxSize; i++ {
+		ex.putCachedStmt(fmt.Sprintf("k%d", i), dummy)
+	}
+	if got := ex.stmtCache.lru.Len(); got != maxSize {
+		t.Fatalf("expected %d entries after overflow, got %d", maxSize, got)
+	}
+	if ex.getCachedStmt("k0") != nil {
+		t.Error("k0 (LRU) should have been evicted")
+	}
+	if ex.getCachedStmt(fmt.Sprintf("k%d", maxSize)) == nil {
+		t.Error("newest entry should be present")
+	}
+
+	// Promote k1 via get, then insert one more. k2 (now the LRU) must be
+	// the one evicted — proving recency is tracked by access, not insert order.
+	_ = ex.getCachedStmt("k1")
+	ex.putCachedStmt("k_new", dummy)
+	if ex.getCachedStmt("k1") == nil {
+		t.Error("k1 was promoted and should survive eviction")
+	}
+	if ex.getCachedStmt("k2") != nil {
+		t.Error("k2 (now LRU) should have been evicted instead of k1")
+	}
+	if got := ex.stmtCache.lru.Len(); got != maxSize {
+		t.Errorf("expected %d entries after promote+insert, got %d", maxSize, got)
+	}
+}
+
+// BenchmarkStmtCache_PutWithEviction measures the over-capacity put path
+// (REQ001693): inserting more unique entries than maxSize forces an
+// eviction on every put. The previous O(N) map-scan eviction made this
+// the dominant CPU site (runtime.mapIterNext, 120ms / 16.4% of slt_good_0);
+// the container/list evictBack is O(1).
+func BenchmarkStmtCache_PutWithEviction(b *testing.B) {
+	UnregisterAll()
+	ResetGlobalStmtCache()
+	defer func() {
+		UnregisterAll()
+		ResetGlobalStmtCache()
+	}()
+
+	dummy, _ := PS.NewParser("SELECT 1").Parse()
+	ex := NewExecutor()
+	// Prime the cache to maxSize so every subsequent put evicts.
+	for i := 0; i < ex.stmtCache.maxSize; i++ {
+		ex.putCachedStmt(fmt.Sprintf("seed%d", i), dummy)
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		// Each put is a brand-new key → miss + evict.
+		ex.putCachedStmt(fmt.Sprintf("bench%d", i), dummy)
+	}
+}
+
 // TestStmtCache_QueryStream verifies REQ000771: QueryStream hits
 // the cache on repeated identical SQL.
 func TestStmtCache_QueryStream(t *testing.T) {

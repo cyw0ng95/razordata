@@ -1,6 +1,7 @@
 package EX
 
 import (
+	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -138,11 +139,13 @@ type Rows struct {
 	Types []LX.TokenType
 }
 
-// stmtCacheEntry holds a cached parsed statement with LRU metadata.
-// REQ001286: lastAccess tracks recency via a monotonic counter.
+// stmtCacheEntry holds a cached parsed statement plus the SQL key
+// (the key is needed to delete the map entry on LRU eviction).
+// REQ001693: LRU position is tracked by the container/list element, not
+// a per-entry field.
 type stmtCacheEntry struct {
-	stmt       PS.Stmt
-	lastAccess uint64
+	key  string
+	stmt PS.Stmt
 }
 
 // planCacheEntry holds a cached compiled plan with LRU metadata.
@@ -171,18 +174,23 @@ type textPlanEntry struct {
 // REQ001223: eliminates per-Executor stmtCache allocation (171 MB per query).
 // Initialized lazily on first NewExecutor call.
 var globalStmtCache = &stmtCache{
-	entries: make(map[string]*stmtCacheEntry, 1024),
+	entries: make(map[string]*list.Element, 1024),
+	lru:     list.New(),
 	maxSize: 1024,
 }
 
 // stmtCache is a thread-safe LRU cache for parsed statements.
 // REQ001220: shared across ShallowCopy clones via pointer.
-// REQ001286: monotonic access counter for allocation-free LRU.
+// REQ001693: true O(1) LRU via container/list (map[string]*list.Element
+// + doubly-linked list). The previous design used a lastAccess counter
+// and a full O(N) map scan on every over-capacity eviction, which cost
+// 120ms / 16.4% of CPU in slt_good_0 (runtime.mapIterNext). MoveToFront
+// on get and PushFront + evictBack on put are both O(1) and allocation-free.
 type stmtCache struct {
-	mu            sync.Mutex
-	entries       map[string]*stmtCacheEntry
-	accessCounter uint64
-	maxSize       int
+	mu      sync.Mutex
+	entries map[string]*list.Element
+	lru     *list.List
+	maxSize int
 }
 
 // planCache is a thread-safe LRU cache for compiled plan trees.
@@ -481,43 +489,46 @@ func (e *Executor) initStmtCache(maxSize int) {
 }
 
 // getCachedStmt looks up a cached parsed statement. Returns nil if not found.
-// REQ001286: allocation-free hot path — one map lookup + counter increment.
+// REQ001693: O(1) — one map lookup + MoveToFront (pointer swaps, no alloc).
 func (e *Executor) getCachedStmt(sql string) PS.Stmt {
 	e.stmtCache.mu.Lock()
 	defer e.stmtCache.mu.Unlock()
-	ent, ok := e.stmtCache.entries[sql]
+	elem, ok := e.stmtCache.entries[sql]
 	if !ok {
 		return nil
 	}
-	e.stmtCache.accessCounter++
-	ent.lastAccess = e.stmtCache.accessCounter
-	return ent.stmt
+	e.stmtCache.lru.MoveToFront(elem)
+	return elem.Value.(*stmtCacheEntry).stmt
 }
 
 // putCachedStmt stores a parsed statement in the cache.
+// REQ001693: O(1) insert + evictBack; replaces the previous O(N) map
+// scan that found the min-lastAccess entry on every over-capacity put.
 func (e *Executor) putCachedStmt(sql string, stmt PS.Stmt) {
 	e.stmtCache.mu.Lock()
 	defer e.stmtCache.mu.Unlock()
-	if ent, ok := e.stmtCache.entries[sql]; ok {
-		ent.stmt = stmt
-		e.stmtCache.accessCounter++
-		ent.lastAccess = e.stmtCache.accessCounter
+	if elem, ok := e.stmtCache.entries[sql]; ok {
+		elem.Value.(*stmtCacheEntry).stmt = stmt
+		e.stmtCache.lru.MoveToFront(elem)
 		return
 	}
-	e.stmtCache.accessCounter++
-	ent := &stmtCacheEntry{stmt: stmt, lastAccess: e.stmtCache.accessCounter}
-	e.stmtCache.entries[sql] = ent
-	if len(e.stmtCache.entries) > e.stmtCache.maxSize {
-		var oldestKey string
-		var oldestAccess uint64 = ^uint64(0)
-		for k, v := range e.stmtCache.entries {
-			if v.lastAccess < oldestAccess {
-				oldestAccess = v.lastAccess
-				oldestKey = k
-			}
-		}
-		delete(e.stmtCache.entries, oldestKey)
+	ent := &stmtCacheEntry{key: sql, stmt: stmt}
+	elem := e.stmtCache.lru.PushFront(ent)
+	e.stmtCache.entries[sql] = elem
+	for e.stmtCache.lru.Len() > e.stmtCache.maxSize {
+		e.stmtCache.evictBack()
 	}
+}
+
+// evictBack removes the least-recently-used entry. Caller must hold mu.
+func (c *stmtCache) evictBack() {
+	elem := c.lru.Back()
+	if elem == nil {
+		return
+	}
+	ent := elem.Value.(*stmtCacheEntry)
+	c.lru.Remove(elem)
+	delete(c.entries, ent.key)
 }
 
 // clearStmtCache clears the statement cache. Used in tests.
@@ -527,7 +538,8 @@ func (e *Executor) clearStmtCache() {
 	// REQ001673: clear() preserves map capacity, avoiding the
 	// 17.45MB per-Reset alloc from make(map, 1024).
 	clear(e.stmtCache.entries)
-	e.stmtCache.accessCounter = 0
+	// REQ001693: re-init the LRU list in place (no realloc).
+	e.stmtCache.lru.Init()
 }
 
 // initPlanCache initializes the plan cache. Must be called before use.
@@ -2149,6 +2161,6 @@ func (e *Executor) StmtCacheStats() *AD.CacheStats {
 func ResetGlobalStmtCache() {
 	globalStmtCache.mu.Lock()
 	defer globalStmtCache.mu.Unlock()
-	globalStmtCache.entries = make(map[string]*stmtCacheEntry, 1024)
-	globalStmtCache.accessCounter = 0
+	clear(globalStmtCache.entries)
+	globalStmtCache.lru.Init()
 }
