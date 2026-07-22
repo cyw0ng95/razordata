@@ -17,6 +17,10 @@ type BatchToRowAdapter struct {
 	rows   []pl.Row
 	pos    int
 	done   bool
+	// REQ001663: reusable row buffer across refills. ToRows allocates
+	// a fresh []pl.Row per batch; this buffer avoids that allocation
+	// by growing to the max batch size and re-slicing.
+	rowBuf []pl.Row
 }
 
 // NewBatchToRowAdapter creates an adapter that wraps a BatchProducer
@@ -50,7 +54,18 @@ func (a *BatchToRowAdapter) Next(ctx context.Context) (pl.Row, error) {
 		// amortises the per-batch allocation across every row
 		// in the batch instead of allocating a fresh Row per
 		// Next.
-		a.rows = b.ToRows()
+		// REQ001663: reuse rowBuf across refills to avoid
+		// allocating a new []pl.Row per batch.
+		rows := b.ToRows()
+		if cap(a.rowBuf) < len(rows) {
+			a.rowBuf = make([]pl.Row, len(rows))
+		} else {
+			a.rowBuf = a.rowBuf[:len(rows)]
+		}
+		copy(a.rowBuf, rows)
+		// The rows slice from ToRows is discarded; the GC
+		// reclaims it. a.rowBuf holds the stable copy.
+		a.rows = a.rowBuf
 		if b.Pooled {
 			b.Put()
 		}
