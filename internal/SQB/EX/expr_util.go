@@ -549,7 +549,7 @@ func extractViewAliases(cols []PS.Expr) map[string]bool {
 // sharedTypes/colIndex so the NLJ execution path skips the
 // per-operator lazy schema build. Returns (nil, nil, nil) when
 // the schema cannot be statically determined.
-func deriveJoinSchema(left, right DT.Operator) ([]string, []LX.TokenType, map[string]int) {
+func deriveJoinSchema(left, right DT.Operator, leftTbl, rightTbl string) ([]string, []LX.TokenType, map[string]int) {
 	if left == nil || right == nil {
 		return nil, nil, nil
 	}
@@ -566,20 +566,68 @@ func deriveJoinSchema(left, right DT.Operator) ([]string, []LX.TokenType, map[st
 	if len(leftCols) != len(leftTypes) || len(rightCols) != len(rightTypes) {
 		return nil, nil, nil
 	}
+	// REQ001656: simulate the NLJ runtime prefixing. At runtime,
+	// the NLJ prefixes bare column names with leftTbl/rightTbl
+	// (via prefixCols). The pre-built shared schema must match
+	// so that WithSharedSchema produces the same Cols/ColIndex the
+	// runtime would. Without this, qualified references like
+	// "tab1.col1" can't be found in the ColIndex because the
+	// unaliased tab1's columns are bare "col1" and collide with
+	// the base table's "col1".
+	if !hasAnyPrefixCols(leftCols) && leftTbl != "" {
+		leftCols = prefixColNames(leftCols, leftTbl)
+	}
+	if !hasAnyPrefixCols(rightCols) && rightTbl != "" {
+		rightCols = prefixColNames(rightCols, rightTbl)
+	}
 	cols := make([]string, 0, len(leftCols)+len(rightCols))
 	cols = append(cols, leftCols...)
 	cols = append(cols, rightCols...)
 	types := make([]LX.TokenType, 0, len(cols))
 	types = append(types, leftTypes...)
 	types = append(types, rightTypes...)
-	idx := make(map[string]int, len(cols))
+	idx := make(map[string]int, len(cols)*2)
 	for i, c := range cols {
 		key := strings.ToLower(c)
 		if _, exists := idx[key]; !exists {
 			idx[key] = i
 		}
+		// REQ001656: also register the bare column name (without
+		// the "table." prefix) so that unqualified Ident references
+		// like "col1" can be resolved at runtime via Lookup.
+		// The bare name maps to the first occurrence, which matches
+		// SQLite's behavior of resolving ambiguous bare names to
+		// the first table in the FROM clause.
+		if dot := strings.LastIndex(c, "."); dot >= 0 {
+			bare := c[dot+1:]
+			bkey := strings.ToLower(bare)
+			if _, exists := idx[bkey]; !exists {
+				idx[bkey] = i
+			}
+		}
 	}
 	return cols, types, idx
+}
+
+// prefixColNames returns a copy of cols with "alias." prepended to each.
+func prefixColNames(cols []string, alias string) []string {
+	out := make([]string, len(cols))
+	prefix := alias + "."
+	for i, c := range cols {
+		out[i] = prefix + c
+	}
+	return out
+}
+
+// hasAnyPrefixCols returns true if any column name contains a "."
+// (indicating it's already table- or alias-prefixed).
+func hasAnyPrefixCols(cols []string) bool {
+	for _, c := range cols {
+		if strings.Contains(c, ".") {
+			return true
+		}
+	}
+	return false
 }
 
 // colsOf extracts the column names from a known-shape operator.
@@ -589,6 +637,18 @@ func colsOf(op DT.Operator) []string {
 	switch o := op.(type) {
 	case *OP.SeqScan:
 		if o.Schema() != nil {
+			// REQ001656: when an alias is set, the SeqScan produces
+			// alias-prefixed column names (e.g. "cor0.col0"). Return
+			// the prefixed names so downstream operators (NLJ, HashJoin)
+			// build a combined schema with proper qualified names for
+			// slot resolution and ColIndex lookup. Without this, the
+			// NLJ's shared schema has bare names like
+			// [col0 col1 col2 col0 col1 col2], and qualified references
+			// like cor0.col2 can't be resolved — they fall back to the
+			// first matching bare name (always the left/base table).
+			if alias := o.Alias(); alias != "" {
+				return prefixColNames(o.Schema().Cols, alias)
+			}
 			return o.Schema().Cols
 		}
 		return nil

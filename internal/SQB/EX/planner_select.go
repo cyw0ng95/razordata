@@ -883,7 +883,21 @@ func (p *Planner) planAggregation(s *PS.Select, current DT.Operator) DT.Operator
 // REQ000981: extracted from planSelect.
 func (p *Planner) planOrdering(s *PS.Select, current DT.Operator) DT.Operator {
 	// REQ001362: expand star for USING joins — coalesce common columns.
-	if isStarExpr(s.Cols) && len(s.Joins) > 0 {
+	// REQ001656: only expand when there are actual USING clauses. For
+	// cross joins without USING, SELECT * must remain as StarExpr so
+	// the NLJ outputs all columns from all joined tables. Previously,
+	// expandStarForUsing was called for ALL joins, deduplicating columns
+	// by name — when multiple tables share the same column names (e.g.
+	// tab0, tab1 both have col0,col1,col2), only the first table's
+	// columns survived, producing 3 cols instead of 3×N.
+	hasUsing := false
+	for _, j := range s.Joins {
+		if len(j.Using) > 0 {
+			hasUsing = true
+			break
+		}
+	}
+	if isStarExpr(s.Cols) && hasUsing {
 		p.expandStarForUsing(s)
 	}
 	if len(s.OrderBy) > 0 {
@@ -1194,6 +1208,16 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 				leftTbl = baseTable
 			}
 			joinedTables[baseTable] = true
+			// REQ001656: account for the base table's join clause
+			// occurrence so joins within the group use the next
+			// occurrence. Without this, when the same physical table
+			// appears multiple times with different aliases (e.g.
+			// FROM tab0, tab0 AS cor0, tab0 cor1), all occurrences
+			// use the first join clause, causing duplicate aliases
+			// and wrong row counts (3 rows instead of 27).
+			if _, ok := joinClauseIdx[baseTable]; ok {
+				tableOccurrence[baseTable] = baseOccurrence[baseTable]
+			}
 		}
 		for ti, tbl := range group {
 			if ti == 0 {
@@ -1338,7 +1362,10 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 					// paths skip per-row make([]string) and make([]LX.TokenType)
 					// allocations. Without this, every NLJ in the join chain
 					// allocates Cols/Types/ColIndex on first Next() call.
-					if cols, types, idx := deriveJoinSchema(current, rightScan); cols != nil {
+					// REQ001656: pass leftTbl/rightTbl so the pre-built schema
+					// simulates the NLJ's runtime column prefixing for
+					// unaliased tables (bare names → "table.col").
+					if cols, types, idx := deriveJoinSchema(current, rightScan, leftTbl, rightTbl); cols != nil {
 						nlj.WithSharedSchema(cols, types, idx)
 					}
 					joinOp = nlj
@@ -1480,7 +1507,10 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 				nlj.WithProjection(projectedCols)
 			}
 			// REQ001575: pre-build shared schema for merge-phase NLJ.
-			if cols, types, idx := deriveJoinSchema(current, gr.op); cols != nil {
+			// REQ001656: pass leftTbl/gr.tbl so the pre-built schema
+			// simulates the NLJ's runtime column prefixing for
+			// unaliased tables.
+			if cols, types, idx := deriveJoinSchema(current, gr.op, leftTbl, gr.tbl); cols != nil {
 				nlj.WithSharedSchema(cols, types, idx)
 			}
 			joinOp = nlj

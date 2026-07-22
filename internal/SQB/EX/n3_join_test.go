@@ -1,14 +1,15 @@
 package EX
 
 import (
-	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"context"
 	"fmt"
 	"testing"
 	"time"
 
-	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
+
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -538,6 +539,50 @@ func TestCrossJoin_SelfJoin3x3Yields9Rows(t *testing.T) {
 	}
 }
 
+// REQ001656: Cross join of different tables where the first table
+// has no alias and the second has an alias. `tab0, tab1 AS cor0` on
+// 3-row tables should produce 3×3 = 9 rows.
+func TestCrossJoin_DifferentTables3x3Yields9Rows(t *testing.T) {
+	UnregisterAll()
+	defer UnregisterAll()
+	e := NewExecutor()
+	ctx := context.Background()
+	for _, s := range []string{
+		"CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)",
+		"CREATE TABLE tab1(col0 INTEGER, col1 INTEGER, col2 INTEGER)",
+		"INSERT INTO tab0 VALUES (89,91,82), (35,97,1), (24,86,33)",
+		"INSERT INTO tab1 VALUES (64,10,57), (3,26,54), (80,13,96)",
+	} {
+		if _, err := e.Exec(ctx, s); err != nil {
+			t.Fatalf("setup %q: %v", s, err)
+		}
+	}
+	// Test 1: constant expression — should produce 9 rows.
+	rows, err := e.QueryAll(ctx, "SELECT 33*57 col1 FROM tab0, tab1 AS cor0")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 9 {
+		t.Fatalf("constant: expected 9 rows (3×3), got %d", len(rows))
+	}
+	// Test 2: column reference from right table — should produce 9 rows.
+	rows, err = e.QueryAll(ctx, "SELECT cor0.col2 FROM tab0, tab1 AS cor0")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 9 {
+		t.Fatalf("col-ref: expected 9 rows (3×3), got %d", len(rows))
+	}
+	// Test 3: expression with column reference — should produce 9 rows.
+	rows, err = e.QueryAll(ctx, "SELECT 76 * - cor0.col2 col2 FROM tab0, tab1 AS cor0")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(rows) != 9 {
+		t.Fatalf("expr: expected 9 rows (3×3), got %d", len(rows))
+	}
+}
+
 // REQ000926: Multi-start must preserve duplicate table names in
 // the returned order for self-joins.
 func TestN3JoinOrdering_MultiStart_SelfJoinPreservesDuplicates(t *testing.T) {
@@ -672,6 +717,7 @@ func TestN3JoinOrdering_MultiStart_BoundedPlanningTime(t *testing.T) {
 		t.Fatal("multi-start N3 with K=8 exceeded 2s planning budget")
 	}
 }
+
 // REQ001057b: MCV-based IN-list selectivity. With Most-Common-OP.Values
 // stats, the selectivity formula is 1 - ∏(1 - pᵢ) over matched MCVs
 // plus a uniform tail for non-MCV items. When MCVs are absent, the

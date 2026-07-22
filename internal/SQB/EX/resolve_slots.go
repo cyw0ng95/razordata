@@ -74,6 +74,16 @@ func computeSchema(op DT.Operator) []string {
 	case *OP.SeqScan:
 		// Get schema from table metadata
 		schema := tableSchema(o.Table())
+		// REQ001656: when an alias is set, the SeqScan produces
+		// alias-prefixed column names at runtime (e.g. "cor0.col0").
+		// Return the prefixed names so slot resolution and NLJ shared
+		// schema use the same names the runtime rows will carry.
+		// Without this, ResolveExprSlots can't find "cor0.col2" in
+		// the schema and falls back to bare-name lookup, which always
+		// returns the first (left/base) table's column.
+		if schema != nil && o.Alias() != "" {
+			schema = prefixColNames(schema, o.Alias())
+		}
 		// REQ001229: when RequestedCols is set, return the narrowed
 		// schema so upstream operators resolve SlotIdx correctly.
 		if schema != nil && o.GetRequestedCols() != nil {
