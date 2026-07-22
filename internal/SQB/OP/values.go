@@ -62,6 +62,12 @@ type Values struct {
 	planner   pl.QueryPlanner
 	params    []any
 	execCtx   *pl.ExecContext // REQ000853: for CHANGES()/TOTAL_CHANGES() eval
+
+	// REQ001670: pre-allocated scratch buffers reused across Reset cycles.
+	// The Values operator is single-shot, but Reset() allows reuse across
+	// queries without re-allocating data/types slices.
+	scratchData  []Value
+	scratchTypes []LX.TokenType
 }
 
 // newValuesOp creates a Values operator for the given column expressions.
@@ -92,8 +98,20 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 	if v.planner != nil || v.execCtx != nil {
 		evalRow = &Row{Planner: v.planner, ExecCtx: v.execCtx}
 	}
-	data := make([]Value, len(v.cols))
-	types := make([]LX.TokenType, len(v.cols))
+	// REQ001670: reuse scratch buffers across Reset cycles.
+	n := len(v.cols)
+	if cap(v.scratchData) < n {
+		v.scratchData = make([]Value, n)
+	} else {
+		v.scratchData = v.scratchData[:n]
+	}
+	if cap(v.scratchTypes) < n {
+		v.scratchTypes = make([]LX.TokenType, n)
+	} else {
+		v.scratchTypes = v.scratchTypes[:n]
+	}
+	data := v.scratchData
+	types := v.scratchTypes
 
 	for i, e := range v.cols {
 		val, err := EV.EvalValue(e, evalRow, v.params)
