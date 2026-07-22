@@ -209,6 +209,10 @@ type SeqScan struct {
 	predicateMax   int64
 	predicateIsSet bool
 
+	// REQ001666: batch-scoped string interner reused across NextBatch
+	// calls. Created once per scan, cleared between batches.
+	interner *UT.StringInterner
+
 	closed atomic.Bool
 }
 
@@ -1070,12 +1074,16 @@ func (s *SeqScan) nextColumnarBatch(ctx context.Context, batch *UT.Batch, wanted
 	}
 	rowIdx := 0
 	maxRows := UT.BatchSize
-	interner := &UT.StringInterner{}
+	// REQ001666: reuse the interner across batches instead of
+	// allocating a fresh one per NextBatch call.
+	if s.interner == nil {
+		s.interner = &UT.StringInterner{}
+	}
 	w := &batchColumnWriter{
 		batch:  batch,
 		wanted: wantedCols,
 		types:  wantedTypes,
-		intern: interner,
+		intern: s.interner,
 	}
 	for rowIdx < maxRows && s.it.Next() {
 		s.ctxCheckCounter++
