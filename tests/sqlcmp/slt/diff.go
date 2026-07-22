@@ -149,37 +149,51 @@ func diffHashed(actual *ResultSet, marker string, sortMode SortMode) string {
 
 // rowString renders a row as a tab-separated string for lexicographic
 // sorting, matching SQLite's sqllogictest row-comparison convention.
-// Uses a pooled strings.Builder to avoid per-row allocation. REQ001456.
+// Uses a pooled rowRenderBuf (strings.Builder + scratch []byte).
+// REQ001456: pool the builder across rows.
+// REQ001701: pool a scratch []byte for strconv.AppendInt/AppendFloat so
+// the formatted digits land in a reused backing array instead of a fresh
+// []byte per value. strconv.AppendInt(nil, ...) was the #1 alloc site in
+// idx1000_2 (2.75M / 20.35% of alloc objects; rowString cum 39.73%).
+type rowRenderBuf struct {
+	sb      strings.Builder
+	scratch []byte
+}
+
 var builderPool = sync.Pool{
-	New: func() any { return &strings.Builder{} },
+	New: func() any { return &rowRenderBuf{} },
 }
 
 func rowString(row []Value) string {
-	b := builderPool.Get().(*strings.Builder)
-	b.Reset()
+	rb := builderPool.Get().(*rowRenderBuf)
+	rb.sb.Reset()
+	rb.scratch = rb.scratch[:0]
 	for i, v := range row {
 		if i > 0 {
-			b.WriteByte('\t')
+			rb.sb.WriteByte('\t')
 		}
-		writeValueToBuilder(b, v)
+		writeValueToBuilder(&rb.sb, &rb.scratch, v)
 	}
-	s := b.String()
-	builderPool.Put(b)
+	s := rb.sb.String()
+	builderPool.Put(rb)
 	return s
 }
 
 // writeValueToBuilder writes a Value's string representation to a Builder
 // without an intermediate string allocation. REQ001456.
-func writeValueToBuilder(b *strings.Builder, v Value) {
+// REQ001701: scratch is a reusable []byte for strconv.AppendInt/AppendFloat
+// (pass &rb.scratch from a pooled rowRenderBuf, or a local for one-off use).
+// Passing nil-arg AppendInt allocated a fresh []byte per value.
+func writeValueToBuilder(b *strings.Builder, scratch *[]byte, v Value) {
 	switch v.Kind {
 	case TypeNull:
 		b.WriteString("NULL")
 	case TypeInteger:
-		buf := strconv.AppendInt(nil, v.Int, 10)
-		b.Write(buf)
+		*scratch = strconv.AppendInt((*scratch)[:0], v.Int, 10)
+		b.Write(*scratch)
 	case TypeReal:
-		buf := strconv.AppendFloat(nil, v.Real, 'f', 3, 64)
-		b.Write(buf)
+		*scratch = strconv.AppendFloat((*scratch)[:0], v.Real, 'f', 3, 64)
+		b.Write(*scratch)
 	case TypeBlob:
 		b.WriteString(v.Text)
 	default:
@@ -190,14 +204,17 @@ func writeValueToBuilder(b *strings.Builder, v Value) {
 // hashValues computes an MD5 hash over the string representation of
 // each value, separated by newlines. REQ001456: writes directly to
 // the hash via writeValueToBytes to avoid intermediate string allocs.
+// REQ001701: reuses one scratch []byte across all values in the call
+// instead of allocating one per value.
 func hashValues(vs []Value) string {
 	h := md5Pool.Get().(hash.Hash)
 	defer func() {
 		h.Reset()
 		md5Pool.Put(h)
 	}()
+	var scratch []byte
 	for _, v := range vs {
-		writeValueToBytes(h, v)
+		writeValueToBytes(h, &scratch, v)
 		h.Write([]byte{'\n'})
 	}
 	return bytehex(h.Sum(nil))
@@ -206,14 +223,17 @@ func hashValues(vs []Value) string {
 // writeValueToBytes writes a Value's string representation directly to
 // a hash.Hash, avoiding intermediate string and []byte allocations.
 // REQ001456.
-func writeValueToBytes(h hash.Hash, v Value) {
+// REQ001701: scratch is a reusable []byte for strconv.AppendInt/AppendFloat.
+func writeValueToBytes(h hash.Hash, scratch *[]byte, v Value) {
 	switch v.Kind {
 	case TypeNull:
 		h.Write([]byte("NULL"))
 	case TypeInteger:
-		h.Write(strconv.AppendInt(nil, v.Int, 10))
+		*scratch = strconv.AppendInt((*scratch)[:0], v.Int, 10)
+		h.Write(*scratch)
 	case TypeReal:
-		h.Write(strconv.AppendFloat(nil, v.Real, 'f', 3, 64))
+		*scratch = strconv.AppendFloat((*scratch)[:0], v.Real, 'f', 3, 64)
+		h.Write(*scratch)
 	case TypeBlob:
 		h.Write([]byte(v.Text))
 	default:
