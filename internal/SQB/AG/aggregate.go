@@ -440,6 +440,19 @@ func buildAggregateVirtualRow(e PS.Expr, rows []Row, params []any) (Row, error) 
 					return err
 				}
 			}
+		case *PS.CaseExpr:
+			if err := collect(v.Expr); err != nil {
+				return err
+			}
+			for _, w := range v.WhenList {
+				if err := collect(w.Cond); err != nil {
+					return err
+				}
+				if err := collect(w.Then); err != nil {
+					return err
+				}
+			}
+			return collect(v.Else)
 		}
 		return nil
 	}

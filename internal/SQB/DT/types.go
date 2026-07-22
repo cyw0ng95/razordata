@@ -477,6 +477,27 @@ func ContainsAggregate(e PS.Expr) bool {
 				return true
 			}
 		}
+	case *PS.CaseExpr:
+		if ContainsAggregate(v.Expr) {
+			return true
+		}
+		for _, w := range v.WhenList {
+			if ContainsAggregate(w.Cond) || ContainsAggregate(w.Then) {
+				return true
+			}
+		}
+		return ContainsAggregate(v.Else)
+	case *PS.BetweenExpr:
+		return ContainsAggregate(v.Expr) || ContainsAggregate(v.Low) || ContainsAggregate(v.High)
+	case *PS.InExpr:
+		if ContainsAggregate(v.Expr) {
+			return true
+		}
+		for _, a := range v.List {
+			if ContainsAggregate(a) {
+				return true
+			}
+		}
 	}
 	return false
 }
