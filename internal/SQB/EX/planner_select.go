@@ -225,7 +225,7 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	// Unqualified columns (e.g. just `a`) prevent elimination since
 	// we can't determine which table owns the column.
 	extractedPreds := map[int]bool{}
-	if len(s.Joins) > 0 {
+if len(s.Joins) > 0 {
 		if refTables := collectReferencedTables(s); refTables != nil {
 			filtered := s.Joins[:0]
 			for _, j := range s.Joins {
