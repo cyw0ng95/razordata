@@ -410,45 +410,18 @@ func (p *Parser) parseUnary() (Expr, error) {
 	return p.parsePostfix()
 }
 
+// parsePostfix is currently a pass-through to parsePrimary.
+//
+// REQ001692: IN / NOT IN / GLOB / NOT GLOB / NOT LIKE used to be
+// dispatched here, which bound them at unary precedence — tighter
+// than unary minus. That made `-a NOT IN (b)` parse as
+// `-(NOT(a IN (b)))` instead of `NOT((-a) IN (b))`, and the
+// `-(BoolValue)` evaluated to NULL, filtering out every row.
+// They now dispatch from parseBinary at comparison precedence (6),
+// alongside BETWEEN/NOT BETWEEN. Plain GLOB and plain LIKE flow
+// through the normal binary-operator path (isBinaryOp/precedence).
 func (p *Parser) parsePostfix() (Expr, error) {
-	expr, err := p.parsePrimary()
-	if err != nil {
-		return nil, err
-	}
-	switch p.current.Type {
-	case LX.T_IN:
-		return p.parseIn(expr)
-	case LX.T_GLOB:
-		// REQ000729: GLOB as binary operator
-		return p.parseGlob(expr)
-	}
-	if p.current.Type == LX.T_NOT {
-		next := p.lex.Peek().Type
-		switch next {
-		case LX.T_LIKE:
-			p.advance()
-			return p.parseNotLike(expr)
-		case LX.T_IN:
-			p.advance()
-			return p.parseNotIn(expr)
-		case LX.T_GLOB:
-			// NOT GLOB
-			p.advance()
-			return p.parseNotGlob(expr)
-		}
-	}
-	return expr, nil
-}
-
-// parseGlob parses `expr GLOB pattern`.
-func (p *Parser) parseGlob(expr Expr) (Expr, error) {
-	loc := p.loc()
-	p.advance() // consume GLOB
-	right, err := p.parseBinary(7)
-	if err != nil {
-		return nil, err
-	}
-	return &BinaryExpr{Loc: loc, Op: LX.T_GLOB, Left: expr, Right: right}, nil
+	return p.parsePrimary()
 }
 
 // parseNotGlob parses `expr NOT GLOB pattern` as NOT(expr GLOB pattern).
@@ -485,10 +458,11 @@ func (p *Parser) parseNotLike(expr Expr) (Expr, error) {
 }
 
 // REQ000381: `NOT IN` — parse x NOT IN (...) as NOT(x IN (...)).
+// REQ001692: now dispatched from parseBinary at precedence 6; the
+// caller has already consumed T_NOT, so we only consume T_IN and the
+// ( ... ) here.
 func (p *Parser) parseNotIn(expr Expr) (Expr, error) {
 	loc := p.loc()
-	// parsePostfix already consumed T_NOT; we still need to
-	// consume T_IN and the ( ... ).
 	p.advance()
 	in, err := p.parseInBody(expr)
 	if err != nil {
@@ -604,25 +578,62 @@ func (p *Parser) parseBinary(minPrec int) (Expr, error) {
 	}
 
 	for {
-		// BETWEEN has the same precedence as comparison operators (6).
-		// Handle it inside the loop so `a BETWEEN x AND y OR z`
-		// parses as `(a BETWEEN x AND y) OR z`.
-		const betweenPrec = 6
-		if betweenPrec >= minPrec {
-			if p.current.Type == LX.T_BETWEEN {
+		// Comparison-level operators with multi-token or NOT-split
+		// syntax (BETWEEN, IN, NOT BETWEEN/IN/GLOB/LIKE) bind at
+		// precedence 6 — the same as =, <, LIKE, GLOB, IS.
+		//
+		// REQ001692: dispatching these here (instead of from
+		// parsePostfix at the unary level) ensures the operator
+		// attaches to the full arithmetic LHS. `-a NOT IN (b)`
+		// parses as `NOT((-a) IN (b))`, not `-(NOT(a IN (b)))`.
+		// Plain GLOB and plain LIKE are plain binary ops and flow
+		// through isBinaryOp/precedence below.
+		const cmpPrec = 6
+		if cmpPrec >= minPrec {
+			switch p.current.Type {
+			case LX.T_BETWEEN:
 				left, err = p.parseBetween(left)
 				if err != nil {
 					return nil, err
 				}
 				continue
-			}
-			if p.current.Type == LX.T_NOT && p.lex.Peek().Type == LX.T_BETWEEN {
-				p.advance()
-				left, err = p.parseNotBetween(left)
+			case LX.T_IN:
+				left, err = p.parseIn(left)
 				if err != nil {
 					return nil, err
 				}
 				continue
+			case LX.T_NOT:
+				switch p.lex.Peek().Type {
+				case LX.T_BETWEEN:
+					p.advance()
+					left, err = p.parseNotBetween(left)
+					if err != nil {
+						return nil, err
+					}
+					continue
+				case LX.T_IN:
+					p.advance()
+					left, err = p.parseNotIn(left)
+					if err != nil {
+						return nil, err
+					}
+					continue
+				case LX.T_GLOB:
+					p.advance()
+					left, err = p.parseNotGlob(left)
+					if err != nil {
+						return nil, err
+					}
+					continue
+				case LX.T_LIKE:
+					p.advance()
+					left, err = p.parseNotLike(left)
+					if err != nil {
+						return nil, err
+					}
+					continue
+				}
 			}
 		}
 
