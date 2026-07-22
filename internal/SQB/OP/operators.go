@@ -213,11 +213,6 @@ type SeqScan struct {
 	// calls. Created once per scan, cleared between batches.
 	interner *UT.StringInterner
 
-	// REQ001667: when false, nextFromStore skips the second key copy
-	// (storeKey aliases keyBuf). Set by the planner when the downstream
-	// operator tree is read-only (no UPDATE/DELETE needs stable keys).
-	needsStableKey bool
-
 	closed atomic.Bool
 }
 
@@ -235,14 +230,6 @@ func (s *SeqScan) SetRangePredicate(colIdx int, min, max int64) {
 	s.predicateMin = min
 	s.predicateMax = max
 	s.predicateIsSet = true
-}
-
-// SetNeedsStableKey tells the SeqScan that downstream operators require
-// a stable StoreKey (e.g., for UPDATE/DELETE). When false, the scan
-// skips the second key copy, saving 240ms cum CPU per select2 run.
-// REQ001667.
-func (s *SeqScan) SetNeedsStableKey(v bool) {
-	s.needsStableKey = v
 }
 
 // WithParams propagates the bound `?` placeholders to this
@@ -790,16 +777,7 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		s.keyBuf = growKeyBuf(s.keyBuf, len(s.currentKey))
 		copy(s.keyBuf, s.currentKey)
 		s.currentKey = s.keyBuf
-		// REQ001667: skip the second key copy when stable keys are
-		// not needed (read-only queries). The keyBuf is reused on
-		// the next row but the downstream operator (Filter/Project)
-		// consumes the row before the next Next() call.
-		var storeKey []byte
-		if s.needsStableKey {
-			storeKey = append([]byte(nil), s.currentKey...)
-		} else {
-			storeKey = s.currentKey
-		}
+		storeKey := append([]byte(nil), s.currentKey...)
 		v := s.it.Value()
 		// REQ001225: apply raw-byte filter before decoding to avoid
 		// unnecessary DecodeRowInto work for rows that will be filtered.

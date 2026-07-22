@@ -166,6 +166,21 @@ func RunSubqueryInMatch(ctx context.Context, plan *pl.PlanResult, target any, ou
 		plan.Root = injectOuter(plan.Root, outer)
 	}
 	defer plan.Root.Close()
+	// REQ001059: NULL IN (set) → NULL (three-valued).
+	// If target is nil, the answer is always NULL regardless of
+	// the subquery contents, unless the subquery is empty.
+	if target == nil {
+		// Check if the subquery returns any rows.
+		row, err := plan.Root.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				return false, false, nil // empty set → FALSE
+			}
+			return false, false, err
+		}
+		_ = row
+		return false, true, nil // non-empty set → NULL
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return false, false, err
