@@ -9,12 +9,25 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
+
+// REQ001708: pool NLJ block data buffers to avoid per-batch allocation
+// of []Value for join output rows. select4's multi-table joins generate
+// millions of these allocations (2705 MB flat / 35% of select4 cumulative).
+// The pool returns buffers sized to the previous batch's peak, so the
+// common case (same join shape, same row counts) reuses capacity.
+var nljBlockDataBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]Value, 0, 4096)
+		return &buf
+	},
+}
 
 // JoinKind specifies the type of join.
 type JoinKind string
@@ -921,9 +934,26 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 	}
 	blkDataPerRow := len(j.blkLeftBatch[0].Data) + len(j.blkRightRows[0].Data)
 	maxMatches := len(j.blkLeftBatch) * len(j.blkRightRows)
-	// Ensure blkDataBuf has enough capacity for this batch.
-	if cap(j.blkDataBuf) < maxMatches*blkDataPerRow {
-		j.blkDataBuf = make([]Value, 0, maxMatches*blkDataPerRow)
+	// REQ001708: acquire blkDataBuf from pool instead of per-batch
+	// make([]Value, 0, maxMatches*blkDataPerRow). The pool retains
+	// capacity from the previous batch, so the common case (same
+	// join shape, same row counts) avoids a fresh allocation.
+	need := maxMatches * blkDataPerRow
+	if cap(j.blkDataBuf) < need {
+		// Release the current buffer to the pool before acquiring a larger one.
+		if j.blkDataBuf != nil {
+			buf := j.blkDataBuf[:0]
+			// Only return buffers that are worth keeping (>= 256 Values).
+			if cap(buf) >= 256 {
+				nljBlockDataBufPool.Put(&buf)
+			}
+		}
+		pooled := nljBlockDataBufPool.Get().(*[]Value)
+		if cap(*pooled) >= need {
+			j.blkDataBuf = *pooled
+		} else {
+			j.blkDataBuf = make([]Value, 0, need)
+		}
 	}
 	// Reset length for this batch (capacity retained across batches).
 	j.blkDataBuf = j.blkDataBuf[:0]
