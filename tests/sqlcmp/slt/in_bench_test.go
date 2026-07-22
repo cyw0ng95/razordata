@@ -92,3 +92,56 @@ func BenchmarkSLT_Update(b *testing.B) {
 		_ = runner.Run(ctx, recs)
 	}
 }
+
+// BenchmarkSLT_CreateTrigger runs evidence/slt_lang_createtrigger.test.
+// Covers CREATE/DROP TRIGGER, DDL path, and trigger registration.
+func BenchmarkSLT_CreateTrigger(b *testing.B) {
+	recs := loadCorpusSLT(b, "evidence/slt_lang_createtrigger")
+	d := newSLTDriver(b)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for b.Loop() {
+		if err := d.Reset(ctx); err != nil {
+			b.Fatal(err)
+		}
+		runner := NewRunner(d, d.classifier, RazorEngineName)
+		_ = runner.Run(ctx, recs)
+	}
+}
+
+// BenchmarkSLT_AggFunc runs evidence/slt_lang_aggfunc.test.
+// Covers aggregate functions: sum, count, avg, min, max, group_concat,
+// total, DISTINCT variants, and aggregate operator paths.
+func BenchmarkSLT_AggFunc(b *testing.B) {
+	recs := loadCorpusSLT(b, "evidence/slt_lang_aggfunc")
+	d := newSLTDriver(b)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for b.Loop() {
+		if err := d.Reset(ctx); err != nil {
+			b.Fatal(err)
+		}
+		runner := NewRunner(d, d.classifier, RazorEngineName)
+		_ = runner.Run(ctx, recs)
+	}
+}
+
+// BenchmarkSLT_CreateView runs evidence/slt_lang_createview.test.
+// Covers CREATE/DROP VIEW, INSERT/UPDATE through views, and
+// view resolution during query planning.
+func BenchmarkSLT_CreateView(b *testing.B) {
+	recs := loadCorpusSLT(b, "evidence/slt_lang_createview")
+	d := newSLTDriver(b)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for b.Loop() {
+		if err := d.Reset(ctx); err != nil {
+			b.Fatal(err)
+		}
+		runner := NewRunner(d, d.classifier, RazorEngineName)
+		_ = runner.Run(ctx, recs)
+	}
+}
