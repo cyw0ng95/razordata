@@ -363,13 +363,7 @@ func aggregateColName(e PS.Expr) string {
 	if !ok {
 		return ""
 	}
-	if _, ok := agg.Arg.(*PS.StarExpr); ok {
-		return agg.Name + "(*)"
-	}
-	if ident, ok := agg.Arg.(*PS.Ident); ok {
-		return agg.Name + "(" + ident.Name + ")"
-	}
-	return agg.Name
+	return DT.AggregateLookupKey(agg)
 }
 
 // buildAggregateVirtualRow walks e for embedded AggregateFunc

@@ -452,6 +452,25 @@ type Rows struct {
 	Types []int // LX.TokenType
 }
 
+// AggregateLookupKey returns a unique key for storing/looking up an
+// aggregate function's result in a virtual row. Two aggregates with
+// the same name but different arguments (e.g. MIN(94) vs MIN(-93))
+// must produce different keys to avoid collision. REQ001688.
+func AggregateLookupKey(e *PS.AggregateFunc) string {
+	if _, ok := e.Arg.(*PS.StarExpr); ok {
+		return e.Name + "(*)"
+	}
+	if ident, ok := e.Arg.(*PS.Ident); ok {
+		return e.Name + "(" + ident.Name + ")"
+	}
+	// For complex args (literals, unary, binary, etc.), use the
+	// pointer address of the arg node as a disambiguator. Both
+	// buildAggregateVirtualRow and evalAggregate walk the same
+	// expression tree, so pointer addresses are stable within a
+	// single query evaluation.
+	return e.Name + "(" + fmt.Sprintf("%T:%p", e.Arg, e.Arg) + ")"
+}
+
 // ContainsAggregate reports whether an expression tree contains any
 // aggregate function call.
 func ContainsAggregate(e PS.Expr) bool {

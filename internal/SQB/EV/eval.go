@@ -1548,18 +1548,11 @@ func castToBool(v any) bool {
 
 func evalAggregate(e *PS.AggregateFunc, row *Row, params []any) (Value, error) {
 	if row != nil {
-		if _, ok := e.Arg.(*PS.StarExpr); ok {
-			name := e.Name + "(*)"
-			if v, found := row.Lookup(name); found {
-				return DT.ValueFromAny(v), nil
-			}
+		name := DT.AggregateLookupKey(e)
+		if v, found := row.Lookup(name); found {
+			return DT.ValueFromAny(v), nil
 		}
-		if ident, ok := e.Arg.(*PS.Ident); ok {
-			name := e.Name + "(" + ident.Name + ")"
-			if v, found := row.Lookup(name); found {
-				return DT.ValueFromAny(v), nil
-			}
-		}
+		// Fallback: try bare name for backward compatibility
 		if v, found := row.Lookup(e.Name); found {
 			return DT.ValueFromAny(v), nil
 		}
