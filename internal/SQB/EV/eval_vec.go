@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -151,8 +152,22 @@ func ExtractColumnRef(expr PS.Expr, batch *UT.Batch) (UT.Column, bool) {
 	// Use pre-computed index if available
 	if batch.ColMap() != nil {
 		if idx, found := batch.ColMap()[ident.Name]; found {
-			if idx < len(batch.Cols) {
-				return batch.Cols[idx], true
+			// REQ001684: when column pruning is active the batch may have
+			// fewer logical columns than the full-schema colMap indices.
+			// Verify the resolved column actually carries the requested
+			// name — pool batches retain MaxColumns slots, so the raw
+			// index check alone is insufficient.
+			if idx >= 0 && idx < len(batch.Cols) {
+				if strings.EqualFold(batch.Cols[idx].Name, ident.Name) {
+					return batch.Cols[idx], true
+				}
+			}
+		}
+		// Fallback: linear scan when colMap index is stale or mismatched
+		// (e.g. column pruning reordered the batch layout).
+		for i := range batch.Cols {
+			if strings.EqualFold(batch.Cols[i].Name, ident.Name) {
+				return batch.Cols[i], true
 			}
 		}
 		return UT.Column{}, false

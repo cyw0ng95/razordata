@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -69,9 +70,19 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	types := v.types
 	var wantedCols []int
 	if len(v.requestedCols) > 0 {
-		prunedSchema := make([]string, 0, len(v.requestedCols))
-		prunedTypes := make([]LX.TokenType, 0, len(v.requestedCols))
-		for _, ci := range v.requestedCols {
+		// REQ001684: sort requestedCols so that
+		// DecodeRowSubsetIntoColumnar's ascending cursor scan
+		// correctly identifies all wanted columns. Without sorting,
+		// unsorted requestedCols (e.g. [1,0] for "col1 + col0")
+		// causes the cursor to skip columns whose index is smaller
+		// than a preceding entry, producing empty Data.Ints and a
+		// panic in downstream batch arithmetic kernels.
+		sortedCols := make([]int, len(v.requestedCols))
+		copy(sortedCols, v.requestedCols)
+		slices.Sort(sortedCols)
+		prunedSchema := make([]string, 0, len(sortedCols))
+		prunedTypes := make([]LX.TokenType, 0, len(sortedCols))
+		for _, ci := range sortedCols {
 			if ci >= 0 && ci < len(v.schema) {
 				prunedSchema = append(prunedSchema, v.schema[ci])
 				prunedTypes = append(prunedTypes, v.types[ci])
@@ -79,7 +90,7 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		}
 		schema = prunedSchema
 		types = prunedTypes
-		wantedCols = v.requestedCols
+		wantedCols = sortedCols
 	}
 
 	batch := UT.GetBatch(len(schema))
@@ -88,6 +99,14 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		batch.SetColumnName(i, name)
 	}
 	batch.SetColMap(v.colMap)
+	// REQ001684: set column types on the batch so ToRows → ToValue
+	// can correctly dispatch on col.Type. Without this, ToValue
+	// sees col.Type == 0 and returns NULL for every cell.
+	for i, typ := range types {
+		if i < len(batch.Cols) {
+			batch.Cols[i].Type = typ
+		}
+	}
 
 	// Fast path: when the source is a SeqScan with a real store,
 	// read directly into columnar format from store bytes, bypassing
