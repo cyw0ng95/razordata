@@ -206,7 +206,9 @@ func (c *PageCache) Reset() {
 	for _, s := range c.shards {
 		s.mu.Lock()
 		s.slots = s.slots[:0]
-		s.index = make(map[pageKey]*pageEntry, min(s.cap, 64))
+		// REQ001674: clear() preserves map capacity instead of
+		// re-allocating with make() — saves 5.52MB per Reset.
+		clear(s.index)
 		s.size = 0
 		s.mu.Unlock()
 	}

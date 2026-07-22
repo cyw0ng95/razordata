@@ -220,9 +220,11 @@ func (p *Planner) InvalidateCache() {
 }
 
 // clearMemoLocked clears the plan cache. Caller must hold p.mu.
+// REQ001673: use clear() instead of make() to avoid re-allocation;
+// the map/slice capacity is preserved across Reset cycles.
 func (p *Planner) clearMemoLocked() {
-	p.memo = make(map[string]*plan, maxPlanCacheSize)
-	p.memoOrder = make([]string, maxPlanCacheSize)
+	clear(p.memo)
+	clear(p.memoOrder)
 	p.memoHead = 0
 	p.memoSize = 0
 	p.splitAndCache = nil

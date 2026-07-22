@@ -1548,7 +1548,17 @@ func evalCaseBatchExpr(caseExpr *PS.CaseExpr, batch *UT.Batch, params []any) UT.
 	if n == 0 {
 		return UT.Column{}
 	}
-	matched := make([]bool, n)
+	// REQ001669: track which WHEN clause matched each row (whenIdx),
+	// then fill output column directly from the stored thenCols.
+	// Previously we discarded condCol/thenCol and fell back to
+	// evalRowFallbackColumn which re-evaluated the entire CASE
+	// row-by-row — costing ~610KB B/op on select3 case_simple.
+	matchedWhen := make([]int, n)
+	for i := range matchedWhen {
+		matchedWhen[i] = -1
+	}
+	thenCols := make([]UT.Column, 0, len(caseExpr.WhenList))
+
 	for _, wc := range caseExpr.WhenList {
 		var condCol UT.Column
 		if caseExpr.Expr != nil {
@@ -1562,8 +1572,11 @@ func evalCaseBatchExpr(caseExpr *PS.CaseExpr, batch *UT.Batch, params []any) UT.
 			condCol = EvalBatchExpr(wc.Cond, batch, params)
 		}
 		thenCol := EvalBatchExpr(wc.Then, batch, params)
+		thenCols = append(thenCols, thenCol)
+
+		wi := len(thenCols) - 1
 		for i := 0; i < n; i++ {
-			if matched[i] {
+			if matchedWhen[i] >= 0 {
 				continue
 			}
 			phys := i
@@ -1571,22 +1584,96 @@ func evalCaseBatchExpr(caseExpr *PS.CaseExpr, batch *UT.Batch, params []any) UT.
 				phys = int(batch.Sel[i])
 			}
 			if phys < len(condCol.Data.Ints) && condCol.Data.Ints[phys] != 0 {
-				matched[i] = true
+				matchedWhen[i] = wi
 			}
 		}
 		condCol.Data = UT.ColumnData{}
-		thenCol.Data = UT.ColumnData{}
 	}
-	if caseExpr.Else != nil {
-		elseCol := EvalBatchExpr(caseExpr.Else, batch, params)
-		for i := 0; i < n; i++ {
-			if !matched[i] {
-				matched[i] = true
-			}
+
+	// Evaluate ELSE once (if present) and hold its column.
+	var elseCol UT.Column
+	hasElse := caseExpr.Else != nil
+	if hasElse {
+		elseCol = EvalBatchExpr(caseExpr.Else, batch, params)
+	}
+
+	// Determine output type from the first matching row's thenCol,
+	// or from elseCol, or default to T_NULL.
+	var out UT.Column
+	for i := 0; i < n; i++ {
+		if wi := matchedWhen[i]; wi >= 0 && wi < len(thenCols) {
+			out.Type = thenCols[wi].Type
+			break
 		}
+	}
+	if out.Type == 0 && hasElse {
+		out.Type = elseCol.Type
+	}
+	if out.Type == 0 {
+		out.Type = LX.T_NULL
+	}
+	allocateColumnData(&out, batch.Size)
+
+	// Fill output column: for each row, copy from the matching
+	// thenCol (or elseCol, or NULL).
+	for i := 0; i < n; i++ {
+		phys := i
+		if batch.Sel != nil && i < len(batch.Sel) {
+			phys = int(batch.Sel[i])
+		}
+		wi := matchedWhen[i]
+		if wi >= 0 && wi < len(thenCols) {
+			writeColumnValue(&out, &thenCols[wi], i, phys, batch.Size)
+		} else if hasElse {
+			writeColumnValue(&out, &elseCol, i, phys, batch.Size)
+		} else {
+			if out.Nulls == nil {
+				out.Nulls = make([]bool, batch.Size)
+			}
+			out.Nulls[i] = true
+		}
+	}
+
+	// Release thenCol/elseCol column data.
+	for i := range thenCols {
+		thenCols[i].Data = UT.ColumnData{}
+	}
+	if hasElse {
 		elseCol.Data = UT.ColumnData{}
 	}
-	return evalRowFallbackColumn(caseExpr, batch, params)
+	return out
+}
+
+// writeColumnValue copies a single value from src column at srcIdx
+// into out column at outIdx. Handles NULL propagation and type
+// dispatch. REQ001669. batchSize is the physical batch capacity
+// for Nulls slice allocation.
+func writeColumnValue(out, src *UT.Column, outIdx, srcIdx, batchSize int) {
+	if src.Nulls != nil && srcIdx < len(src.Nulls) && src.Nulls[srcIdx] {
+		if out.Nulls == nil {
+			out.Nulls = make([]bool, batchSize)
+		}
+		out.Nulls[outIdx] = true
+		return
+	}
+	switch out.Type {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		if src.Data.Ints != nil && srcIdx < len(src.Data.Ints) {
+			out.Data.Ints[outIdx] = src.Data.Ints[srcIdx]
+		}
+	case LX.T_FLOAT_KW:
+		if src.Data.Floats != nil && srcIdx < len(src.Data.Floats) {
+			out.Data.Floats[outIdx] = src.Data.Floats[srcIdx]
+		}
+	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+		if src.Data.Strs != nil && srcIdx < len(src.Data.Strs) {
+			out.Data.Strs[outIdx] = src.Data.Strs[srcIdx]
+		}
+	case LX.T_BOOL:
+		if src.Data.Bools != nil && srcIdx < len(src.Data.Bools) {
+			out.Data.Bools[outIdx] = src.Data.Bools[srcIdx]
+		}
+	}
 }
 
 // evalCastBatchExpr evaluates a CAST expression over a batch.

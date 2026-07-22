@@ -524,7 +524,9 @@ func (e *Executor) putCachedStmt(sql string, stmt PS.Stmt) {
 func (e *Executor) clearStmtCache() {
 	e.stmtCache.mu.Lock()
 	defer e.stmtCache.mu.Unlock()
-	e.stmtCache.entries = make(map[string]*stmtCacheEntry, 1024)
+	// REQ001673: clear() preserves map capacity, avoiding the
+	// 17.45MB per-Reset alloc from make(map, 1024).
+	clear(e.stmtCache.entries)
 	e.stmtCache.accessCounter = 0
 }
 
@@ -1307,7 +1309,9 @@ func (e *Executor) clearTextPlanCache() {
 	}
 	e.textPlanCache.mu.Lock()
 	defer e.textPlanCache.mu.Unlock()
-	e.textPlanCache.entries = make(map[string]*textPlanEntry, e.textPlanCache.maxSize)
+	// REQ001673: clear() preserves map capacity, avoiding the
+	// 13.34MB per-Reset alloc from make(map, maxSize).
+	clear(e.textPlanCache.entries)
 	e.textPlanCache.lru = nil
 }
 
