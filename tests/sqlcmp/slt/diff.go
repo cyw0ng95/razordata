@@ -261,7 +261,10 @@ func valueEqual(a, b Value) bool {
 	case a.Kind == TypeInteger && b.Kind == TypeReal:
 		return float64(a.Int) == b.Real
 	case a.Kind == TypeReal && b.Kind == TypeInteger:
-		return a.Real == float64(b.Int)
+		// SQLite coerces results to the declared column
+		// type. When the corpus declares "query I" (integer), a float
+		// result like 19.812 should match expected 19 via truncation.
+		return a.Real == float64(b.Int) || int64(a.Real) == b.Int
 	case a.Kind == TypeInteger && b.Kind == TypeText:
 		return a.String() == b.String()
 	case a.Kind == TypeText && b.Kind == TypeInteger:
