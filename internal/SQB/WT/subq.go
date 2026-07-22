@@ -122,14 +122,9 @@ func RunSubqueryPlan(ctx context.Context, pl *pl.PlanResult, outer *DT.Row, para
 }
 
 // RunSubqueryFirstMatch is the REQ001073 short-circuit variant of
-// RunSubqueryPlan. Instead of materializing all rows, it stops after
-// the first row and returns (true, nil). If the subquery produces
-// zero rows it returns (false, nil). This is the "semi-join stops
-// scanning after the first match" optimization applied to the
-// existential subquery path.
-//
-// Callers MUST close pl.Root independently — this function does not
-// take ownership of pl.
+// RunSubqueryPlan: returns (true, nil) as soon as the first row is
+// produced, without materializing all rows. (false, nil) at EOF.
+// callers must use the plan directly (this function does not close it).
 func RunSubqueryFirstMatch(ctx context.Context, pl *pl.PlanResult, outer *DT.Row, params []any) (bool, error) {
 	if pl == nil || pl.Root == nil {
 		return false, EV.ErrSubquery
@@ -154,5 +149,40 @@ func RunSubqueryFirstMatch(ctx context.Context, pl *pl.PlanResult, outer *DT.Row
 		}
 		// Found at least one matching row — short-circuit.
 		return true, nil
+	}
+}
+
+// RunSubqueryInMatch is the REQ001671 short-circuit variant for IN
+// subqueries. Returns (matched, hadNull, err) with three-valued logic:
+// matched=true  → target matches a row value
+// hadNull=true  → no match, but at least one row had NULL
+// (false,false) → no match, no NULL (definite false)
+// Stops at the first match instead of materializing all rows.
+func RunSubqueryInMatch(ctx context.Context, plan *pl.PlanResult, target any, outer *DT.Row, params []any) (matched bool, hadNull bool, err error) {
+	if plan == nil || plan.Root == nil {
+		return false, false, EV.ErrSubquery
+	}
+	if outer != nil {
+		plan.Root = injectOuter(plan.Root, outer)
+	}
+	defer plan.Root.Close()
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, false, err
+		}
+		row, err := plan.Root.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				return false, hadNull, nil
+			}
+			return false, false, err
+		}
+		if len(row.Data) == 0 || row.Data[0].IsNull() {
+			hadNull = true
+			continue
+		}
+		if pl.EqualValue(target, row.Data[0].ToAny()) {
+			return true, false, nil
+		}
 	}
 }

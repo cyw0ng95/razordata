@@ -682,6 +682,22 @@ func (p *Planner) ExecuteSubqueryFirstMatch(ctx context.Context, stmt PS.Stmt, o
 	return WT.RunSubqueryFirstMatch(ctx, planResult, outer, params)
 }
 
+// ExecuteSubqueryInMatch is the REQ001671 short-circuit variant for IN
+// subqueries. Returns (matched, hadNull, err) with three-valued logic.
+// Stops at the first match instead of materializing all rows.
+func (p *Planner) ExecuteSubqueryInMatch(ctx context.Context, stmt PS.Stmt, outer *DT.Row, params []any, target any) (bool, bool, error) {
+	sel, ok := stmt.(*PS.Select)
+	if !ok {
+		return false, false, EV.ErrSubquery
+	}
+	planResult, err := p.Plan(sel)
+	if err != nil {
+		return false, false, err
+	}
+	defer planResult.Root.Close()
+	return WT.RunSubqueryInMatch(ctx, planResult, target, outer, params)
+}
+
 // estimateCost returns a unitless cost for the operator tree rooted at op.
 // The model uses uniform distribution: each row is 1.0 unit, filters and
 // joins apply selectivity, sort adds a log(n) factor. Real statistics land

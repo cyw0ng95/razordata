@@ -1160,6 +1160,24 @@ func evalInSubquery(target any, subq PS.Stmt, outer *Row, params []any) (any, er
 	if pl == nil {
 		return nil, ErrSubquery
 	}
+	// REQ001671: use the short-circuit path when the planner supports
+	// ExecuteSubqueryInMatch. Falls back to the materializing path
+	// when the planner does not support it.
+	if p, ok := pl.(interface {
+		ExecuteSubqueryInMatch(ctx context.Context, stmt PS.Stmt, outer *DT.Row, params []any, target any) (bool, bool, error)
+	}); ok {
+		matched, hadNull, err := p.ExecuteSubqueryInMatch(context.Background(), subq, outer, params, target)
+		if err != nil {
+			return nil, err
+		}
+		if matched {
+			return true, nil
+		}
+		if hadNull {
+			return nil, nil
+		}
+		return false, nil
+	}
 	rows, err := pl.ExecuteSubquery(context.Background(), subq, outer, params)
 	if err != nil {
 		return nil, err
