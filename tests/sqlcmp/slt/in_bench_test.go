@@ -74,3 +74,21 @@ func BenchmarkSLT_In2(b *testing.B) {
 		_ = runner.Run(ctx, recs)
 	}
 }
+
+// BenchmarkSLT_Update runs every record in evidence/slt_lang_update.test
+// via the SLT runner. Covers CREATE TABLE, INSERT, 13 UPDATE patterns,
+// and SELECT-verify interleaving.
+func BenchmarkSLT_Update(b *testing.B) {
+	recs := loadCorpusSLT(b, "evidence/slt_lang_update")
+	d := newSLTDriver(b)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for b.Loop() {
+		if err := d.Reset(ctx); err != nil {
+			b.Fatal(err)
+		}
+		runner := NewRunner(d, d.classifier, RazorEngineName)
+		_ = runner.Run(ctx, recs)
+	}
+}
