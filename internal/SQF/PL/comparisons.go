@@ -94,6 +94,11 @@ func EqualValueValue(a, b Value) bool {
 		return a.Kind == KindNull && b.Kind == KindNull
 	}
 	if a.Kind != b.Kind {
+		// REQ001691: numeric cross-type equality — SQL requires
+		// -1.0 == -1. Coerce int to float when both are numeric.
+		if isNumeric(a.Kind) && isNumeric(b.Kind) {
+			return numF64(a) == numF64(b)
+		}
 		return false
 	}
 	switch a.Kind {
@@ -208,4 +213,18 @@ func EqualValue(a, b any) bool {
 		return false
 	}
 	return a == b
+}
+
+// isNumeric reports whether k is a numeric value kind. REQ001691.
+func isNumeric(k ValueKind) bool {
+	return k == KindInt || k == KindFloat
+}
+
+// numF64 returns the numeric value as float64 for cross-type
+// comparison. REQ001691.
+func numF64(v Value) float64 {
+	if v.Kind == KindInt {
+		return float64(v.I64)
+	}
+	return v.F64
 }
