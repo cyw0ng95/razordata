@@ -1865,11 +1865,15 @@ func evalRowFallbackColumn(expr PS.Expr, batch *UT.Batch, params []any) UT.Colum
 		ExecCtx: batch.ExecCtx,
 	}
 
+	// REQ001665: lift stable Cols names out of the per-row loop.
+	for c := range batch.Cols {
+		reusableRow.Cols[c] = batch.Cols[c].Name
+	}
+
 	processRow := func(i int, phys int) {
 		// Fill reusable Row from batch column data.
 		for c := range batch.Cols {
 			col := &batch.Cols[c]
-			reusableRow.Cols[c] = col.Name
 			if col.Nulls != nil && phys < len(col.Nulls) && col.Nulls[phys] {
 				reusableRow.Data[c] = DT.NullValue()
 				continue
