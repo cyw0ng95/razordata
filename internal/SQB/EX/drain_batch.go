@@ -93,8 +93,13 @@ func drainBatchProducer(ctx context.Context, bp UT.BatchProducer, execCtx *DT.Ex
 
 // drainPlanRows drains a row-based pl.Operator into []DT.Row via Next().
 // REQ001637: pre-allocate output slice to eliminate growslice copies.
+// REQ001678: cap the pre-alloc at 8 — the row-based fallback path is
+// hit mostly by small result sets (e.g. `SELECT count(*) ...` returns
+// 1 row), so a 256-row pre-alloc (EngineBatchSize) was almost entirely
+// wasted (250MB flat / ~20% of BenchmarkSLT_Update). For larger result
+// sets, append grows the slice amortized. Plain `min` builtin (Go 1.21+).
 func drainPlanRows(ctx context.Context, root pl.Operator, execCtx *DT.ExecContext) ([]DT.Row, error) {
-	out := make([]DT.Row, 0, OP.EngineBatchSize())
+	out := make([]DT.Row, 0, min(OP.EngineBatchSize(), 8))
 	for {
 		row, err := root.Next(ctx)
 		if err != nil {
