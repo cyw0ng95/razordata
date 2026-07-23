@@ -286,8 +286,14 @@ func parseResultRows(lines []string, typeString string) [][]Value {
 // many whitespace-separated tokens it contains. Tab-separated
 // rows are still split on tabs.
 func splitRow(s string) []string {
-	if strings.Contains(s, "\t") {
-		return strings.Split(s, "\t")
+	if first, rest, ok := strings.Cut(s, "\t"); ok {
+		parts := []string{first}
+		for rest != "" {
+			part, after, _ := strings.Cut(rest, "\t")
+			parts = append(parts, part)
+			rest = after
+		}
+		return parts
 	}
 	return []string{s}
 }

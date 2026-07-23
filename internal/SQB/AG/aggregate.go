@@ -28,6 +28,8 @@ type Aggregate struct {
 	expandStar bool
 	// REQ001636: scalar aggregate (no GROUP BY) uses fast path.
 	scalar bool
+	// REQ001697: reusable buffer for scalar aggregate materialization.
+	scalarRowBuf []Row
 }
 
 func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
@@ -90,7 +92,8 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 	// Skip group key computation, groupIndex map, and sort.
 	// Accumulate aggregate state directly from input rows.
 	if a.scalar {
-		var allRows []Row
+		// REQ001697: reuse scalarRowBuf across materialize calls.
+		a.scalarRowBuf = a.scalarRowBuf[:0]
 		for {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -102,15 +105,15 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 				}
 				return err
 			}
-			allRows = append(allRows, row)
+			a.scalarRowBuf = append(a.scalarRowBuf, row)
 		}
-		if allRows == nil {
-			allRows = []Row{} // ensure non-nil for EvalAggregateOver
+		if len(a.scalarRowBuf) == 0 {
+			a.scalarRowBuf = []Row{} // ensure non-nil for EvalAggregateOver
 		}
 		// Build output row directly from accumulated state.
 		out := Row{Cols: make([]string, 0, len(a.aggs))}
 		for _, ag := range a.aggs {
-			v, err := EvalAggregateOver(ag, allRows, a.params)
+			v, err := EvalAggregateOver(ag, a.scalarRowBuf, a.params)
 			if err != nil {
 				return err
 			}
