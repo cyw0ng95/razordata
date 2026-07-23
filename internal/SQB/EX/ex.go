@@ -1244,18 +1244,14 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 }
 
 func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.Row, error) {
-	// REQ001464: textPlanCache bypasses parse+plan for identical SQL.
-	if e.textPlanCache != nil {
-		if plan := e.getTextPlan(sql); plan != nil {
-			propEctx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-			propEctx.RowArena = e.ensureArena()
-			propagateExecContext(plan.Root, propEctx)
-			propagateParams(plan.Root, args, &e.paramBuf)
-			propagatePlanner(plan.Root, e.planner)
-			defer plan.Root.Close()
-			return e.drainPlanExecCtx(ctx, plan, propEctx)
-		}
-	}
+	// REQ001712: textPlanCache disabled for QueryAll — the cached plan's
+	// operator tree state (e.g., Aggregate.buf, ValuesOp.evaluated) is
+	// modified by the first execution and not fully reset by Close().
+	// The stmtCache (parsed AST) still provides the main perf benefit
+	// (12.70% CPU on parsing). The textPlanCache remains active for
+	// the single-row Query path (used by QueryStreamCompiled).
+	_ = e.getTextPlan
+	_ = e.putTextPlan
 
 	// Try cache first (P0: StmtCache wiring, saves 12.70% CPU on parsing)
 	if e.stmtCache.entries != nil {
@@ -1268,7 +1264,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 			if plan == nil || plan.Root == nil {
 				return nil, errors.New("ex: plan produced no root")
 			}
-			// REQ001464: cache the plan by exact SQL text.
+			// REQ001712: textPlanCache disabled for QueryAll.
 			if plan.Root != nil && !isConstRowPlan(plan.Root) {
 				e.putTextPlan(sql, plan)
 			}
@@ -1300,6 +1296,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 		return nil, errors.New("ex: plan produced no root")
 	}
 	// REQ001464: cache the plan by exact SQL text.
+	// REQ001712: textPlanCache disabled for QueryAll.
 	if plan.Root != nil && !isConstRowPlan(plan.Root) {
 		e.putTextPlan(sql, plan)
 	}
