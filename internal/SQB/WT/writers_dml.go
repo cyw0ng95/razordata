@@ -1753,6 +1753,8 @@ func fireInsertTriggers(table string, newRow *DT.Row, params []any, store DT.Sto
 	// Build a minimal executor callback for trigger SQL execution
 	exec := func(sql string) error {
 		parser := PS.NewParser(sql)
+		defer parser.Close()
+		defer parser.Close()
 		stmt, err := parser.Parse()
 		if err != nil {
 			return err
@@ -1773,6 +1775,8 @@ func fireInsertTriggers(table string, newRow *DT.Row, params []any, store DT.Sto
 // executeRefreshMatViewSQL executes a REFRESH MATERIALIZED VIEW statement.
 func executeRefreshMatViewSQL(sql string, store DT.Store) error {
 	parser := PS.NewParser(sql)
+	defer parser.Close()
+	defer parser.Close()
 	stmt, err := parser.Parse()
 	if err != nil {
 		return err
@@ -1823,6 +1827,8 @@ func refreshMatViewData(name string, sel *PS.Select, store DT.Store) error {
 func fireUpdateTriggers(table string, oldRow *DT.Row, newRow *DT.Row, params []any, store DT.Store) error {
 	exec := func(sql string) error {
 		parser := PS.NewParser(sql)
+		defer parser.Close()
+		defer parser.Close()
 		stmt, err := parser.Parse()
 		if err != nil {
 			return err
@@ -1840,6 +1846,7 @@ func fireUpdateTriggers(table string, oldRow *DT.Row, newRow *DT.Row, params []a
 func fireDeleteTriggers(table string, oldRow *DT.Row, params []any, store DT.Store) error {
 	exec := func(sql string) error {
 		parser := PS.NewParser(sql)
+		defer parser.Close()
 		stmt, err := parser.Parse()
 		if err != nil {
 			return err

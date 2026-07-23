@@ -754,6 +754,7 @@ func (e *Executor) planWithCache(stmt PS.Stmt) (*pl.PlanResult, error) {
 // validation (R16-3, R16-4).
 func (e *Executor) ExtractParamTypes(sql string) []int {
 	parser := PS.NewParser(sql)
+	defer parser.Close()
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil
@@ -1029,6 +1030,7 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	}
 
 	parser := PS.NewParser(sql)
+	defer parser.Close()
 	stmt, err := parser.Parse()
 	if err != nil {
 		return Result{}, err
@@ -1177,6 +1179,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	}
 
 	parser := PS.NewParser(sql)
+	defer parser.Close()
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, err
@@ -1280,6 +1283,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 	}
 
 	parser := PS.NewParser(sql)
+	defer parser.Close()
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, err
@@ -1380,6 +1384,7 @@ func (cp *CompiledPlan) Close() {
 // REQ001422.
 func (e *Executor) CompilePlan(sql string) (*CompiledPlan, error) {
 	parser := PS.NewParser(sql)
+	defer parser.Close()
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, err
@@ -1495,6 +1500,7 @@ func (e *Executor) Precompile(ctx context.Context, sqls []string) {
 			continue // already cached
 		}
 		parser := PS.NewParser(sql)
+		defer parser.Close()
 		stmt, err := parser.Parse()
 		if err != nil {
 			continue
@@ -1705,6 +1711,7 @@ func (e *Executor) Explain(sql string) (string, error) {
 		}
 	}
 	parser := PS.NewParser(sql)
+	defer parser.Close()
 	stmt, err := parser.Parse()
 	if err != nil {
 		return "", err

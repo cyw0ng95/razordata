@@ -18,10 +18,20 @@ type Parser struct {
 }
 
 // NewParser creates a new Parser for the given SQL input string.
+// REQ001700: uses GetLexer from the pool to avoid per-query Lexer allocation.
 func NewParser(input string) *Parser {
 	return &Parser{
-		lex:     LX.NewLexer(input),
+		lex:     LX.GetLexer(input),
 		current: LX.Token{Type: LX.T_EOF, Lexeme: "", Line: 0, Col: 0},
+	}
+}
+
+// Close returns the lexer to the pool. Callers should defer parser.Close()
+// after parsing. REQ001700.
+func (p *Parser) Close() {
+	if p.lex != nil {
+		LX.PutLexer(p.lex)
+		p.lex = nil
 	}
 }
 

@@ -1002,6 +1002,8 @@ func (p *Planner) planExplain(s *PS.ExplainStmt) DT.Operator {
 }
 func (p *Planner) ParseAndPlan(sql string) (*pl.PlanResult, error) {
 	parser := PS.NewParser(sql)
+	defer parser.Close()
+	defer parser.Close()
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, fmt.Errorf("pl: parse error: %w", err)
