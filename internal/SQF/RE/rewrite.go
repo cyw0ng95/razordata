@@ -394,9 +394,11 @@ func simplifyIn(v *PS.InExpr) PS.Expr {
 func constantFoldUnaryMinus(operand PS.Expr) PS.Expr {
 	switch v := operand.(type) {
 	case *PS.NumberLiteral:
-		return &PS.NumberLiteral{Val: -v.Val}
+		v.Val = -v.Val
+		return v
 	case *PS.FloatLiteral:
-		return &PS.FloatLiteral{Val: -v.Val}
+		v.Val = -v.Val
+		return v
 	}
 	return nil
 }
