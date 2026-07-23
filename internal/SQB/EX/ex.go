@@ -1497,8 +1497,8 @@ func (e *Executor) Precompile(ctx context.Context, sqls []string) {
 			continue // already cached
 		}
 		parser := PS.NewParser(sql)
-		defer parser.Close()
 		stmt, err := parser.Parse()
+		parser.Close()
 		if err != nil {
 			continue
 		}
