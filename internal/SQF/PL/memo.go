@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -587,10 +588,52 @@ func literalToAny(expr PS.Expr) any {
 // values are appended to params. REQ001195.
 //
 // This is used ONLY for memo key generation — the original AST
+// cloneArena is a bump-pointer allocator for cloned AST nodes used
+// by cloneExprForMemo/cloneStmtForMemo. All cloned nodes are short-lived
+// (used only for memo key generation, then discarded), so the entire
+// arena can be freed at once. REQ001695.
+type cloneArena struct {
+	slab  []byte
+	offset int
+	slabs [][]byte
+}
+
+func (a *cloneArena) init() {
+	slab := make([]byte, 4096)
+	a.slab = slab
+	a.offset = 0
+	a.slabs = append(a.slabs[:0], slab)
+}
+
+func (a *cloneArena) alloc(size int, align uintptr) unsafe.Pointer {
+	a.offset = int((uintptr(a.offset) + align - 1) &^ (align - 1))
+	if a.offset+size > len(a.slab) {
+		newCap := len(a.slab) * 2
+		if newCap < size {
+			newCap = size
+		}
+		slab := make([]byte, newCap)
+		a.slab = slab
+		a.offset = 0
+		a.slabs = append(a.slabs, slab)
+	}
+	ptr := unsafe.Pointer(&a.slab[a.offset])
+	a.offset += size
+	return ptr
+}
+
+func cloneAlloc[T any](a *cloneArena, v *T) *T {
+	size := int(unsafe.Sizeof(*v))
+	align := unsafe.Alignof(*v)
+	ptr := a.alloc(size, align)
+	*(*T)(ptr) = *v
+	return (*T)(ptr)
+}
+
 // is still used for plan building. The parameterized key captures
 // "same join structure + same comparison operators + same column
 // references" regardless of constant values.
-func cloneExprForMemo(expr PS.Expr, params *[]any) PS.Expr {
+func cloneExprForMemo(expr PS.Expr, params *[]any, arena *cloneArena) PS.Expr {
 	if expr == nil {
 		return nil
 	}
@@ -601,85 +644,85 @@ func cloneExprForMemo(expr PS.Expr, params *[]any) PS.Expr {
 			if isColumnRef(v.Left) && isLiteral(v.Right) {
 				idx := len(*params)
 				*params = append(*params, literalToAny(v.Right))
-				return &PS.BinaryExpr{
+				return cloneAlloc(arena, &PS.BinaryExpr{
 					Op:    v.Op,
 					Left:  v.Left,
 					Right: &PS.Param{Index: idx},
-				}
+				})
 			}
 			// literal = column → Param = column
 			if isLiteral(v.Left) && isColumnRef(v.Right) {
 				idx := len(*params)
 				*params = append(*params, literalToAny(v.Left))
-				return &PS.BinaryExpr{
+				return cloneAlloc(arena, &PS.BinaryExpr{
 					Op:    v.Op,
 					Left:  &PS.Param{Index: idx},
 					Right: v.Right,
-				}
+				})
 			}
 		}
 		// Recurse into both sides for nested comparisons
-		return &PS.BinaryExpr{
+		return cloneAlloc(arena, &PS.BinaryExpr{
 			Op:    v.Op,
-			Left:  cloneExprForMemo(v.Left, params),
-			Right: cloneExprForMemo(v.Right, params),
-		}
+			Left:  cloneExprForMemo(v.Left, params, arena),
+			Right: cloneExprForMemo(v.Right, params, arena),
+		})
 	case *PS.UnaryExpr:
-		return &PS.UnaryExpr{
+		return cloneAlloc(arena, &PS.UnaryExpr{
 			Op:      v.Op,
-			Operand: cloneExprForMemo(v.Operand, params),
-		}
+			Operand: cloneExprForMemo(v.Operand, params, arena),
+		})
 	case *PS.InExpr:
 		items := make([]PS.Expr, len(v.List))
 		for i, item := range v.List {
-			items[i] = cloneExprForMemo(item, params)
+			items[i] = cloneExprForMemo(item, params, arena)
 		}
-		return &PS.InExpr{
-			Expr:     cloneExprForMemo(v.Expr, params),
+		return cloneAlloc(arena, &PS.InExpr{
+			Expr:     cloneExprForMemo(v.Expr, params, arena),
 			List:     items,
 			Subquery: v.Subquery, // subqueries handled separately
-		}
+		})
 	case *PS.BetweenExpr:
-		return &PS.BetweenExpr{
-			Expr: cloneExprForMemo(v.Expr, params),
-			Low:  cloneExprForMemo(v.Low, params),
-			High: cloneExprForMemo(v.High, params),
-		}
+		return cloneAlloc(arena, &PS.BetweenExpr{
+			Expr: cloneExprForMemo(v.Expr, params, arena),
+			Low:  cloneExprForMemo(v.Low, params, arena),
+			High: cloneExprForMemo(v.High, params, arena),
+		})
 	case *PS.FunctionCall:
 		args := make([]PS.Expr, len(v.Args))
 		for i, a := range v.Args {
-			args[i] = cloneExprForMemo(a, params)
+			args[i] = cloneExprForMemo(a, params, arena)
 		}
-		return &PS.FunctionCall{Name: v.Name, Args: args}
+		return cloneAlloc(arena, &PS.FunctionCall{Name: v.Name, Args: args})
 	case *PS.CaseExpr:
 		whenList := make([]PS.WhenClause, len(v.WhenList))
 		for i, w := range v.WhenList {
 			whenList[i] = PS.WhenClause{
-				Cond: cloneExprForMemo(w.Cond, params),
-				Then: cloneExprForMemo(w.Then, params),
+				Cond: cloneExprForMemo(w.Cond, params, arena),
+				Then: cloneExprForMemo(w.Then, params, arena),
 			}
 		}
-		return &PS.CaseExpr{
-			Expr:     cloneExprForMemo(v.Expr, params),
+		return cloneAlloc(arena, &PS.CaseExpr{
+			Expr:     cloneExprForMemo(v.Expr, params, arena),
 			WhenList: whenList,
-			Else:     cloneExprForMemo(v.Else, params),
-		}
+			Else:     cloneExprForMemo(v.Else, params, arena),
+		})
 	case *PS.CastExpr:
-		return &PS.CastExpr{
-			Expr: cloneExprForMemo(v.Expr, params),
+		return cloneAlloc(arena, &PS.CastExpr{
+			Expr: cloneExprForMemo(v.Expr, params, arena),
 			Type: v.Type,
-		}
+		})
 	case *PS.ListExpr:
 		items := make([]PS.Expr, len(v.Items))
 		for i, item := range v.Items {
-			items[i] = cloneExprForMemo(item, params)
+			items[i] = cloneExprForMemo(item, params, arena)
 		}
-		return &PS.ListExpr{Items: items}
+		return cloneAlloc(arena, &PS.ListExpr{Items: items})
 	case *PS.AliasedExpr:
-		return &PS.AliasedExpr{
-			Expr:  cloneExprForMemo(v.Expr, params),
+		return cloneAlloc(arena, &PS.AliasedExpr{
+			Expr:  cloneExprForMemo(v.Expr, params, arena),
 			Alias: v.Alias,
-		}
+		})
 	case *PS.SubqueryExpr:
 		return v // subqueries are structure, not parameterizable
 	case *PS.ExistsExpr:
@@ -693,7 +736,7 @@ func cloneExprForMemo(expr PS.Expr, params *[]any) PS.Expr {
 // comparison predicates replaced by PS.Param nodes. Returns the
 // parameterized statement and the extracted literal values in
 // walk order. REQ001195.
-func cloneStmtForMemo(stmt PS.Stmt, params *[]any) PS.Stmt {
+func cloneStmtForMemo(stmt PS.Stmt, params *[]any, arena *cloneArena) PS.Stmt {
 	if stmt == nil {
 		return nil
 	}
@@ -701,42 +744,42 @@ func cloneStmtForMemo(stmt PS.Stmt, params *[]any) PS.Stmt {
 	case *PS.Select:
 		cols := make([]PS.Expr, len(v.Cols))
 		for i, c := range v.Cols {
-			cols[i] = cloneExprForMemo(c, params)
+			cols[i] = cloneExprForMemo(c, params, arena)
 		}
 		joins := make([]PS.JoinClause, len(v.Joins))
 		for i, j := range v.Joins {
 			joins[i] = PS.JoinClause{
 				Kind:  j.Kind,
 				Right: j.Right,
-				On:    cloneExprForMemo(j.On, params),
+				On:    cloneExprForMemo(j.On, params, arena),
 			}
 		}
 		groupBy := make([]PS.Expr, len(v.GroupBy))
 		for i, g := range v.GroupBy {
-			groupBy[i] = cloneExprForMemo(g, params)
+			groupBy[i] = cloneExprForMemo(g, params, arena)
 		}
-		return &PS.Select{
+		return cloneAlloc(arena, &PS.Select{
 			Distinct:      v.Distinct,
 			Cols:          cols,
 			From:          v.From,
 			FromAlias:     v.FromAlias,
-			Where:         cloneExprForMemo(v.Where, params),
+			Where:         cloneExprForMemo(v.Where, params, arena),
 			OrderBy:       v.OrderBy, // ORDER BY exprs not parameterized
 			Joins:         joins,
 			GroupBy:       groupBy,
-			Having:        cloneExprForMemo(v.Having, params),
-			SubqueryFrom:  cloneStmtForMemo(v.SubqueryFrom, params),
-			Limit:         cloneExprForMemo(v.Limit, params),
-			Offset:        cloneExprForMemo(v.Offset, params),
-		}
+			Having:        cloneExprForMemo(v.Having, params, arena),
+			SubqueryFrom:  cloneStmtForMemo(v.SubqueryFrom, params, arena),
+			Limit:         cloneExprForMemo(v.Limit, params, arena),
+			Offset:        cloneExprForMemo(v.Offset, params, arena),
+		})
 	case *PS.CompoundStmt:
-		left := cloneStmtForMemo(v.Left, params)
-		right := cloneStmtForMemo(v.Right, params)
-		return &PS.CompoundStmt{
+		left := cloneStmtForMemo(v.Left, params, arena)
+		right := cloneStmtForMemo(v.Right, params, arena)
+		return cloneAlloc(arena, &PS.CompoundStmt{
 			Op:    v.Op,
 			Left:  left,
 			Right: right,
-		}
+		})
 	}
 	return stmt // INSERT/UPDATE/DELETE — not parameterized
 }
@@ -750,6 +793,8 @@ func cloneStmtForMemo(stmt PS.Stmt, params *[]any) PS.Stmt {
 // SerializeKey(paramStmt). The original stmt is used for plan building.
 func NormalizeForMemo(stmt PS.Stmt) (PS.Stmt, []any) {
 	var params []any
-	cloned := cloneStmtForMemo(stmt, &params)
+	var arena cloneArena
+	arena.init()
+	cloned := cloneStmtForMemo(stmt, &params, &arena)
 	return cloned, params
 }
