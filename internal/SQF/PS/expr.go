@@ -389,9 +389,15 @@ func (p *Parser) parseUnary() (Expr, error) {
 	if p.current.Type == LX.T_NOT {
 		loc := p.loc()
 		p.advance()
-		// REQ000806: NOT binds at precedence 1 (lower than IS/comparison).
-		// Parse the operand via parseBinary so NOT(-78 IS NOT NULL) ≠ (NOT -78) IS NOT NULL.
-		operand, err := p.parseBinary(1)
+		// REQ000806: NOT binds at precedence 3 (one above AND at 2,
+		// below comparison ops at 6). This ensures NOT parses its
+		// operand through BETWEEN (cmpPrec=6) but stops before
+		// AND/OR, so `NOT x BETWEEN a AND b AND c` parses as
+		// `(NOT (x BETWEEN a AND b)) AND c`, not `NOT ((x BETWEEN a AND b) AND c)`.
+		// REQ001711: previously used minPrec=1 which allowed AND to
+		// be consumed as part of the NOT operand, causing wrong
+		// CASE WHEN evaluation in `NOT (-36) BETWEEN 21 AND 96 AND ...`.
+		operand, err := p.parseBinary(3)
 		if err != nil {
 			return nil, err
 		}
