@@ -429,8 +429,8 @@ func (p *Planner) planRecursiveCTE(cte *PS.CommonTableExpr, comp *PS.CompoundStm
 	isUnion := comp.Op == PS.CompoundUnion
 	iterRows := allRows
 	// Use the same key computation as p.Plan to correctly bypass plan cache.
-	normalized, _ := pl.NormalizeForMemo(comp.Right)
-	compKey := pl.SerializeKey(normalized)
+	// REQ001972: EncodeMemoKey pools the internal clone arena.
+	compKey, _ := pl.EncodeMemoKey(comp.Right)
 
 	// Safety limit: prevent infinite loops from malformed recursive CTEs.
 	const maxRecIters = 10000

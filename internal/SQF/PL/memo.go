@@ -328,6 +328,155 @@ func (e *enc) writeExpr(x PS.Expr) {
 	}
 }
 
+// writeExprNormalized mirrors writeExpr but rewrites comparison
+// predicates of the form `column op literal` (and the symmetric
+// `literal op column`) by emitting a Param tag at the literal
+// position and appending the literal value to params. Sub-trees that
+// are not comparison predicates are streamed verbatim, so the output
+// byte stream is byte-equivalent to SerializeKey of the cloned AST
+// produced by NormalizeForMemo. REQ001972.
+func (e *enc) writeExprNormalized(x PS.Expr, params *[]any) {
+	if x == nil {
+		e.buf = append(e.buf, 0)
+		return
+	}
+	e.buf = append(e.buf, 1)
+	switch v := x.(type) {
+	case *PS.NumberLiteral:
+		e.buf = append(e.buf, tagNumberLit)
+		var tmp [binary.MaxVarintLen64]byte
+		n := binary.PutVarint(tmp[:], v.Val)
+		e.buf = append(e.buf, tmp[:n]...)
+	case *PS.FloatLiteral:
+		e.buf = append(e.buf, tagFloatLit)
+		bits := uint64(v.Val)
+		var tmp [8]byte
+		binary.LittleEndian.PutUint64(tmp[:], bits)
+		e.buf = append(e.buf, tmp[:]...)
+	case *PS.StringLiteral:
+		e.buf = append(e.buf, tagStringLit)
+		e.writeString(v.Val)
+	case *PS.BoolLiteral:
+		e.buf = append(e.buf, tagBoolLit)
+		e.writeBool(v.Val)
+	case *PS.NullLiteral:
+		e.buf = append(e.buf, tagNullLit)
+	case *PS.Ident:
+		e.buf = append(e.buf, tagIdent)
+		e.writeString(v.Name)
+	case *PS.QualifiedName:
+		e.buf = append(e.buf, tagQName)
+		e.writeString(v.Table)
+		e.writeString(v.Name)
+	case *PS.AliasedExpr:
+		e.buf = append(e.buf, tagAlias)
+		e.writeExprNormalized(v.Expr, params)
+		e.writeString(v.Alias)
+	case *PS.Param:
+		e.buf = append(e.buf, tagParam)
+		e.writeUvarint(uint64(v.Index))
+	case *PS.StarExpr:
+		e.buf = append(e.buf, tagStar)
+	case *PS.UnaryExpr:
+		e.buf = append(e.buf, tagUnary)
+		e.writeOp(v.Op)
+		e.writeExprNormalized(v.Operand, params)
+	case *PS.BinaryExpr:
+		if isComparisonOp(v.Op) {
+			if isColumnRef(v.Left) && isLiteral(v.Right) {
+				idx := len(*params)
+				*params = append(*params, literalToAny(v.Right))
+				e.buf = append(e.buf, tagBinary)
+				e.writeOp(v.Op)
+				e.writeExprNormalized(v.Left, params)
+				e.buf = append(e.buf, 1)
+				e.buf = append(e.buf, tagParam)
+				e.writeUvarint(uint64(idx))
+				return
+			}
+			if isLiteral(v.Left) && isColumnRef(v.Right) {
+				idx := len(*params)
+				*params = append(*params, literalToAny(v.Left))
+				e.buf = append(e.buf, tagBinary)
+				e.writeOp(v.Op)
+				e.buf = append(e.buf, 1)
+				e.buf = append(e.buf, tagParam)
+				e.writeUvarint(uint64(idx))
+				e.writeExprNormalized(v.Right, params)
+				return
+			}
+		}
+		e.buf = append(e.buf, tagBinary)
+		e.writeOp(v.Op)
+		e.writeExprNormalized(v.Left, params)
+		e.writeExprNormalized(v.Right, params)
+	case *PS.FunctionCall:
+		e.buf = append(e.buf, tagFunc)
+		e.writeString(v.Name)
+		e.writeUvarint(uint64(len(v.Args)))
+		for _, a := range v.Args {
+			e.writeExprNormalized(a, params)
+		}
+	case *PS.AggregateFunc:
+		e.buf = append(e.buf, tagAgg)
+		e.writeString(v.Name)
+		e.writeExprNormalized(v.Arg, params)
+	case *PS.CastExpr:
+		e.buf = append(e.buf, tagCast)
+		e.writeExprNormalized(v.Expr, params)
+		e.writeUvarint(uint64(v.Type.Type))
+	case *PS.ListExpr:
+		e.buf = append(e.buf, tagList)
+		e.writeUvarint(uint64(len(v.Items)))
+		for _, it := range v.Items {
+			e.writeExprNormalized(it, params)
+		}
+	case *PS.BetweenExpr:
+		e.buf = append(e.buf, tagBetween)
+		e.writeExprNormalized(v.Expr, params)
+		e.writeExprNormalized(v.Low, params)
+		e.writeExprNormalized(v.High, params)
+	case *PS.CaseExpr:
+		e.buf = append(e.buf, tagCase)
+		e.writeExprNormalized(v.Expr, params)
+		e.writeUvarint(uint64(len(v.WhenList)))
+		for _, w := range v.WhenList {
+			e.writeExprNormalized(w.Cond, params)
+			e.writeExprNormalized(w.Then, params)
+		}
+		e.writeExprNormalized(v.Else, params)
+	case *PS.InExpr:
+		e.buf = append(e.buf, tagIn)
+		e.writeExprNormalized(v.Expr, params)
+		e.writeUvarint(uint64(len(v.List)))
+		for _, it := range v.List {
+			e.writeExprNormalized(it, params)
+		}
+		if v.Subquery == nil {
+			e.buf = append(e.buf, 0)
+		} else {
+			e.buf = append(e.buf, 1)
+			e.writeStmtNormalized(v.Subquery, params)
+		}
+	case *PS.ExistsExpr:
+		e.buf = append(e.buf, tagExists)
+		if v.Subquery == nil {
+			e.buf = append(e.buf, 0)
+		} else {
+			e.buf = append(e.buf, 1)
+			e.writeStmtNormalized(v.Subquery, params)
+		}
+	case *PS.SubqueryExpr:
+		e.buf = append(e.buf, tagSubq)
+		if v.Subquery == nil {
+			e.buf = append(e.buf, 0)
+		} else {
+			e.buf = append(e.buf, 1)
+			e.writeStmtNormalized(v.Subquery, params)
+		}
+	}
+}
+
 func (e *enc) writeColDef(c PS.ColDef) {
 	e.writeString(c.Name)
 	e.writeUvarint(uint64(c.Type))
@@ -432,6 +581,105 @@ func (e *enc) writeStmt(s PS.Stmt) {
 	}
 }
 
+// writeStmtNormalized streams the same byte sequence as writeStmt
+// for non-expression fields, but routes expression fields through
+// writeExprNormalized so comparison literals are extracted into
+// params. The byte stream matches SerializeKey(NormalizeForMemo(stmt))
+// exactly. REQ001972.
+func (e *enc) writeStmtNormalized(s PS.Stmt, params *[]any) {
+	if s == nil {
+		e.buf = append(e.buf, 0)
+		return
+	}
+	e.buf = append(e.buf, 1)
+	switch v := s.(type) {
+	case *PS.Select:
+		e.buf = append(e.buf, tagSelect)
+		e.writeBool(v.Distinct)
+		e.writeUvarint(uint64(len(v.Cols)))
+		for _, c := range v.Cols {
+			e.writeExprNormalized(c, params)
+		}
+		e.writeString(v.From)
+		e.writeString(v.FromAlias)
+		e.writeExprNormalized(v.Where, params)
+		e.writeUvarint(uint64(len(v.OrderBy)))
+		for _, o := range v.OrderBy {
+			e.writeExprNormalized(o.Expr, params)
+			e.writeBool(o.Desc)
+		}
+		e.writeUvarint(uint64(len(v.Joins)))
+		for _, j := range v.Joins {
+			e.writeString(j.Kind)
+			e.writeString(j.Right)
+			e.writeExprNormalized(j.On, params)
+		}
+		e.writeUvarint(uint64(len(v.GroupBy)))
+		for _, g := range v.GroupBy {
+			e.writeExprNormalized(g, params)
+		}
+		e.writeExprNormalized(v.Having, params)
+		e.writeStmtNormalized(v.SubqueryFrom, params)
+		e.writeExprNormalized(v.Limit, params)
+		e.writeExprNormalized(v.Offset, params)
+	case *PS.Insert:
+		e.buf = append(e.buf, tagInsert)
+		e.writeString(v.Table)
+		e.writeUvarint(uint64(len(v.Cols)))
+		for _, c := range v.Cols {
+			e.writeString(c)
+		}
+		e.writeUvarint(uint64(len(v.Values)))
+		for _, row := range v.Values {
+			e.writeUvarint(uint64(len(row)))
+			for _, cell := range row {
+				e.writeExprNormalized(cell, params)
+			}
+		}
+	case *PS.Update:
+		e.buf = append(e.buf, tagUpdate)
+		e.writeString(v.Table)
+		e.writeUvarint(uint64(len(v.Set)))
+		for _, p := range v.Set {
+			e.writeString(p.Col)
+			e.writeExpr(p.Val)
+		}
+		e.writeExpr(v.Where)
+	case *PS.Delete:
+		e.buf = append(e.buf, tagDelete)
+		e.writeString(v.Table)
+		e.writeExpr(v.Where)
+	case *PS.CreateTable:
+		e.buf = append(e.buf, tagCreateTable)
+		e.writeString(v.Name)
+		e.writeUvarint(uint64(len(v.Cols)))
+		for _, c := range v.Cols {
+			e.writeColDef(c)
+		}
+		if v.PK == nil {
+			e.buf = append(e.buf, 0)
+		} else {
+			e.buf = append(e.buf, 1)
+			e.writeString(*v.PK)
+		}
+	case *PS.DropTable:
+		e.buf = append(e.buf, tagDropTable)
+		e.writeString(v.Name)
+	case *PS.CompoundStmt:
+		e.buf = append(e.buf, tagCompound)
+		e.writeStmtNormalized(v.Left, params)
+		e.writeUvarint(uint64(v.Op))
+		e.writeStmtNormalized(v.Right, params)
+		e.writeUvarint(uint64(len(v.OrderBy)))
+		for _, o := range v.OrderBy {
+			e.writeExprNormalized(o.Expr, params)
+			e.writeBool(o.Desc)
+		}
+		e.writeExprNormalized(v.Limit, params)
+		e.writeExprNormalized(v.Offset, params)
+	}
+}
+
 // xxhash64 is a small, non-cryptographic 64-bit hash used to
 // fingerprint ASTs in the memo. The interface mirrors
 // github.com/cespare/xxhash/v2's Sum64, but the implementation
@@ -488,6 +736,32 @@ func SerializeKey(stmt PS.Stmt) string {
 	e := &enc{}
 	e.writeStmt(stmt)
 	return SerializeKeyBytes(e.buf, SchemaVersion())
+}
+
+// EncodeMemoKey produces a memoization key for stmt in a single pass
+// without exposing a cloned AST to callers. It walks stmt and
+// streams a parameterized encoding directly into a hash buffer:
+// comparison predicates of the form `column op literal` are
+// rewritten so the literal position emits a Param tag with the
+// literal value appended to params. The returned string is the
+// 16-hex fingerprint; params are the extracted literals in walk
+// order. REQ001195, REQ001972.
+//
+// REQ001972: by streaming the encoding we avoid materializing a
+// cloned AST in a pooled bump allocator (which would otherwise need
+// to outlive NormalizeForMemo and be invisible to the caller). The
+// only heap allocations are the enc.buf scratch slice and the
+// params slice — both of which scale with stmt size and cannot be
+// reused across calls without breaking concurrency.
+func EncodeMemoKey(stmt PS.Stmt) (string, []any) {
+	return encodeMemoKey(stmt, SchemaVersion())
+}
+
+func encodeMemoKey(stmt PS.Stmt, schemaVersion uint64) (string, []any) {
+	var params []any
+	e := &enc{}
+	e.writeStmtNormalized(stmt, &params)
+	return SerializeKeyBytes(e.buf, schemaVersion), params
 }
 
 // SerializeKeyWithSchema is like SerializeKey but mixes the

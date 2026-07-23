@@ -131,8 +131,8 @@ func TestREQ001195_ParameterizedKey_DifferentStructure(t *testing.T) {
 		},
 	}
 	norm1, _ := pl.NormalizeForMemo(stmt1)
-	norm2, _ := pl.NormalizeForMemo(stmt2)
 	key1 := pl.SerializeKey(norm1)
+	norm2, _ := pl.NormalizeForMemo(stmt2)
 	key2 := pl.SerializeKey(norm2)
 	if key1 == key2 {
 		t.Errorf("different cols should produce different keys, both = %q", key1)

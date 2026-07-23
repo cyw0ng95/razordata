@@ -465,13 +465,13 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 		return nil, err
 	}
 
-	// REQ001202: parameterized memo key using NormalizeForMemo so
+	// REQ001202: parameterized memo key using EncodeMemoKey so
 	// structurally identical queries with different literal values
 	// share a cache entry. On cache hit, substitute the current
 	// query's literal values into the cached operator tree via
 	// replaceLiteralsOnTree (same mechanism as the executor cache).
-	paramRewritten, params := pl.NormalizeForMemo(rewritten)
-	key := pl.SerializeKey(paramRewritten)
+	// REQ001972: EncodeMemoKey pools the internal clone arena.
+	key, params := pl.EncodeMemoKey(rewritten)
 	p.mu.Lock()
 	if cached, ok := p.memo[key]; ok {
 		replaceLiteralsOnTree(cached.root, params)

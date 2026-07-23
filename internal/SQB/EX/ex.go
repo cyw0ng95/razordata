@@ -699,11 +699,10 @@ func (e *Executor) putTextPlan(sql string, plan *pl.PlanResult) {
 // via replaceLiteralsOnTree using the current query's extracted values.
 func (e *Executor) planWithCache(stmt PS.Stmt) (*pl.PlanResult, error) {
 	if e.planCache.entries != nil {
-		paramStmt, params := pl.NormalizeForMemo(stmt)
-		if paramStmt == nil {
-			paramStmt = stmt
-		}
-		key := pl.SerializeKey(paramStmt)
+		// REQ001972: EncodeMemoKey folds the parameterized clone into
+		// the hash buffer in one pass via a pooled bump allocator, so
+		// callers never hold a pointer into the arena.
+		key, params := pl.EncodeMemoKey(stmt)
 		if cached := e.getCachedPlan(key); cached != nil {
 			// REQ001585: the cached PlanResult shares the same AdaptiveOp
 			// wrapper instance across all callers. After the first execution,
