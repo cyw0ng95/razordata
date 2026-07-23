@@ -364,3 +364,206 @@ func TestDetectFeatures_AnyArch(t *testing.T) {
 		}
 	}
 }
+
+// --- ParallelProbe tests (REQ001645) ---
+
+// probeTestProducer is a minimal BatchProducer for ParallelProbe tests.
+type probeTestProducer struct {
+	batches []*Batch
+	idx     int
+}
+
+func (p *probeTestProducer) NextBatch(_ context.Context) (*Batch, error) {
+	if p.idx >= len(p.batches) {
+		return nil, nil
+	}
+	b := p.batches[p.idx]
+	p.idx++
+	return b, nil
+}
+func (p *probeTestProducer) Close() error { return nil }
+
+// newProbeKeyBatch builds a single-column int64 batch for ParallelProbe tests.
+func newProbeKeyBatch(keys []int64) *Batch {
+	b := GetBatch(1)
+	b.SetColumnName(0, "k")
+	b.Cols[0].Data.Ints = make([]int64, len(keys))
+	copy(b.Cols[0].Data.Ints, keys)
+	b.Size = len(keys)
+	return b
+}
+
+// buildTestHashTable inserts build keys into a hash table and returns it plus
+// the rowIDs payload (slot → build row IDs).
+func buildTestHashTable(t *testing.T, keys []int64) (HashTableInterface, [][]uint32) {
+	t.Helper()
+	ht := NewHashTableWithCols(uint32(len(keys)+1), 1)
+	rowIDs := make([][]uint32, ht.Cap())
+	for i, k := range keys {
+		keyVals := []int64{k}
+		hash := HashComposite(keyVals)
+		ht.Probe(keyVals, []uint64{hash}, 1, func(idx int, _ int) {
+			rowIDs[idx] = append(rowIDs[idx], uint32(i))
+		})
+	}
+	return ht, rowIDs
+}
+
+// intKeyHash extracts a single int64 key from column 0 and hashes it.
+func intKeyHash(batch *Batch, row int, dst []int64) (uint64, bool) {
+	dst[0] = batch.Cols[0].Data.Ints[row]
+	return HashComposite(dst), true
+}
+
+// TestParallelProbe_Order verifies matched build-row IDs are returned in
+// probe-row order. REQ001645.
+func TestParallelProbe_Order(t *testing.T) {
+	ht, rowIDs := buildTestHashTable(t, []int64{1, 2, 3}) // buildRow 0,1,2
+	probe := &probeTestProducer{batches: []*Batch{newProbeKeyBatch([]int64{2, 3, 4, 1})}}
+
+	// Force the parallel path: batch size (4) < parallelProbeMinRows (32) would
+	// normally go sequential, so call the per-batch helper directly to exercise
+	// concurrency with a tiny batch.
+	batch := probe.batches[0]
+	matches := make([][]uint32, batch.Size)
+	parallelProbeBatch(ht, rowIDs, batch, matches, 1, 4, intKeyHash)
+
+	// key 2 → buildRow 1, key 3 → buildRow 2, key 4 → none, key 1 → buildRow 0
+	want := [][]uint32{{1}, {2}, nil, {0}}
+	for r, w := range want {
+		if !slicesEqual(matches[r], w) {
+			t.Errorf("row %d: got %v, want %v", r, matches[r], w)
+		}
+	}
+	batch.Put()
+}
+
+// TestParallelProbe_Workers1Fallback verifies the single-worker path.
+func TestParallelProbe_Workers1Fallback(t *testing.T) {
+	ht, rowIDs := buildTestHashTable(t, []int64{1, 2, 3})
+	probe := &probeTestProducer{batches: []*Batch{newProbeKeyBatch([]int64{2, 3, 4, 1})}}
+	res, err := ParallelProbe(context.Background(), ht, rowIDs, probe, 1, 1, intKeyHash)
+	if err != nil {
+		t.Fatalf("ParallelProbe: %v", err)
+	}
+	if len(res) != 1 {
+		t.Fatalf("got %d results, want 1", len(res))
+	}
+	want := [][]uint32{{1}, {2}, nil, {0}}
+	for r, w := range want {
+		if !slicesEqual(res[0].Matches[r], w) {
+			t.Errorf("row %d: got %v, want %v", r, res[0].Matches[r], w)
+		}
+	}
+	for _, r := range res {
+		r.Batch.Put()
+	}
+}
+
+// TestParallelProbe_ParallelMatchesSequential verifies fanning out across
+// workers produces identical results to the single-worker path.
+func TestParallelProbe_ParallelMatchesSequential(t *testing.T) {
+	const n = 2048
+	keys := make([]int64, n)
+	for i := range keys {
+		keys[i] = int64(i % 500) // many duplicates → multi-rowID matches
+	}
+	ht, rowIDs := buildTestHashTable(t, keys)
+
+	probeKeys := make([]int64, n)
+	for i := range probeKeys {
+		probeKeys[i] = int64((i * 7) % 600) // some misses (500..599)
+	}
+
+	// Sequential.
+	probe1 := &probeTestProducer{batches: []*Batch{newProbeKeyBatch(probeKeys)}}
+	seq, err := ParallelProbe(context.Background(), ht, rowIDs, probe1, 1, 1, intKeyHash)
+	if err != nil {
+		t.Fatalf("seq ParallelProbe: %v", err)
+	}
+	// Parallel (8 workers).
+	probe2 := &probeTestProducer{batches: []*Batch{newProbeKeyBatch(probeKeys)}}
+	par, err := ParallelProbe(context.Background(), ht, rowIDs, probe2, 1, 8, intKeyHash)
+	if err != nil {
+		t.Fatalf("par ParallelProbe: %v", err)
+	}
+	if len(seq) != len(par) {
+		t.Fatalf("result count: seq=%d par=%d", len(seq), len(par))
+	}
+	for bi := range seq {
+		if seq[bi].Batch.Size != par[bi].Batch.Size {
+			t.Fatalf("batch %d size: seq=%d par=%d", bi, seq[bi].Batch.Size, par[bi].Batch.Size)
+		}
+		for r := 0; r < seq[bi].Batch.Size; r++ {
+			if !slicesEqual(seq[bi].Matches[r], par[bi].Matches[r]) {
+				t.Errorf("batch %d row %d: seq=%v par=%v", bi, r, seq[bi].Matches[r], par[bi].Matches[r])
+			}
+		}
+	}
+	for _, r := range seq {
+		r.Batch.Put()
+	}
+	for _, r := range par {
+		r.Batch.Put()
+	}
+}
+
+// TestParallelProbe_EmptyProducer verifies an empty probe yields no results.
+func TestParallelProbe_EmptyProducer(t *testing.T) {
+	ht, rowIDs := buildTestHashTable(t, []int64{1, 2, 3})
+	probe := &probeTestProducer{}
+	res, err := ParallelProbe(context.Background(), ht, rowIDs, probe, 1, 4, intKeyHash)
+	if err != nil {
+		t.Fatalf("ParallelProbe: %v", err)
+	}
+	if len(res) != 0 {
+		t.Errorf("got %d results, want 0", len(res))
+	}
+}
+
+// TestParallelProbe_NilInputs verifies nil ht/probe are handled gracefully.
+func TestParallelProbe_NilInputs(t *testing.T) {
+	if _, err := ParallelProbe(context.Background(), nil, nil, nil, 1, 4, intKeyHash); err != nil {
+		t.Errorf("nil inputs: got err %v, want nil", err)
+	}
+}
+
+// TestParallelProbe_BloomSkip verifies keyHash returning ok=false skips lookup.
+func TestParallelProbe_BloomSkip(t *testing.T) {
+	ht, rowIDs := buildTestHashTable(t, []int64{1, 2, 3, 4, 5})
+	probe := &probeTestProducer{batches: []*Batch{newProbeKeyBatch([]int64{1, 2, 3, 4, 5})}}
+	// keyHash skips even-keyed rows (simulating bloom negative).
+	skipKeyHash := func(batch *Batch, row int, dst []int64) (uint64, bool) {
+		dst[0] = batch.Cols[0].Data.Ints[row]
+		if dst[0]%2 == 0 {
+			return 0, false // skip
+		}
+		return HashComposite(dst), true
+	}
+	res, err := ParallelProbe(context.Background(), ht, rowIDs, probe, 1, 1, skipKeyHash)
+	if err != nil {
+		t.Fatalf("ParallelProbe: %v", err)
+	}
+	// Only odd keys (1,3,5) → buildRows 0,2,4.
+	want := [][]uint32{{0}, nil, {2}, nil, {4}}
+	for r, w := range want {
+		if !slicesEqual(res[0].Matches[r], w) {
+			t.Errorf("row %d: got %v, want %v", r, res[0].Matches[r], w)
+		}
+	}
+	for _, r := range res {
+		r.Batch.Put()
+	}
+}
+
+func slicesEqual(a, b []uint32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

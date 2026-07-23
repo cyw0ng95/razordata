@@ -15,8 +15,8 @@ import (
 // Supports LEFT/RIGHT/FULL outer joins (REQ001619).
 // Supports parallel build phase (REQ001622).
 type VectorizedHashJoin struct {
-	build    UT.BatchProducer
-	probe    UT.BatchProducer
+	build     UT.BatchProducer
+	probe     UT.BatchProducer
 	buildKeys []int
 	probeKeys []int
 
@@ -43,14 +43,14 @@ type VectorizedHashJoin struct {
 	probeKeyVals []int64
 
 	// REQ001619: outer join state.
-	kind           JoinKind
-	matchedBuild   []bool
-	totalBuildRows int
-	matchedProbe   []bool
-	unmatchedBuf   []UT.Column
-	unmatchedN     int
-	probeBatches   []*UT.Batch
-	probeBatchIdx  int
+	kind                  JoinKind
+	matchedBuild          []bool
+	totalBuildRows        int
+	matchedProbe          []bool
+	unmatchedBuf          []UT.Column
+	unmatchedN            int
+	probeBatches          []*UT.Batch
+	probeBatchIdx         int
 	unmatchedBuildEmitted []bool
 	matchedProbeRows      int
 
@@ -60,7 +60,21 @@ type VectorizedHashJoin struct {
 	// REQ001645: explicit parallelism setting for the build phase.
 	// When > 0, it overrides the pool's default worker count.
 	// This is set by the planner when the build side is large (> 10K rows).
+	// When > 1, it also enables the parallel probe phase (emitParallelMatched).
 	parallelism int
+
+	// REQ001645: parallel probe phase state. Populated lazily by
+	// emitParallelMatched on the first NextBatch when useParallelProbe().
+	// parResults holds the materialized probe batches + per-row match lists
+	// produced by UT.ParallelProbe; emission drains them in probe order so
+	// output is byte-identical to the sequential probePhase.
+	parResults     []UT.ParallelProbeResult
+	parBi          int  // current index into parResults
+	parRow         int  // current row within parResults[parBi].Batch
+	parMatchIdx    int  // current index into Matches[parRow]
+	parGlobalRow   int  // global probe-row counter (for matchedProbe indexing)
+	parMatchedDone bool // matched phase fully emitted
+	parProbed      bool // ParallelProbe has been run
 }
 
 // NewVectorizedHashJoin creates a vectorized inner hash join.
@@ -99,6 +113,26 @@ func (j *VectorizedHashJoin) WithPool(pool *UT.WorkerPool) *VectorizedHashJoin {
 	return j
 }
 
+// WithParallelism sets the explicit worker count for the parallel build and
+// probe phases. When > 0, it overrides the pool's default worker count in
+// buildHashTableParallel; when > 1, it additionally enables the parallel
+// probe phase via UT.ParallelProbe. The planner sets this when the build
+// side is large (> 10K rows). REQ001645.
+func (j *VectorizedHashJoin) WithParallelism(n int) *VectorizedHashJoin {
+	j.parallelism = n
+	return j
+}
+
+// Parallelism returns the configured parallelism (0 = unset). REQ001645.
+func (j *VectorizedHashJoin) Parallelism() int { return j.parallelism }
+
+// useParallelProbe reports whether the probe phase should run via
+// UT.ParallelProbe (parallel) instead of the streaming probePhase.
+// REQ001645.
+func (j *VectorizedHashJoin) useParallelProbe() bool {
+	return j.parallelism > 1
+}
+
 // NextBatch produces the next output batch. Returns (nil, nil) at EOF.
 func (j *VectorizedHashJoin) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	// REQ001619 debug
@@ -127,7 +161,16 @@ func (j *VectorizedHashJoin) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	// Phase 1 = unmatched build rows (LEFT/FULL).
 	// Phase 2 = unmatched probe rows (RIGHT/FULL).
 	for {
-		batch, err := j.probePhase(ctx)
+		// REQ001645: phase 0 dispatches to the parallel probe emitter when
+		// parallelism > 1, else the streaming sequential probePhase. Both
+		// return (nil, nil) when the matched phase is exhausted.
+		var batch *UT.Batch
+		var err error
+		if j.useParallelProbe() {
+			batch, err = j.emitParallelMatched(ctx)
+		} else {
+			batch, err = j.probePhase(ctx)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -238,7 +281,7 @@ func (j *VectorizedHashJoin) buildHashTable(ctx context.Context) error {
 		// Will be sized when probe batch arrives.
 	}
 
-// REQ001622: parallel build phase using WorkerPool.
+	// REQ001622: parallel build phase using WorkerPool.
 	if j.pool != nil && totalRows >= 512 {
 		if err := j.buildHashTableParallel(totalRows, numKeyCols); err != nil {
 			return err
@@ -285,7 +328,7 @@ func (j *VectorizedHashJoin) buildHashTable(ctx context.Context) error {
 				}
 				j.bloom.Add(uint64(colValAt(&j.buildCols[kc], i)))
 			}
-}
+		}
 	}
 
 	j.buildDone = true
@@ -306,7 +349,11 @@ func (j *VectorizedHashJoin) buildHashTableParallel(totalRows int, numKeyCols in
 	j.rowIDs = make([][]uint32, j.ht.Cap())
 
 	// Determine number of workers.
-	numWorkers := j.pool.Workers()
+	// REQ001645: honor explicit parallelism override; fall back to pool size.
+	numWorkers := j.parallelism
+	if numWorkers <= 0 {
+		numWorkers = j.pool.Workers()
+	}
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -318,11 +365,11 @@ func (j *VectorizedHashJoin) buildHashTableParallel(totalRows int, numKeyCols in
 	}
 
 	type localResult struct {
-		ht      UT.HashTableInterface
-		rowIDs  [][]uint32
-		start   int
-		end     int
-		unique  int
+		ht     UT.HashTableInterface
+		rowIDs [][]uint32
+		start  int
+		end    int
+		unique int
 	}
 
 	chunkSize := (totalRows + numWorkers - 1) / numWorkers
@@ -493,6 +540,11 @@ func (j *VectorizedHashJoin) probePhase(ctx context.Context) (*UT.Batch, error) 
 			if !j.refillProbe(ctx) {
 				break
 			}
+			// refillProbe reset j.probeRow to -1 so the next iteration's
+			// increment starts at row 0 of the new batch. Without this
+			// continue, probeCurrentRow would run with probeRow == -1 and
+			// index out of bounds (multi-batch probe boundary). REQ001645.
+			continue
 		}
 
 		// Probe hash table for current row.
@@ -524,6 +576,145 @@ func (j *VectorizedHashJoin) emitOneRow(output *UT.Batch, nBuild, buildRowIdx in
 	if j.matchedProbe != nil && j.probeRow < len(j.matchedProbe) {
 		j.matchedProbe[j.probeRow] = true
 	}
+}
+
+// emitMatchedRow copies one matched (build, probe) pair into output. Unlike
+// emitOneRow it takes the probe batch/row explicitly (used by the parallel
+// probe emitter, which iterates materialized probe batches) and only marks
+// the build row matched — probe-row matched tracking is handled globally by
+// emitParallelMatched via parGlobalRow. REQ001645.
+func (j *VectorizedHashJoin) emitMatchedRow(output *UT.Batch, nBuild, buildRowIdx int, probeBatch *UT.Batch, probeRow int) {
+	outRow := output.Size
+	for c := 0; c < nBuild; c++ {
+		copyRowToColumn(&output.Cols[c], &j.buildCols[c], outRow, buildRowIdx)
+	}
+	for c := 0; c < j.probeN; c++ {
+		copyRowToColumn(&output.Cols[nBuild+c], &probeBatch.Cols[c], outRow, probeRow)
+	}
+	output.Size++
+	if j.matchedBuild != nil && buildRowIdx < len(j.matchedBuild) {
+		j.matchedBuild[buildRowIdx] = true
+	}
+}
+
+// emitParallelMatched is the REQ001645 parallel probe phase. On the first
+// call it runs UT.ParallelProbe to materialize per-row match lists (lookups
+// fanned out across j.parallelism workers), then drains the results in
+// probe-row order into output batches. Because results are ordered, output is
+// byte-identical to the sequential probePhase. Returns (nil, nil) when all
+// matched rows have been emitted.
+func (j *VectorizedHashJoin) emitParallelMatched(ctx context.Context) (*UT.Batch, error) {
+	if j.parMatchedDone {
+		return nil, nil
+	}
+	// Lazily run the parallel probe once.
+	if !j.parProbed {
+		j.parProbed = true
+		workers := j.parallelism
+		if workers <= 1 {
+			workers = 1
+		}
+		// keyHash fills dst with the composite probe key and returns its hash.
+		// ok=false skips the lookup (NULL key or bloom-negative). Each worker
+		// owns its dst, so this closure is goroutine-safe; j.bloom/j.probeKeys
+		// are read-only after the build phase.
+		keyHash := func(batch *UT.Batch, row int, dst []int64) (uint64, bool) {
+			for ki, kc := range j.probeKeys {
+				if isColNull(&batch.Cols[kc], row) {
+					return 0, false
+				}
+				dst[ki] = colValAt(&batch.Cols[kc], row)
+			}
+			hash := UT.HashComposite(dst)
+			if j.bloom != nil && len(j.probeKeys) == 1 {
+				if !j.bloom.Contains(uint64(dst[0])) {
+					return 0, false
+				}
+			}
+			return hash, true
+		}
+		res, err := UT.ParallelProbe(ctx, j.ht, j.rowIDs, j.probe, len(j.probeKeys), workers, keyHash)
+		if err != nil {
+			return nil, err
+		}
+		j.parResults = res
+		// Discover probe schema from the first probe batch (the sequential
+		// path does this lazily in refillProbe).
+		if j.probeNames == nil && len(res) > 0 {
+			first := res[0].Batch
+			j.probeN = meaningfulCols([]*UT.Batch{first})
+			j.probeNames = make([]string, j.probeN)
+			j.probeTypes = make([]LX.TokenType, j.probeN)
+			for i := 0; i < j.probeN; i++ {
+				j.probeNames[i] = first.Cols[i].Name
+				j.probeTypes[i] = first.Cols[i].Type
+			}
+		}
+		// REQ001619: for RIGHT/FULL, size matchedProbe over all probe rows and
+		// retain probe batches for emitUnmatchedProbe. The global probe-row
+		// index (parGlobalRow) aligns with matchedProbe indexing.
+		if j.kind == JoinKindRight || j.kind == JoinKindFull {
+			totalProbe := 0
+			for _, r := range res {
+				totalProbe += r.Batch.Size
+			}
+			j.matchedProbe = make([]bool, totalProbe)
+			j.probeBatches = make([]*UT.Batch, 0, len(res))
+			for _, r := range res {
+				j.probeBatches = append(j.probeBatches, r.Batch)
+			}
+		}
+		j.parBi = 0
+		j.parRow = 0
+		j.parMatchIdx = -1
+		j.parGlobalRow = 0
+	}
+
+	nBuild := j.buildN
+	nCols := nBuild + j.probeN
+	output := j.newOutputBatch(nCols)
+
+	for j.parBi < len(j.parResults) {
+		res := j.parResults[j.parBi]
+		batch := res.Batch
+		for j.parRow < batch.Size {
+			matches := res.Matches[j.parRow]
+			// Advance to the next pending match for this probe row.
+			if j.parMatchIdx < 0 {
+				j.parMatchIdx = 0
+			}
+			for j.parMatchIdx < len(matches) {
+				if output.Size >= UT.BatchSize {
+					return output, nil
+				}
+				j.emitMatchedRow(output, nBuild, int(matches[j.parMatchIdx]), batch, j.parRow)
+				j.parMatchIdx++
+			}
+			// This probe row is fully drained. Mark matched for outer joins.
+			if j.matchedProbe != nil && len(matches) > 0 && j.parGlobalRow < len(j.matchedProbe) {
+				j.matchedProbe[j.parGlobalRow] = true
+			}
+			j.parGlobalRow++
+			j.parRow++
+			j.parMatchIdx = -1
+		}
+		// Current probe batch exhausted; advance to the next.
+		// INNER/LEFT batches are released now; RIGHT/FULL batches are retained
+		// in j.probeBatches for emitUnmatchedProbe (released in Close).
+		if !(j.kind == JoinKindRight || j.kind == JoinKindFull) {
+			batch.Put()
+			j.parResults[j.parBi].Batch = nil
+		}
+		j.parBi++
+		j.parRow = 0
+	}
+
+	j.parMatchedDone = true
+	if output.Size == 0 {
+		output.Put()
+		return nil, nil
+	}
+	return output, nil
 }
 
 func (j *VectorizedHashJoin) probeCurrentRow() {
@@ -618,6 +809,18 @@ func (j *VectorizedHashJoin) Close() error {
 		j.probeBatch.Put()
 		j.probeBatch = nil
 	}
+	// REQ001645: release parallel-probe batches. INNER/LEFT batches were Put
+	// as they were drained; release any remaining (e.g. Close mid-emission).
+	// RIGHT/FULL batches are retained in j.probeBatches and released below —
+	// skip them here to avoid double-free.
+	if !(j.kind == JoinKindRight || j.kind == JoinKindFull) {
+		for _, r := range j.parResults {
+			if r.Batch != nil {
+				r.Batch.Put()
+			}
+		}
+	}
+	j.parResults = nil
 	// REQ001629: release stored probe batches.
 	for _, b := range j.probeBatches {
 		b.Put()
@@ -898,10 +1101,10 @@ func utHashInt64(v int64) uint64 {
 // materialized; the probe (left) side is streamed batch-by-batch.
 // REQ001630: LEFT/RIGHT/FULL outer join support.
 type VectorizedNestedLoopJoin struct {
-	left      UT.BatchProducer
-	right     UT.BatchProducer
-	on        func(*Row, *Row) (bool, error)
-	kind      JoinKind
+	left  UT.BatchProducer
+	right UT.BatchProducer
+	on    func(*Row, *Row) (bool, error)
+	kind  JoinKind
 
 	// REQ001620: columnar predicate for vectorized evaluation.
 	colOnLeftIdx  []int
@@ -915,8 +1118,8 @@ type VectorizedNestedLoopJoin struct {
 	nBuildRow int
 
 	// Probe (left) side streaming
-	probeBatch  *UT.Batch
-	probeRow    int
+	probeBatch *UT.Batch
+	probeRow   int
 
 	// Pending match pairs for current probe row
 	pending struct {
@@ -934,10 +1137,10 @@ type VectorizedNestedLoopJoin struct {
 	rightN     int
 
 	// REQ001630: outer join state.
-	matchedBuild    []bool   // matchedBuild[buildRowIdx]
-	matchedProbe    []bool   // matchedProbe[probeRowIdx]
-	probeBatches    []*UT.Batch // stored probe batches for unmatched emission
-	probeRowCount   int      // total probe rows seen
+	matchedBuild  []bool      // matchedBuild[buildRowIdx]
+	matchedProbe  []bool      // matchedProbe[probeRowIdx]
+	probeBatches  []*UT.Batch // stored probe batches for unmatched emission
+	probeRowCount int         // total probe rows seen
 
 	done bool
 }

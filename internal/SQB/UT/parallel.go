@@ -284,3 +284,104 @@ func (wp *WorkerPool) ParallelFanOut(ctx context.Context, partitions []Partition
 	}
 	return nil
 }
+
+// ParallelProbeResult holds the per-row match list for one probe batch.
+type ParallelProbeResult struct {
+	Batch   *Batch
+	Matches [][]uint32 // Matches[r] = build row IDs matched by probe row r (nil = no match)
+}
+
+// ParallelProbe drains the probe BatchProducer and, for each probe row, looks
+// up the hash table to collect matching build-row IDs from rowIDs (indexed by
+// hash-table slot). Lookups are fanned out across `workers` goroutines per
+// batch; each worker writes disjoint Matches indices, so results stay in
+// probe-row order and downstream emission is deterministic.
+//
+// keyHash fills dst (a per-worker scratch buffer of len == numKeys, owned by
+// ParallelProbe) with the composite probe key for a row and returns its hash.
+// ok=false skips the lookup (NULL key or bloom-negative). keyHash must be
+// goroutine-safe and must not retain dst beyond the call.
+//
+// The hash table and rowIDs are treated as read-only during the probe, so
+// concurrent Lookup calls are safe. REQ001645.
+func ParallelProbe(ctx context.Context, ht HashTableInterface, rowIDs [][]uint32,
+	probe BatchProducer, numKeys, workers int,
+	keyHash func(batch *Batch, row int, dst []int64) (hash uint64, ok bool)) ([]ParallelProbeResult, error) {
+	if ht == nil || probe == nil {
+		return nil, nil
+	}
+	if numKeys < 1 {
+		numKeys = 1
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	var results []ParallelProbeResult
+	for {
+		if err := ctx.Err(); err != nil {
+			return results, err
+		}
+		batch, err := probe.NextBatch(ctx)
+		if err != nil {
+			return results, err
+		}
+		if batch == nil {
+			break
+		}
+		matches := make([][]uint32, batch.Size)
+		if workers == 1 || batch.Size < parallelProbeMinRows {
+			dst := make([]int64, numKeys)
+			parallelProbeRange(ht, rowIDs, batch, matches, 0, batch.Size, dst, keyHash)
+		} else {
+			parallelProbeBatch(ht, rowIDs, batch, matches, numKeys, workers, keyHash)
+		}
+		results = append(results, ParallelProbeResult{Batch: batch, Matches: matches})
+	}
+	return results, nil
+}
+
+// parallelProbeMinRows is the minimum batch size below which ParallelProbe
+// runs single-threaded (goroutine spawn overhead exceeds the lookup savings).
+const parallelProbeMinRows = 32
+
+// parallelProbeBatch fans the batch's rows across `workers` goroutines, each
+// processing a disjoint [start,end) range with its own scratch buffer.
+func parallelProbeBatch(ht HashTableInterface, rowIDs [][]uint32, batch *Batch,
+	matches [][]uint32, numKeys, workers int,
+	keyHash func(batch *Batch, row int, dst []int64) (hash uint64, ok bool)) {
+	workers = max(1, min(workers, batch.Size))
+	chunk := (batch.Size + workers - 1) / workers
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		start := w * chunk
+		end := min(start+chunk, batch.Size)
+		if start >= end {
+			continue
+		}
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			dst := make([]int64, numKeys)
+			parallelProbeRange(ht, rowIDs, batch, matches, start, end, dst, keyHash)
+		}(start, end)
+	}
+	wg.Wait()
+}
+
+// parallelProbeRange processes rows [start,end) of batch, writing matched
+// build-row IDs into matches[r]. dst is a caller-provided scratch buffer of
+// length numKeys (reused across rows in this range).
+func parallelProbeRange(ht HashTableInterface, rowIDs [][]uint32, batch *Batch,
+	matches [][]uint32, start, end int, dst []int64,
+	keyHash func(batch *Batch, row int, dst []int64) (hash uint64, ok bool)) {
+	for r := start; r < end; r++ {
+		hash, ok := keyHash(batch, r, dst)
+		if !ok {
+			continue
+		}
+		idx, found, _ := ht.Lookup(dst, hash)
+		if found && idx < len(rowIDs) {
+			matches[r] = rowIDs[idx]
+		}
+	}
+}

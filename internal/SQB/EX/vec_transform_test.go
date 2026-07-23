@@ -7,8 +7,8 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
-	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 func TestTryVectorizePlan_MultiKeyJoin(t *testing.T) {
@@ -16,7 +16,7 @@ func TestTryVectorizePlan_MultiKeyJoin(t *testing.T) {
 	left := OP.NewSeqScan("t1")
 	right := OP.NewSeqScan("t2")
 	hj := OP.NewHashJoin(left, right, "t1", "t2", []string{"a", "b"}, []string{"a", "b"}, 0)
-	result := tryVectorizePlan(hj)
+	result := tryVectorizePlan(hj, nil)
 	if result == hj {
 		t.Fatal("expected vectorized plan for multi-key join, got original HashJoin")
 	}
@@ -31,7 +31,7 @@ func TestTryVectorizePlan_HashJoin(t *testing.T) {
 	// In real execution with a store, the result is a vectorized plan.
 	// In test mode (no store schema), resolveColumnIndex falls back to
 	// index 0, so transformation still succeeds.
-	result := tryVectorizePlan(buildHashJoinTree())
+	result := tryVectorizePlan(buildHashJoinTree(), nil)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -50,7 +50,7 @@ func buildHashJoinTree() DT.Operator {
 func TestTryVectorizePlan_IneligibleDistinct(t *testing.T) {
 	child := OP.NewSeqScan("t1")
 	dist := OP.NewDistinct(child)
-	result := tryVectorizePlan(dist)
+	result := tryVectorizePlan(dist, nil)
 	if result == dist {
 		t.Fatal("expected Distinct to be wrapped in BatchToRowAdapter")
 	}
@@ -58,7 +58,7 @@ func TestTryVectorizePlan_IneligibleDistinct(t *testing.T) {
 
 func TestTryVectorizePlan_SeqScanOnly(t *testing.T) {
 	ss := OP.NewSeqScan("t1")
-	result := tryVectorizePlan(ss)
+	result := tryVectorizePlan(ss, nil)
 	if result == ss {
 		// The original SeqScan is wrapped in a VectorizedSeqScan
 		t.Fatal("expected wrapped operator, not original SeqScan")
@@ -76,7 +76,7 @@ func TestTryVectorizePlan_SeqScanFilter(t *testing.T) {
 		Op:    LX.T_EQ,
 	}
 	filt := OP.NewFilter(ss, pred, nil)
-	result := tryVectorizePlan(filt)
+	result := tryVectorizePlan(filt, nil)
 	if result == filt {
 		t.Fatal("expected wrapped operator, not original Filter")
 	}
@@ -89,7 +89,7 @@ func TestTryVectorizePlan_SeqScanProject(t *testing.T) {
 	ss := OP.NewSeqScan("t1")
 	exprs := []PS.Expr{&PS.Ident{Name: "a"}}
 	proj := OP.NewProject(ss, exprs)
-	result := tryVectorizePlan(proj)
+	result := tryVectorizePlan(proj, nil)
 	if result == proj {
 		t.Fatal("expected wrapped operator, not original Project")
 	}
@@ -105,7 +105,7 @@ func TestTryVectorizePlan_Aggregate(t *testing.T) {
 		&PS.AggregateFunc{Name: "count", Arg: &PS.StarExpr{}},
 	}
 	agg := AG.NewAggregate(ss, groupCols, aggs)
-	result := tryVectorizePlan(agg)
+	result := tryVectorizePlan(agg, nil)
 	if result == agg {
 		t.Fatal("expected wrapped operator, not original Aggregate")
 	}
@@ -127,7 +127,7 @@ func TestTryVectorizePlan_FilterChainIneligible(t *testing.T) {
 	}
 	inner := OP.NewFilter(ss, pred, nil)
 	outer := OP.NewFilter(inner, pred, nil)
-	result := tryVectorizePlan(outer)
+	result := tryVectorizePlan(outer, nil)
 	// Should produce a vectorized chain, not the original.
 	if result == outer {
 		t.Fatal("expected vectorized Filter chain, got original")
@@ -135,7 +135,7 @@ func TestTryVectorizePlan_FilterChainIneligible(t *testing.T) {
 }
 
 func TestTransformOp_Nil(t *testing.T) {
-	if transformOp(nil) != nil {
+	if transformOp(nil, nil) != nil {
 		t.Fatal("transformOp(nil) should return nil")
 	}
 }
@@ -143,7 +143,7 @@ func TestTransformOp_Nil(t *testing.T) {
 func TestTransformOp_UnknownType(t *testing.T) {
 	ss := OP.NewSeqScan("t1")
 	dist := OP.NewDistinct(ss)
-	result := transformOp(dist)
+	result := transformOp(dist, nil)
 	if result == nil {
 		t.Fatal("transformOp(Distinct) should produce a vectorized operator")
 	}
@@ -155,7 +155,7 @@ func TestTransformOp_HashJoin(t *testing.T) {
 	ss1 := OP.NewSeqScan("t1")
 	ss2 := OP.NewSeqScan("t2")
 	hj := OP.NewHashJoin(ss1, ss2, "t1", "t2", []string{"a"}, []string{"b"}, 0)
-	result := transformOp(hj)
+	result := transformOp(hj, nil)
 	if result == nil {
 		// HashJoin transformation fails because SeqScan has no schema
 		// (NewSeqScan without store), which causes resolveColumnIndex
@@ -190,7 +190,7 @@ func TestTryVectorizePlan_DistinctAggregate(t *testing.T) {
 	t.Logf("af.Distinct = %v, af.Name = %q", af.Distinct, af.Name)
 	aggs := []PS.Expr{af}
 	agg := AG.NewAggregate(ss, nil, aggs)
-	result := tryVectorizePlan(agg)
+	result := tryVectorizePlan(agg, nil)
 	t.Logf("result == agg: %v, result type: %T", result == agg, result)
 	if result != agg {
 		t.Fatal("DISTINCT aggregate should not be vectorized, expected original root")
@@ -203,7 +203,7 @@ func TestTryVectorizePlan_GroupConcatAggregate(t *testing.T) {
 		&PS.AggregateFunc{Name: "group_concat", Arg: &PS.Ident{Name: "v"}},
 	}
 	agg := AG.NewAggregate(ss, nil, aggs)
-	result := tryVectorizePlan(agg)
+	result := tryVectorizePlan(agg, nil)
 	if result != agg {
 		t.Fatal("GROUP_CONCAT should not be vectorized, expected original root")
 	}
@@ -215,7 +215,7 @@ func TestTryVectorizePlan_SumAggregate(t *testing.T) {
 		&PS.AggregateFunc{Name: "sum", Arg: &PS.Ident{Name: "v"}},
 	}
 	agg := AG.NewAggregate(ss, nil, aggs)
-	result := tryVectorizePlan(agg)
+	result := tryVectorizePlan(agg, nil)
 	if result == agg {
 		t.Fatal("SUM aggregate should be vectorized")
 	}
@@ -230,7 +230,7 @@ func TestTryVectorizePlan_AvgAggregate(t *testing.T) {
 		&PS.AggregateFunc{Name: "avg", Arg: &PS.Ident{Name: "v"}},
 	}
 	agg := AG.NewAggregate(ss, nil, aggs)
-	result := tryVectorizePlan(agg)
+	result := tryVectorizePlan(agg, nil)
 	if result == agg {
 		// AVG is not vectorized
 	}
@@ -245,7 +245,7 @@ func TestTryVectorizePlan_MinAggregate(t *testing.T) {
 		&PS.AggregateFunc{Name: "min", Arg: &PS.Ident{Name: "v"}},
 	}
 	agg := AG.NewAggregate(ss, nil, aggs)
-	result := tryVectorizePlan(agg)
+	result := tryVectorizePlan(agg, nil)
 	if result == agg {
 		t.Fatal("MIN aggregate should be vectorized")
 	}
@@ -260,7 +260,7 @@ func TestTryVectorizePlan_MaxAggregate(t *testing.T) {
 		&PS.AggregateFunc{Name: "max", Arg: &PS.Ident{Name: "v"}},
 	}
 	agg := AG.NewAggregate(ss, nil, aggs)
-	result := tryVectorizePlan(agg)
+	result := tryVectorizePlan(agg, nil)
 	if result == agg {
 		t.Fatal("MAX aggregate should be vectorized")
 	}
@@ -278,7 +278,7 @@ func TestTryVectorizePlan_AdaptiveOpVectorizesInner(t *testing.T) {
 	inner := buildHashJoinTree()
 	aop := AD.NewAdaptiveOp(inner, "test-plan-hash")
 
-	result := tryVectorizePlan(aop)
+	result := tryVectorizePlan(aop, nil)
 	if result == aop {
 		t.Fatal("expected vectorized plan (AdaptiveOp must be bypassed), got the AdaptiveOp itself")
 	}
@@ -290,7 +290,7 @@ func TestTryVectorizePlan_AdaptiveOpVectorizesInner(t *testing.T) {
 
 // TestTryVectorizePlan_AdaptiveOp_Nil — guard against nil dereference.
 func TestTryVectorizePlan_AdaptiveOp_Nil(t *testing.T) {
-	if r := tryVectorizePlan(nil); r != nil {
+	if r := tryVectorizePlan(nil, nil); r != nil {
 		t.Fatalf("tryVectorizePlan(nil) = %v, want nil", r)
 	}
 }
@@ -299,7 +299,7 @@ func TestTryVectorizePlan_AdaptiveOp_Nil(t *testing.T) {
 func TestTransformRoot_AdaptiveOp(t *testing.T) {
 	inner := buildHashJoinTree()
 	aop := AD.NewAdaptiveOp(inner, "test-plan-hash")
-	bp := transformRoot(aop)
+	bp := transformRoot(aop, nil)
 	if bp == nil {
 		t.Fatal("transformRoot(AdaptiveOp) must yield a BatchProducer when inner is vectorizable")
 	}
@@ -311,7 +311,7 @@ func TestTransformRoot_AdaptiveOp(t *testing.T) {
 // TestTransformRoot_AdaptiveOp_NilInner — guards against nil dereference.
 func TestTransformRoot_AdaptiveOp_NilInner(t *testing.T) {
 	aop := AD.NewAdaptiveOp(nil, "nil-inner")
-	if got := transformRoot(aop); got != nil {
+	if got := transformRoot(aop, nil); got != nil {
 		t.Fatalf("transformRoot(AdaptiveOp{nil}) = %v, want nil", got)
 	}
 }

@@ -12,11 +12,25 @@ import (
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
+// parallelProbeThreshold is the minimum estimated build-side row count that
+// triggers the parallel probe phase (UT.ParallelProbe) on VectorizedHashJoin.
+// Below this, the streaming sequential probe is cheaper than spawning probe
+// workers. The pool alone (without WithParallelism) already enables the
+// parallel *build* phase via the existing totalRows >= 512 gate in
+// buildHashTable. REQ001645.
+const parallelProbeThreshold = 10000
+
 // tryVectorizePlan attempts to replace row-based operators with vectorized
 // equivalents. Returns the (possibly modified) root operator wrapped in
 // a BatchToRowAdapter. Falls back to the original root unchanged if
 // vectorization is not applicable.
-func tryVectorizePlan(root DT.Operator) DT.Operator {
+//
+// REQ001645: the planner is threaded through the transform chain so that
+// VectorizedHashJoin can be wired with the shared WorkerPool (parallel build)
+// and size-gated parallelism (parallel probe when the build side is large).
+// A nil planner (e.g. in unit tests) yields the historical behavior: no pool,
+// no parallelism.
+func tryVectorizePlan(root DT.Operator, p *Planner) DT.Operator {
 	// REQ001581: planner wraps plan.Root in *AD.AdaptiveOp (planner.go:526)
 	// so this call site almost always sees an AdaptiveOp. Without
 	// unwrapping, transformOp returns nil (no case for AdaptiveOp), and
@@ -31,7 +45,7 @@ func tryVectorizePlan(root DT.Operator) DT.Operator {
 	// REQ001587: when the inner plan starts with a SeqScan that has
 	// no store schema (in-memory tables without column metadata),
 	// transformOp returns nil, so the original AdaptiveOp is kept.
-	vec := transformRoot(root)
+	vec := transformRoot(root, p)
 	if vec != nil {
 		return UT.NewBatchToRowAdapter(vec)
 	}
@@ -43,20 +57,22 @@ func tryVectorizePlan(root DT.Operator) DT.Operator {
 // is what gets vectorized — the BatchProducer result replaces the
 // AdaptiveOp entirely because vec execution already supersedes ADQC.
 // REQ001587: always unwrap AdaptiveOp — no join gate.
-func transformRoot(root DT.Operator) UT.BatchProducer {
+func transformRoot(root DT.Operator, p *Planner) UT.BatchProducer {
 	if root == nil {
 		return nil
 	}
 	if aop, ok := root.(*AD.AdaptiveOp); ok {
-		return transformOp(aop.Inner)
+		return transformOp(aop.Inner, p)
 	}
-	return transformOp(root)
+	return transformOp(root, p)
 }
 
 // All operators are now vectorized or wrapped in ScalarBatchProducer.
 
 // transformOp transforms a row operator tree into a BatchProducer chain.
-func transformOp(op DT.Operator) UT.BatchProducer {
+// REQ001645: p (the *Planner) is threaded through so join transforms can
+// attach the worker pool and size-gated parallelism. p may be nil.
+func transformOp(op DT.Operator, p *Planner) UT.BatchProducer {
 	if op == nil {
 		return nil
 	}
@@ -83,11 +99,11 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		// REQ001617/REQ001626: pure batch IndexScan — no row intermediary.
 		return OP.NewBatchIndexScan(o)
 	case *OP.BitmapHeapScan:
-		return transformBitmapHeapScan(o)
+		return transformBitmapHeapScan(o, p)
 	case *OP.IndexOnlyScan:
 		return OP.NewBatchIndexOnlyScan(o)
 	case *OP.Filter:
-		child := transformOp(o.Child())
+		child := transformOp(o.Child(), p)
 		if child == nil {
 			return nil
 		}
@@ -99,7 +115,7 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		}
 		return OP.NewVectorizedFilter(child, o.Predicate())
 	case *OP.Project:
-		child := transformOp(o.Child())
+		child := transformOp(o.Child(), p)
 		if child == nil {
 			return nil
 		}
@@ -117,7 +133,7 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		}
 		return vp
 	case *AG.Aggregate:
-		child := transformOp(o.Child())
+		child := transformOp(o.Child(), p)
 		if child == nil {
 			return nil
 		}
@@ -127,7 +143,7 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		}
 		return result
 	case *AG.HashAggregate:
-		child := transformOp(o.Child())
+		child := transformOp(o.Child(), p)
 		if child == nil {
 			return nil
 		}
@@ -137,38 +153,38 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 		}
 		return result
 	case *OP.HashJoin:
-		return transformHashJoin(o)
+		return transformHashJoin(o, p)
 	case *OP.NestedLoopJoin:
-		return transformNestedLoopJoin(o)
+		return transformNestedLoopJoin(o, p)
 	case *OP.MergeJoin:
-		return transformMergeJoin(o)
+		return transformMergeJoin(o, p)
 	case *OP.HashCrossJoin:
-		return transformHashCrossJoin(o)
+		return transformHashCrossJoin(o, p)
 	case *OP.Distinct:
-		return transformDistinct(o)
+		return transformDistinct(o, p)
 	case *OP.CompoundOp:
-		return transformCompoundOp(o)
+		return transformCompoundOp(o, p)
 	case *OP.Sort:
-		child := transformOp(o.Child())
+		child := transformOp(o.Child(), p)
 		if child == nil {
 			return nil
 		}
 		return OP.NewVectorizedSort(child, o.Keys())
 	case *OP.TopNSort:
-		child := transformOp(o.Child())
+		child := transformOp(o.Child(), p)
 		if child == nil {
 			return nil
 		}
 		// REQ001640: convert row-based TopNSort to vectorized TopN sort.
 		return OP.NewVectorizedTopNSort(child, o.Keys(), o.Limit())
 	case *OP.Limit:
-		child := transformOp(o.Child())
+		child := transformOp(o.Child(), p)
 		if child == nil {
 			return nil
 		}
 		return OP.NewVectorizedLimit(child, o.Limit())
 	case *AG.WindowOperator:
-		child := transformOp(o.Input())
+		child := transformOp(o.Input(), p)
 		if child == nil {
 			return nil
 		}
@@ -180,14 +196,15 @@ func transformOp(op DT.Operator) UT.BatchProducer {
 // transformHashJoin converts a row HashJoin to VectorizedHashJoin.
 // Supports single or multi-column equi-join keys (REQ001618).
 // Supports outer join kinds (REQ001619).
-// Returns nil if transformation fails.
-func transformHashJoin(h *OP.HashJoin) UT.BatchProducer {
+// REQ001645: wires the shared WorkerPool and size-gated parallel probe when
+// the planner is available. Returns nil if transformation fails.
+func transformHashJoin(h *OP.HashJoin, p *Planner) UT.BatchProducer {
 	// Transform children: left = probe, right = build
-	left := transformOp(h.LeftChild())
+	left := transformOp(h.LeftChild(), p)
 	if left == nil {
 		return nil
 	}
-	right := transformOp(h.RightChild())
+	right := transformOp(h.RightChild(), p)
 	if right == nil {
 		return nil
 	}
@@ -222,12 +239,35 @@ func transformHashJoin(h *OP.HashJoin) UT.BatchProducer {
 
 	// REQ001619: forward join kind.
 	kind := h.Kind()
-	
+
 	// VectorizedHashJoin expects build (right) side first, then probe (left).
+	var vjh *OP.VectorizedHashJoin
 	if kind == OP.JoinKindInner {
-		return OP.NewVectorizedHashJoin(right, left, buildIdxs, probeIdxs)
+		vjh = OP.NewVectorizedHashJoin(right, left, buildIdxs, probeIdxs)
+	} else {
+		vjh = OP.NewVectorizedHashJoinWithKind(right, left, buildIdxs, probeIdxs, kind)
 	}
-	return OP.NewVectorizedHashJoinWithKind(right, left, buildIdxs, probeIdxs, kind)
+
+	// REQ001645: planner wiring. Gate BOTH the parallel build (pool) and the
+	// parallel probe (parallelism > 1) on a large build-side estimate. The
+	// parallel build path (buildHashTableParallel) is only justified for
+	// sizable builds, and gating it here keeps the medium-sized joins that
+	// dominate SLT on the proven sequential build+probe path. Only a bare
+	// SeqScan build child exposes a catalog row count; Filter/Project-wrapped
+	// scans and other shapes stay sequential (a known limitation, safe
+	// default). A nil planner (unit tests) leaves the join unwired, matching
+	// the historical behavior.
+	if p != nil {
+		if pool, ok := p.pool.(*UT.WorkerPool); ok && pool != nil {
+			if ss, ok := h.RightChild().(*OP.SeqScan); ok {
+				if p.GetTableRowCount(ss.Table()) >= parallelProbeThreshold {
+					vjh.WithPool(pool)
+					vjh.WithParallelism(pool.Workers())
+				}
+			}
+		}
+	}
+	return vjh
 }
 
 // transformAggregate converts a row Aggregate to VectorizedHashAggregate.
@@ -416,12 +456,12 @@ func exprName(e PS.Expr) string {
 // transformNestedLoopJoin converts a row NestedLoopJoin to
 // VectorizedNestedLoopJoin. Both children must be eligible.
 // INNER and CROSS joins are supported.
-func transformNestedLoopJoin(nlj *OP.NestedLoopJoin) UT.BatchProducer {
-	left := transformOp(nlj.LeftChild())
+func transformNestedLoopJoin(nlj *OP.NestedLoopJoin, p *Planner) UT.BatchProducer {
+	left := transformOp(nlj.LeftChild(), p)
 	if left == nil {
 		return nil
 	}
-	right := transformOp(nlj.RightChild())
+	right := transformOp(nlj.RightChild(), p)
 	if right == nil {
 		return nil
 	}
@@ -431,12 +471,12 @@ func transformNestedLoopJoin(nlj *OP.NestedLoopJoin) UT.BatchProducer {
 // transformMergeJoin converts a row MergeJoin to VectorizedMergeJoin.
 // REQ001615/REQ001625: pure batch sort-merge — no row intermediary.
 // Reads batches from both pre-sorted sides and merges them directly.
-func transformMergeJoin(mj *OP.MergeJoin) UT.BatchProducer {
-	left := transformOp(mj.LeftChild())
+func transformMergeJoin(mj *OP.MergeJoin, p *Planner) UT.BatchProducer {
+	left := transformOp(mj.LeftChild(), p)
 	if left == nil {
 		return nil
 	}
-	right := transformOp(mj.RightChild())
+	right := transformOp(mj.RightChild(), p)
 	if right == nil {
 		return nil
 	}
@@ -472,7 +512,7 @@ func transformMergeJoin(mj *OP.MergeJoin) UT.BatchProducer {
 
 // transformBitmapHeapScan converts a row BitmapHeapScan to a pure
 // batch implementation. REQ001616/REQ001627.
-func transformBitmapHeapScan(b *OP.BitmapHeapScan) UT.BatchProducer {
+func transformBitmapHeapScan(b *OP.BitmapHeapScan, p *Planner) UT.BatchProducer {
 	// Transform each child IndexScan to BatchProducer.
 	children := b.IndexScans()
 	batchChildren := make([]UT.BatchProducer, 0, len(children))
@@ -480,7 +520,7 @@ func transformBitmapHeapScan(b *OP.BitmapHeapScan) UT.BatchProducer {
 		if child == nil {
 			continue
 		}
-		bp := transformOp(child)
+		bp := transformOp(child, p)
 		if bp == nil {
 			return nil
 		}
@@ -494,12 +534,12 @@ func transformBitmapHeapScan(b *OP.BitmapHeapScan) UT.BatchProducer {
 
 // transformHashCrossJoin converts a row HashCrossJoin to a pure batch
 // hash cross join. REQ001628: eliminates the row-based wrapper.
-func transformHashCrossJoin(hcj *OP.HashCrossJoin) UT.BatchProducer {
-	left := transformOp(hcj.LeftChild())
+func transformHashCrossJoin(hcj *OP.HashCrossJoin, p *Planner) UT.BatchProducer {
+	left := transformOp(hcj.LeftChild(), p)
 	if left == nil {
 		return nil
 	}
-	right := transformOp(hcj.RightChild())
+	right := transformOp(hcj.RightChild(), p)
 	if right == nil {
 		return nil
 	}
@@ -516,8 +556,8 @@ func transformHashCrossJoin(hcj *OP.HashCrossJoin) UT.BatchProducer {
 }
 
 // transformDistinct converts a row Distinct to VectorizedDistinct.
-func transformDistinct(d *OP.Distinct) UT.BatchProducer {
-	child := transformOp(d.Child())
+func transformDistinct(d *OP.Distinct, p *Planner) UT.BatchProducer {
+	child := transformOp(d.Child(), p)
 	if child == nil {
 		return nil
 	}
@@ -527,12 +567,12 @@ func transformDistinct(d *OP.Distinct) UT.BatchProducer {
 
 // transformCompoundOp converts a row CompoundOp to VectorizedCompoundOp.
 // Supports UNION ALL, UNION, EXCEPT, INTERSECT. REQ001442.
-func transformCompoundOp(co *OP.CompoundOp) UT.BatchProducer {
-	left := transformOp(co.LeftChild())
+func transformCompoundOp(co *OP.CompoundOp, p *Planner) UT.BatchProducer {
+	left := transformOp(co.LeftChild(), p)
 	if left == nil {
 		return nil
 	}
-	right := transformOp(co.RightChild())
+	right := transformOp(co.RightChild(), p)
 	if right == nil {
 		return nil
 	}

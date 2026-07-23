@@ -19,7 +19,7 @@ func makeJoinBuildBatch(keys, vals []int64) *UT.Batch {
 	b.Cols[0].Data.Ints = make([]int64, n)
 	b.Cols[1].Type = LX.T_INT_KW
 	b.Cols[1].Data.Ints = make([]int64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		b.Cols[0].Data.Ints[i] = keys[i]
 		b.Cols[1].Data.Ints[i] = vals[i]
 	}
@@ -34,7 +34,7 @@ func makeJoinProbeBatch(keys []int64) *UT.Batch {
 	b.SetColumnName(0, "pk")
 	b.Cols[0].Type = LX.T_INT_KW
 	b.Cols[0].Data.Ints = make([]int64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		b.Cols[0].Data.Ints[i] = keys[i]
 	}
 	b.Size = n
@@ -574,5 +574,362 @@ func TestVectorizedNLJ_VectorizedPredicate(t *testing.T) {
 	}
 	if batch2 != nil {
 		t.Fatal("expected nil (EOF), got batch")
+	}
+}
+
+// --- REQ001645 parallel probe tests ---
+
+// chunkedBuildProducer wraps keys/vals into BatchSize-row build batches.
+func chunkedBuildProducer(keys, vals []int64) *testBatchProducer {
+	const sz = UT.BatchSize
+	var batches []*UT.Batch
+	for i := 0; i < len(keys); i += sz {
+		end := min(i+sz, len(keys))
+		batches = append(batches, makeJoinBuildBatch(keys[i:end], vals[i:end]))
+	}
+	return &testBatchProducer{batches: batches}
+}
+
+// chunkedProbeProducer wraps keys into BatchSize-row probe batches.
+func chunkedProbeProducer(keys []int64) *testBatchProducer {
+	const sz = UT.BatchSize
+	var batches []*UT.Batch
+	for i := 0; i < len(keys); i += sz {
+		end := min(i+sz, len(keys))
+		batches = append(batches, makeJoinProbeBatch(keys[i:end]))
+	}
+	return &testBatchProducer{batches: batches}
+}
+
+// drainVHJInner collects all (k, v, pk) rows from a VectorizedHashJoin in
+// emission order. For inner joins only (no NULLs).
+func drainVHJInner(t *testing.T, j *VectorizedHashJoin) [][3]int64 {
+	t.Helper()
+	var out [][3]int64
+	ctx := context.Background()
+	for {
+		batch, err := j.NextBatch(ctx)
+		if err != nil {
+			t.Fatalf("NextBatch: %v", err)
+		}
+		if batch == nil {
+			break
+		}
+		for i := 0; i < batch.Size; i++ {
+			k := UT.BatchValueAt(batch.Cols[0], i).(int64)
+			v := UT.BatchValueAt(batch.Cols[1], i).(int64)
+			pk := UT.BatchValueAt(batch.Cols[2], i).(int64)
+			out = append(out, [3]int64{k, v, pk})
+		}
+		batch.Put()
+	}
+	return out
+}
+
+// TestVectorizedHashJoin_ParallelBuild_MatchesSequential exercises the
+// pool-driven parallel BUILD path (buildHashTableParallel, REQ001622) — which
+// is otherwise dormant — and verifies it produces the same matched rows as the
+// sequential build. WithPool is set but WithParallelism is NOT, so the probe
+// stays sequential and only the build parallelizes. REQ001645 wiring safety.
+func TestVectorizedHashJoin_ParallelBuild_MatchesSequential(t *testing.T) {
+	const buildN = 1024 // >= 512 triggers buildHashTableParallel
+	buildKeys := make([]int64, buildN)
+	buildVals := make([]int64, buildN)
+	for i := range buildKeys {
+		// Duplicate build keys: each key 0..511 appears twice. This stresses
+		// the parallel-build merge logic, which must collect both build rows
+		// into the same hash-table slot's rowIDs across worker chunks.
+		buildKeys[i] = int64(i % (buildN / 2))
+		buildVals[i] = int64(i * 10)
+	}
+	// Probe: matches (0, 7, 256 — each matches 2 build rows) and non-matches.
+	probeKeys := []int64{0, 7, 256, 5000, 999}
+
+	seq := drainVHJInner(t, NewVectorizedHashJoin(
+		chunkedBuildProducer(buildKeys, buildVals),
+		chunkedProbeProducer(probeKeys),
+		[]int{0}, []int{0}))
+
+	pool := UT.NewWorkerPool(4)
+	defer pool.Close()
+	parJ := NewVectorizedHashJoin(
+		chunkedBuildProducer(buildKeys, buildVals),
+		chunkedProbeProducer(probeKeys),
+		[]int{0}, []int{0})
+	parJ.WithPool(pool) // no WithParallelism → sequential probe, parallel build
+	par := drainVHJInner(t, parJ)
+
+	if len(seq) != len(par) {
+		t.Fatalf("row count: seq=%d par=%d", len(seq), len(par))
+	}
+	// Build a set of expected (k,v,pk) triples from the sequential run and
+	// verify every parallel row appears in it. Emission order within a probe
+	// row follows hash-table slot order, which can differ between the seq and
+	// parallel merge paths, so compare as multisets.
+	want := make(map[[3]int64]int, len(seq))
+	for _, r := range seq {
+		want[r]++
+	}
+	for _, r := range par {
+		want[r]--
+		if want[r] < 0 {
+			t.Errorf("parallel produced extra row %v not in sequential", r)
+		}
+	}
+	for r, c := range want {
+		if c != 0 {
+			t.Errorf("sequential row %v missing from parallel (deficit %d)", r, c)
+		}
+	}
+}
+
+// TestVectorizedHashJoin_ParallelProbe_InnerEquiJoin verifies the parallel
+// probe path produces the same matched rows as the sequential path. REQ001645.
+func TestVectorizedHashJoin_ParallelProbe_InnerEquiJoin(t *testing.T) {
+	build := &testBatchProducer{batches: []*UT.Batch{makeJoinBuildBatch(
+		[]int64{1, 2, 3},
+		[]int64{10, 20, 30},
+	)}}
+	probe := &testBatchProducer{batches: []*UT.Batch{makeJoinProbeBatch([]int64{2, 3, 4})}}
+
+	j := NewVectorizedHashJoin(build, probe, []int{0}, []int{0}).WithParallelism(4)
+	defer j.Close()
+
+	batch, err := j.NextBatch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if batch == nil {
+		t.Fatal("expected batch, got nil")
+	}
+	if batch.Size != 2 {
+		t.Fatalf("expected 2 rows, got %d", batch.Size)
+	}
+	results := make(map[int64]int64)
+	for i := 0; i < batch.Size; i++ {
+		k := UT.BatchValueAt(batch.Cols[0], i).(int64)
+		v := UT.BatchValueAt(batch.Cols[1], i).(int64)
+		results[k] = v
+	}
+	if results[2] != 20 || results[3] != 30 {
+		t.Errorf("expected {2:20, 3:30}, got %v", results)
+	}
+	batch.Put()
+
+	if batch2, _ := j.NextBatch(context.Background()); batch2 != nil {
+		t.Fatal("expected EOF after matched phase")
+	}
+}
+
+// TestVectorizedHashJoin_ParallelProbe_MatchesSequential verifies the parallel
+// probe emitter (parallelism=8) yields a byte-identical row sequence to the
+// sequential probe path over a large, multi-batch, multi-match dataset.
+func TestVectorizedHashJoin_ParallelProbe_MatchesSequential(t *testing.T) {
+	const n = 2048
+	buildKeys := make([]int64, n)
+	buildVals := make([]int64, n)
+	for i := range buildKeys {
+		buildKeys[i] = int64(i % 512) // 4 duplicates per key
+		buildVals[i] = int64(i)
+	}
+	probeKeys := make([]int64, n)
+	for i := range probeKeys {
+		probeKeys[i] = int64((i * 7) % 600) // some misses (512..599)
+	}
+
+	// Sequential.
+	seqJ := NewVectorizedHashJoin(chunkedBuildProducer(buildKeys, buildVals),
+		chunkedProbeProducer(probeKeys), []int{0}, []int{0})
+	seq := drainVHJInner(t, seqJ)
+	seqJ.Close()
+
+	// Parallel.
+	parJ := NewVectorizedHashJoin(chunkedBuildProducer(buildKeys, buildVals),
+		chunkedProbeProducer(probeKeys), []int{0}, []int{0}).WithParallelism(8)
+	par := drainVHJInner(t, parJ)
+	parJ.Close()
+
+	if len(seq) != len(par) {
+		t.Fatalf("row count: seq=%d par=%d", len(seq), len(par))
+	}
+	for i := range seq {
+		if seq[i] != par[i] {
+			t.Errorf("row %d: seq=%v par=%v", i, seq[i], par[i])
+		}
+	}
+}
+
+// TestVectorizedHashJoin_ParallelProbe_MultiMatch verifies a probe key matching
+// multiple build rows emits all pairs under the parallel path. REQ001645.
+func TestVectorizedHashJoin_ParallelProbe_MultiMatch(t *testing.T) {
+	build := &testBatchProducer{batches: []*UT.Batch{makeJoinBuildBatch(
+		[]int64{1, 1, 1, 2},
+		[]int64{10, 20, 30, 40},
+	)}}
+	probe := &testBatchProducer{batches: []*UT.Batch{makeJoinProbeBatch([]int64{1})}}
+
+	j := NewVectorizedHashJoin(build, probe, []int{0}, []int{0}).WithParallelism(4)
+	defer j.Close()
+
+	batch, err := j.NextBatch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if batch == nil {
+		t.Fatal("expected batch, got nil")
+	}
+	// key 1 matches 3 build rows.
+	if batch.Size != 3 {
+		t.Fatalf("expected 3 matched rows, got %d", batch.Size)
+	}
+	batch.Put()
+}
+
+// TestVectorizedHashJoin_ParallelProbe_NoMatch verifies the parallel path
+// returns nil when no probe keys match.
+func TestVectorizedHashJoin_ParallelProbe_NoMatch(t *testing.T) {
+	build := &testBatchProducer{batches: []*UT.Batch{makeJoinBuildBatch(
+		[]int64{1, 2, 3},
+		[]int64{10, 20, 30},
+	)}}
+	probe := &testBatchProducer{batches: []*UT.Batch{makeJoinProbeBatch([]int64{4, 5, 6})}}
+
+	j := NewVectorizedHashJoin(build, probe, []int{0}, []int{0}).WithParallelism(4)
+	defer j.Close()
+
+	batch, err := j.NextBatch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if batch != nil {
+		t.Fatalf("expected nil (no matches), got batch with %d rows", batch.Size)
+	}
+}
+
+// TestVectorizedHashJoin_ParallelProbe_LeftOuter verifies LEFT outer join
+// correctness under the parallel probe path: matched rows then unmatched build
+// rows. REQ001645.
+func TestVectorizedHashJoin_ParallelProbe_LeftOuter(t *testing.T) {
+	build := &testBatchProducer{batches: []*UT.Batch{makeJoinBuildBatch(
+		[]int64{1, 2, 3},
+		[]int64{10, 20, 30},
+	)}}
+	probe := &testBatchProducer{batches: []*UT.Batch{makeJoinProbeBatch([]int64{2})}}
+
+	j := NewVectorizedHashJoinWithKind(build, probe, []int{0}, []int{0}, JoinKindLeft).WithParallelism(4)
+	defer j.Close()
+
+	ctx := context.Background()
+	// First batch: 1 matched row (2,20,2).
+	batch, err := j.NextBatch(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if batch == nil || batch.Size != 1 {
+		t.Fatalf("expected 1 matched row, got %v", batch)
+	}
+	k := UT.BatchValueAt(batch.Cols[0], 0).(int64)
+	pk := UT.BatchValueAt(batch.Cols[2], 0).(int64)
+	if k != 2 || pk != 2 {
+		t.Errorf("expected (k=2,pk=2), got (k=%d,pk=%d)", k, pk)
+	}
+	batch.Put()
+
+	// Next batch: 2 unmatched build rows (1,3) with NULL probe.
+	batch2, err := j.NextBatch(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if batch2 == nil || batch2.Size != 2 {
+		t.Fatalf("expected 2 unmatched build rows, got %v", batch2)
+	}
+	batch2.Put()
+
+	if batch3, _ := j.NextBatch(ctx); batch3 != nil {
+		batch3.Put()
+		t.Fatal("expected EOF after unmatched build phase")
+	}
+}
+
+// TestVectorizedHashJoin_ParallelProbe_RightOuter verifies RIGHT outer join
+// correctness under the parallel probe path: matched rows then unmatched probe
+// rows. REQ001645.
+func TestVectorizedHashJoin_ParallelProbe_RightOuter(t *testing.T) {
+	build := &testBatchProducer{batches: []*UT.Batch{makeJoinBuildBatch(
+		[]int64{1, 3},
+		[]int64{10, 30},
+	)}}
+	probe := &testBatchProducer{batches: []*UT.Batch{makeJoinProbeBatch([]int64{2, 3})}}
+
+	j := NewVectorizedHashJoinWithKind(build, probe, []int{0}, []int{0}, JoinKindRight).WithParallelism(4)
+	defer j.Close()
+
+	ctx := context.Background()
+	// First batch: 1 matched row (3,30,3).
+	batch, err := j.NextBatch(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if batch == nil || batch.Size != 1 {
+		t.Fatalf("expected 1 matched row, got %v", batch)
+	}
+	batch.Put()
+
+	// Next batch: 1 unmatched probe row (pk=2) with NULL build side.
+	batch2, err := j.NextBatch(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if batch2 == nil || batch2.Size != 1 {
+		t.Fatalf("expected 1 unmatched probe row, got %v", batch2)
+	}
+	batch2.Put()
+
+	if batch3, _ := j.NextBatch(ctx); batch3 != nil {
+		batch3.Put()
+		t.Fatal("expected EOF after unmatched probe phase")
+	}
+}
+
+// BenchmarkParallelHashJoin_LargeBuild measures parallel-probe speedup on a
+// 100K-row build side (REQ001645). parallel=1 uses the sequential probePhase;
+// parallel=N uses emitParallelMatched (UT.ParallelProbe). Build is identical
+// across sub-benchmarks (no pool) so only probe parallelism differs.
+func BenchmarkParallelHashJoin_LargeBuild(b *testing.B) {
+	const buildN = 100000
+	buildKeys := make([]int64, buildN)
+	buildVals := make([]int64, buildN)
+	for i := range buildKeys {
+		buildKeys[i] = int64(i)
+		buildVals[i] = int64(i * 10)
+	}
+	probeKeys := make([]int64, buildN)
+	for i := range probeKeys {
+		probeKeys[i] = int64(i) // 1:1 match → 100K lookups
+	}
+
+	for _, par := range []int{1, 8} {
+		b.Run(fmt.Sprintf("parallel=%d", par), func(b *testing.B) {
+			ctx := context.Background()
+			for i := 0; i < b.N; i++ {
+				build := chunkedBuildProducer(buildKeys, buildVals)
+				probe := chunkedProbeProducer(probeKeys)
+				j := NewVectorizedHashJoin(build, probe, []int{0}, []int{0})
+				if par > 1 {
+					j.WithParallelism(par)
+				}
+				for {
+					batch, err := j.NextBatch(ctx)
+					if err != nil {
+						b.Fatalf("NextBatch: %v", err)
+					}
+					if batch == nil {
+						break
+					}
+					batch.Put()
+				}
+				j.Close()
+			}
+		})
 	}
 }

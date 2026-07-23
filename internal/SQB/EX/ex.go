@@ -1229,7 +1229,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(plan.Root, execCtx)
 	// Attempt vectorized execution for eligible query plans.
-	plan.Root = tryVectorizePlan(plan.Root)
+	plan.Root = tryVectorizePlan(plan.Root, e.planner)
 	defer plan.Root.Close()
 	row, err := plan.Root.Next(ctx)
 	if err != nil {
@@ -1399,7 +1399,7 @@ func (e *Executor) CompilePlan(sql string) (*CompiledPlan, error) {
 		ResolvePlanSlots(plan.Root)
 		// REQ001614: tryVectorizePlan always succeeds — falls back to
 		// ScalarBatchProducer wrapping when vectorization is not applicable.
-		plan.Root = tryVectorizePlan(plan.Root)
+		plan.Root = tryVectorizePlan(plan.Root, e.planner)
 		return &CompiledPlan{stmt: stmt, plan: plan}, nil
 
 	default:

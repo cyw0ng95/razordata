@@ -507,7 +507,7 @@ func BenchmarkSelect1_VecPath(b *testing.B) {
 				b.Fatalf("NewSeqScanWithStore: %v", err)
 			}
 			// Wrap in vectorized path via tryVectorizePlan
-			root := tryVectorizePlan(scan)
+			root := tryVectorizePlan(scan, nil)
 			var count int
 			for {
 				_, err := root.Next(ctx)
