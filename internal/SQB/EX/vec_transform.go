@@ -152,6 +152,9 @@ func transformOp(op DT.Operator, p *Planner) UT.BatchProducer {
 			return nil
 		}
 		return result
+	case *AG.ParallelHashAggregate:
+		// REQ001982: already has NextBatch — return as-is.
+		return o
 	case *OP.HashJoin:
 		return transformHashJoin(o, p)
 	case *OP.NestedLoopJoin:

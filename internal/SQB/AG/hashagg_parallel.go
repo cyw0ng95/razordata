@@ -7,6 +7,7 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -64,6 +65,85 @@ func (a *ParallelHashAggregate) Close() error {
 	a.buf = nil
 	a.pos = 0
 	return a.child.Close()
+}
+
+// NextBatch drains the materialized result buffer in batches of BatchSize.
+// On first call, triggers materialization if not already started.
+// REQ001982.
+func (a *ParallelHashAggregate) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if !a.started {
+		a.startMu.Lock()
+		if !a.started {
+			a.started = true
+			a.startMu.Unlock()
+			if err := a.materialize(ctx); err != nil {
+				return nil, err
+			}
+		} else {
+			a.startMu.Unlock()
+		}
+	}
+	remaining := len(a.buf) - a.pos
+	if remaining <= 0 {
+		return nil, nil
+	}
+	batchSize := remaining
+	if batchSize > UT.BatchSize {
+		batchSize = UT.BatchSize
+	}
+	batch := rowsToBatchAG(a.buf[a.pos : a.pos+batchSize])
+	a.pos += batchSize
+	return batch, nil
+}
+
+// rowsToBatchAG converts a slice of Rows to a columnar Batch.
+// REQ001982.
+func rowsToBatchAG(rows []Row) *UT.Batch {
+	if len(rows) == 0 {
+		return nil
+	}
+	first := rows[0]
+	nCols := len(first.Cols)
+	if nCols == 0 {
+		nCols = len(first.Data)
+	}
+	batch := UT.GetBatch(nCols)
+	for i := 0; i < nCols; i++ {
+		if i < len(first.Cols) {
+			batch.SetColumnName(i, first.Cols[i])
+		}
+	}
+	for _, row := range rows {
+		for i := 0; i < nCols; i++ {
+			var val any
+			isNull := true
+			if i < len(row.Data) {
+				v := row.Data[i]
+				if v.Kind != KindNull {
+					isNull = false
+					val = v.ToAny()
+				}
+			}
+			var typ LX.TokenType
+			if i < len(row.Types) {
+				typ = row.Types[i]
+			} else if i < len(row.Data) {
+				switch row.Data[i].Kind {
+				case KindInt:
+					typ = LX.T_BIGINT
+				case KindFloat:
+					typ = LX.T_FLOAT_KW
+				case KindText, KindBlob:
+					typ = LX.T_TEXT
+				case KindBool:
+					typ = LX.T_BOOL
+				}
+			}
+			batch.AppendRow(i, typ, val, isNull)
+		}
+		batch.AdvanceSize()
+	}
+	return batch
 }
 
 // partialAgg holds a worker's partial aggregation state.
