@@ -63,6 +63,25 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	// from the SELECT list and rewrite the WHERE expression.
 	whereExpr := s.Where
 	if aliasMap := buildSelectAliasMap(s.Cols); aliasMap != nil && s.Where != nil {
+		// REQ001710: filter out aliases that conflict with table column
+		// names. SQLite resolves aliases in WHERE only when the alias
+		// does not match an existing column name in the FROM table.
+		if s.From != "" {
+			DT.TablesMu.RLock()
+			cols := DT.Schemas[s.From]
+			DT.TablesMu.RUnlock()
+			if len(cols) > 0 {
+				colSet := make(map[string]bool, len(cols))
+				for _, c := range cols {
+					colSet[strings.ToLower(c)] = true
+				}
+				for alias := range aliasMap {
+					if colSet[strings.ToLower(alias)] {
+						delete(aliasMap, alias)
+					}
+				}
+			}
+		}
 		whereExpr = resolveAliases(s.Where, aliasMap)
 	}
 
