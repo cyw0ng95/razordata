@@ -141,15 +141,31 @@ func NewHashJoin(left, right pl.Operator, leftTbl, rightTbl string, leftKeys, ri
 		p <<= 1
 	}
 
+	// REQ001709: pre-size leftRows to avoid repeated growslice
+	// allocations (the dominant ~670 MB flat alloc in select4).
+	// The initial capacity is chosen based on the number of buckets
+	// to amortize growth across partitions — typical joins have a
+	// few hundred to a few thousand rows per side.
+	leftRowsCap := p * 32
+	if leftRowsCap < 64 {
+		leftRowsCap = 64
+	}
 	return &HashJoin{
-		left: left, right: right,
-		leftKeys: leftKeys, rightKeys: rightKeys,
-		leftTbl: leftTbl, rightTbl: rightTbl,
+		left:       left, right: right,
+		leftKeys:   leftKeys, rightKeys: rightKeys,
+		leftTbl:    leftTbl, rightTbl: rightTbl,
 		partitions: p,
 		// REQ000841: pre-allocate key buffer to max key width.
 		keyBuf: make([]pl.Value, max(len(leftKeys), len(rightKeys))),
 		// REQ000865: pre-allocate bucket slices for the build phase.
 		buckets: make([]hashBucket, p),
+		// REQ001709: pre-size leftRows backing array upfront so
+		// the first append doesn't start from cap=0 and grow by
+		// doubling (which costs 1 alloc per row for small N, or
+		// 1 alloc per ~2^(k-1) rows for larger N).  A single
+		// allocation of leftRowsCap covers the vast majority of
+		// real-world join sizes without wasting memory.
+		leftRows: make([]pl.Row, 0, leftRowsCap),
 	}
 }
 
