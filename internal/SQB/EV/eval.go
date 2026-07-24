@@ -1056,8 +1056,11 @@ func EvalInValue(e *PS.InExpr, row *Row, params []any) (Value, error) {
 	if target.Kind == KindNull {
 		return DT.NullValue(), nil
 	}
-	// Hash-set path for 4+ items.
-	if len(e.List) >= 4 {
+	// Hash-set path for 4+ items. Only use when the list contains
+	// only literal values (no computed expressions that depend on
+	// row data), because the hash set is cached by *PS.InExpr pointer
+	// and built once for the first row. REQ001711.
+	if len(e.List) >= 4 && isAllLiteralList(e.List) {
 		return EvalInHashValue(e, target, row, params)
 	}
 	// Linear-scan path for short lists.
@@ -1092,6 +1095,36 @@ type InHashCache struct {
 }
 
 var InHashCacheMap = map[*PS.InExpr]*InHashCache{}
+
+// isAllLiteralList reports whether every item in the IN list is a
+// literal value (no column references or computed expressions). The
+// hash-set cache in EvalInHash builds the set once per *PS.InExpr
+// pointer; for row-dependent expressions the cached values would be
+// wrong for every row after the first. REQ001711.
+func isAllLiteralList(items []PS.Expr) bool {
+	for _, item := range items {
+		if !isLiteralItem(item) {
+			return false
+		}
+	}
+	return true
+}
+
+// isLiteralItem reports whether expr is a simple literal or a
+// constant expression (no column references). Differs from
+// isLiteralNode in OP by also allowing UnaryExpr wrapping a
+// literal (e.g. `-42`).
+func isLiteralItem(e PS.Expr) bool {
+	switch v := e.(type) {
+	case *PS.NumberLiteral, *PS.FloatLiteral, *PS.StringLiteral, *PS.BoolLiteral, *PS.NullLiteral:
+		return true
+	case *PS.UnaryExpr:
+		return isLiteralItem(v.Operand)
+	case *PS.BinaryExpr:
+		return isLiteralItem(v.Left) && isLiteralItem(v.Right)
+	}
+	return false
+}
 
 // evalInHashValue is the Value-typed variant of evalInHash (REQ000776).
 // Converts target to any for probe; the hash set is shared via

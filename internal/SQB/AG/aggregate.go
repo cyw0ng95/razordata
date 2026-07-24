@@ -22,6 +22,11 @@ type Aggregate struct {
 	child      Operator
 	groupCols  []PS.Expr
 	aggs       []PS.Expr
+	// REQ001711: constant non-aggregate SELECT columns that must be
+	// emitted alongside the aggregates (e.g. `SELECT 62, COUNT(*) FROM t`
+	// — 62 is a constant projection that does not change the group
+	// partition but must appear in every output row).
+	constCols  []PS.Expr
 	buf        []Row
 	pos        int
 	params     []any
@@ -35,6 +40,13 @@ type Aggregate struct {
 func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
 	return &Aggregate{child: child, groupCols: groupCols, aggs: aggs, scalar: len(groupCols) == 0}
 }
+
+// SetConstCols attaches constant projections that must appear in
+// every output row without affecting the group partition. REQ001711.
+func (a *Aggregate) SetConstCols(cols []PS.Expr) { a.constCols = cols }
+
+// ConstCols returns the constant projections attached via SetConstCols.
+func (a *Aggregate) ConstCols() []PS.Expr { return a.constCols }
 
 // Child returns the input operator feeding this aggregate.
 func (a *Aggregate) Child() Operator { return a.child }
@@ -111,7 +123,26 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 			a.scalarRowBuf = []Row{} // ensure non-nil for EvalAggregateOver
 		}
 		// Build output row directly from accumulated state.
-		out := Row{Cols: make([]string, 0, len(a.aggs))}
+		out := Row{Cols: make([]string, 0, len(a.constCols)+len(a.aggs))}
+// REQ001711: emit constant projections (e.g. `SELECT 62, COUNT(*)`)
+// alongside aggregates. They evaluate to a fixed value independent
+// of the input rows, so a single pass with an empty row suffices.
+		for _, cc := range a.constCols {
+			v, err := EV.EvalValue(cc, &Row{}, a.params)
+			if err != nil {
+				return err
+			}
+			name := aggregateColName(cc)
+			if name == "" {
+				if ae, ok := cc.(*PS.AliasedExpr); ok && ae.Alias != "" {
+					name = ae.Alias
+				} else {
+					name = "?column?"
+				}
+			}
+			out.Cols = append(out.Cols, name)
+			out.Data = append(out.Data, v)
+		}
 		for _, ag := range a.aggs {
 			v, err := EvalAggregateOver(ag, a.scalarRowBuf, a.params)
 			if err != nil {
@@ -168,8 +199,8 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 		if a.expandStar && len(g.rows) > 0 {
 			firstRow := g.rows[0]
 			out = Row{
-				Cols: make([]string, len(firstRow.Cols), len(firstRow.Cols)+len(a.aggs)),
-				Data: make([]Value, len(firstRow.Data), len(firstRow.Data)+len(a.aggs)),
+				Cols: make([]string, len(firstRow.Cols), len(firstRow.Cols)+len(a.constCols)+len(a.aggs)),
+				Data: make([]Value, len(firstRow.Data), len(firstRow.Data)+len(a.constCols)+len(a.aggs)),
 			}
 			copy(out.Cols, firstRow.Cols)
 			copy(out.Data, firstRow.Data)
@@ -183,11 +214,28 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 				}
 			}
 		} else {
-			out = Row{Cols: make([]string, 0, len(a.groupCols)+len(a.aggs))}
+			out = Row{Cols: make([]string, 0, len(a.groupCols)+len(a.constCols)+len(a.aggs)), Data: make([]Value, 0, len(a.groupCols)+len(a.constCols)+len(a.aggs))}
 			for i, gc := range a.groupCols {
 				out.Cols = append(out.Cols, groupColName(gc))
 				out.Data = append(out.Data, g.key[i])
 			}
+		}
+		// REQ001711: emit constant projections alongside aggregates.
+		for _, cc := range a.constCols {
+			v, err := EV.EvalValue(cc, &Row{}, a.params)
+			if err != nil {
+				return err
+			}
+			name := aggregateColName(cc)
+			if name == "" {
+				if ae, ok := cc.(*PS.AliasedExpr); ok && ae.Alias != "" {
+					name = ae.Alias
+				} else {
+					name = "?column?"
+				}
+			}
+			out.Cols = append(out.Cols, name)
+			out.Data = append(out.Data, v)
 		}
 		for _, ag := range a.aggs {
 			v, err := EvalAggregateOver(ag, g.rows, a.params)

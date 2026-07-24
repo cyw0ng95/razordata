@@ -517,12 +517,16 @@ func (p *Planner) planSelectSubquery(s *PS.Select) DT.Operator {
 	needsAggregate := hasAnyAggregate(s.Cols) || len(s.GroupBy) > 0
 	if needsAggregate {
 		groupCols := s.GroupBy
-		aggsOnly, autoGroup, _ := splitSelectCols(s.Cols)
+		aggsOnly, autoGroup, constCols := splitSelectCols(s.Cols)
 		aggExprs := aggsOnly
 		if len(groupCols) == 0 {
 			groupCols = autoGroup
 		}
 		agg := AG.NewAggregate(current, groupCols, aggExprs)
+		// REQ001711: pass constant projections alongside aggregates.
+		if len(constCols) > 0 {
+			agg.SetConstCols(constCols)
+		}
 		current = agg
 	}
 	if len(s.Cols) > 0 && !isStarExpr(s.Cols) {
@@ -855,7 +859,7 @@ func (p *Planner) planAggregation(s *PS.Select, current DT.Operator) DT.Operator
 		}
 		return current
 	}
-	aggsOnly, autoGroup, _ := splitSelectCols(s.Cols)
+	aggsOnly, autoGroup, constCols := splitSelectCols(s.Cols)
 	aggExprs = aggsOnly
 	if len(groupCols) == 0 {
 		groupCols = autoGroup
@@ -871,6 +875,11 @@ func (p *Planner) planAggregation(s *PS.Select, current DT.Operator) DT.Operator
 		agg := AG.NewAggregate(current, groupCols, aggExprs)
 		if isStarExpr(s.Cols) {
 			agg.SetExpandStar()
+		}
+		// REQ001711: pass constant projections so they appear in every
+		// output row alongside aggregates. See splitSelectCols.
+		if len(constCols) > 0 {
+			agg.SetConstCols(constCols)
 		}
 		current = agg
 	}

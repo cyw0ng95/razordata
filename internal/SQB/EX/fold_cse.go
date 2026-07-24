@@ -5,14 +5,21 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
+	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
 )
 
+// splitSelectCols separates a SELECT list into aggregate expressions
+// and non-aggregate expressions. Non-aggregate columns that reference
+// table columns are routed to groupCols so the Aggregate operator can
+// emit one row per distinct group. Columns whose values are constant
+// across all rows (no Ident/QualifiedName references) stay in
+// `other` so the Aggregate operator can evaluate them once after
+// grouping and inject them into the output row. REQ001711.
 func splitSelectCols(cols []PS.Expr) (aggs, groupCols, other []PS.Expr) {
 	if !hasAnyAggregate(cols) {
-		return nil, nil, cols
+		return nil, nil, nil
 	}
 	for _, c := range cols {
 		if DT.ContainsAggregate(c) {
@@ -22,13 +29,23 @@ func splitSelectCols(cols []PS.Expr) (aggs, groupCols, other []PS.Expr) {
 		if _, ok := c.(*PS.StarExpr); ok {
 			continue
 		}
+		if isConstantExpr(c) {
+			// Constant projection — emitted alongside aggs after
+			// grouping; does not change the group partition.
+			other = append(other, c)
+			continue
+		}
 		groupCols = append(groupCols, c)
 	}
-	return aggs, groupCols, nil
+	return aggs, groupCols, other
 }
 
 // isConstantExpr reports whether e is a constant expression (no column
-// references). Used by constant folding (REQ001074).
+// references). Used by constant folding (REQ001074) and to route
+// constant SELECT projections alongside aggregates (REQ001711).
+// Aggregates wrapped in an expression are NOT considered constant for
+// the purposes of routing — they are routed to the aggregate list
+// instead, so they are evaluated against the full input row set.
 func isConstantExpr(e PS.Expr) bool {
 	if e == nil {
 		return true
@@ -37,7 +54,7 @@ func isConstantExpr(e PS.Expr) bool {
 	case *PS.NumberLiteral, *PS.FloatLiteral, *PS.StringLiteral,
 		*PS.BoolLiteral, *PS.NullLiteral, *PS.Param:
 		return true
-	case *PS.Ident, *PS.QualifiedName:
+	case *PS.Ident, *PS.QualifiedName, *PS.AggregateFunc:
 		return false
 	case *PS.UnaryExpr:
 		return isConstantExpr(v.Operand)
@@ -51,6 +68,8 @@ func isConstantExpr(e PS.Expr) bool {
 		}
 		return true
 	case *PS.CastExpr:
+		return isConstantExpr(v.Expr)
+	case *PS.AliasedExpr:
 		return isConstantExpr(v.Expr)
 	}
 	return false

@@ -1236,8 +1236,10 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 		}
 	}
 
-	// Simple comparisons: col OP literal
-	col, literal, ok := extractColLiteralPair(e)
+	// Simple comparisons: col OP literal. REQ001711: when literal is
+	// on the LEFT (e.g. `-30 >= col0`), extractColLiteralPair returns
+	// reversed=true and we must flip the ordering operator.
+	col, literal, reversed, ok := extractColLiteralPair(e)
 	if ok && literal != nil {
 		colName := col
 		litVal := literal
@@ -1258,21 +1260,29 @@ func compileBinary(e *PS.BinaryExpr) func(*Row) (bool, error) {
 				return !pl.EqualValueValue(a, b)
 			})
 		case LX.T_GT:
-			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return pl.CompareValue(a, b) > 0
-			})
+			cmpFn := func(a, b Value) bool { return pl.CompareValue(a, b) > 0 }
+			if reversed {
+				cmpFn = func(a, b Value) bool { return pl.CompareValue(b, a) > 0 }
+			}
+			return makeCompiledCmp(colName, litVal, cmpFn)
 		case LX.T_GE:
-			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return pl.CompareValue(a, b) >= 0
-			})
+			cmpFn := func(a, b Value) bool { return pl.CompareValue(a, b) >= 0 }
+			if reversed {
+				cmpFn = func(a, b Value) bool { return pl.CompareValue(b, a) >= 0 }
+			}
+			return makeCompiledCmp(colName, litVal, cmpFn)
 		case LX.T_LT:
-			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return pl.CompareValue(a, b) < 0
-			})
+			cmpFn := func(a, b Value) bool { return pl.CompareValue(a, b) < 0 }
+			if reversed {
+				cmpFn = func(a, b Value) bool { return pl.CompareValue(b, a) < 0 }
+			}
+			return makeCompiledCmp(colName, litVal, cmpFn)
 		case LX.T_LE:
-			return makeCompiledCmp(colName, litVal, func(a, b Value) bool {
-				return pl.CompareValue(a, b) <= 0
-			})
+			cmpFn := func(a, b Value) bool { return pl.CompareValue(a, b) <= 0 }
+			if reversed {
+				cmpFn = func(a, b Value) bool { return pl.CompareValue(b, a) <= 0 }
+			}
+			return makeCompiledCmp(colName, litVal, cmpFn)
 		}
 	}
 
@@ -1386,21 +1396,26 @@ func makeCompiledCmp(colName string, litVal any, cmp func(a, b Value) bool) func
 	}
 }
 
-// extractColLiteralPair extracts (column_name, literal_value, ok) from a
-// BinaryExpr where one side is a column reference and the other is a literal.
-// REQ000802: supports both Ident (bare name) and QualifiedName (table.col).
-func extractColLiteralPair(e *PS.BinaryExpr) (string, any, bool) {
+// extractColLiteralPair extracts (column_name, literal_value, reversed, ok)
+// from a BinaryExpr where one side is a column reference and the other is
+// a literal. REQ000802: supports both Ident (bare name) and QualifiedName
+// (table.col). When the literal appears on the LEFT side of the comparison
+// (e.g. `-30 >= col0`), the pair is canonicalized to (col, lit) with
+// `reversed = true` so callers know to flip the comparison direction
+// (`col OP lit` becomes `lit OP col`, which for ordering operators means
+// swapping `>` ↔ `<` and `>=` ↔ `<=`). REQ001711.
+func extractColLiteralPair(e *PS.BinaryExpr) (string, any, bool, bool) {
 	if col, ok := colRefName(e.Left); ok {
 		if lit, ok := extractLiteral(e.Right); ok {
-			return col, lit, true
+			return col, lit, false, true
 		}
 	}
 	if col, ok := colRefName(e.Right); ok {
 		if lit, ok := extractLiteral(e.Left); ok {
-			return col, lit, true
+			return col, lit, true, true
 		}
 	}
-	return "", nil, false
+	return "", nil, false, false
 }
 
 // colRefName returns the column name from an expression that is
