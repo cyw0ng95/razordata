@@ -142,6 +142,49 @@ func (p *ParallelStoreSeqScan) Close() error {
 	return nil
 }
 
+// NextBatch drains the materialized row buffer in batches of BatchSize.
+// On first call, starts the parallel scan if not already started.
+// REQ001981.
+func (p *ParallelStoreSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if p.done {
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !p.started {
+		p.startMu.Lock()
+		if !p.started {
+			if err := p.startScan(ctx); err != nil {
+				p.startMu.Unlock()
+				return nil, err
+			}
+		}
+		p.startMu.Unlock()
+	}
+	remaining := len(p.rowBuf) - p.rowPos
+	if remaining <= 0 {
+		p.done = true
+		return nil, nil
+	}
+	batchSize := remaining
+	if batchSize > UT.BatchSize {
+		batchSize = UT.BatchSize
+	}
+	var cols []string
+	var types []LX.TokenType
+	if p.schema != nil {
+		cols = p.schema.Cols
+		types = p.schema.ColTypes
+	}
+	batch := rowsToBatch(p.rowBuf[p.rowPos:p.rowPos+batchSize], cols, types)
+	p.rowPos += batchSize
+	if p.rowPos >= len(p.rowBuf) {
+		p.done = true
+	}
+	return batch, nil
+}
+
 // the row range into N partitions and scans each in parallel using a
 // WorkerPool. On the first call to Next(), all partitions are fanned
 // out to workers and their results are merged in partition order.
@@ -283,6 +326,33 @@ func (p *ParallelSeqScanRow) Close() error {
 	return nil
 }
 
+// NextBatch drains the materialized row buffer in batches of BatchSize.
+// On first call, starts the parallel scan if not already started.
+// REQ001981.
+func (p *ParallelSeqScanRow) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	for {
+		remaining := len(p.rowBuf) - p.rowPos
+		if remaining > 0 {
+			batchSize := remaining
+			if batchSize > UT.BatchSize {
+				batchSize = UT.BatchSize
+			}
+			batch := rowsToBatch(p.rowBuf[p.rowPos:p.rowPos+batchSize], p.schema, p.types)
+			p.rowPos += batchSize
+			if p.rowPos >= len(p.rowBuf) {
+				p.done = true
+			}
+			return batch, nil
+		}
+		if p.done {
+			return nil, nil
+		}
+		if err := p.startScan(ctx); err != nil {
+			return nil, err
+		}
+	}
+}
+
 // ParallelUnionAll runs UNION ALL children concurrently.
 // Left and right children are drained in parallel via WorkerPool,
 // and their rows are emitted in arrival order. REQ001052.
@@ -403,6 +473,39 @@ func (u *ParallelUnionAll) Close() error {
 	u.left.Close()
 	u.right.Close()
 	return nil
+}
+
+// NextBatch drains the materialized row buffer in batches of BatchSize.
+// On first call, starts the parallel union if not already started.
+// REQ001981.
+func (u *ParallelUnionAll) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	for {
+		remaining := len(u.rowBuf) - u.rowPos
+		if remaining > 0 {
+			batchSize := remaining
+			if batchSize > UT.BatchSize {
+				batchSize = UT.BatchSize
+			}
+			var cols []string
+			var types []LX.TokenType
+			if u.rowPos < len(u.rowBuf) {
+				cols = u.rowBuf[u.rowPos].Cols
+				types = u.rowBuf[u.rowPos].Types
+			}
+			batch := rowsToBatch(u.rowBuf[u.rowPos:u.rowPos+batchSize], cols, types)
+			u.rowPos += batchSize
+			if u.rowPos >= len(u.rowBuf) {
+				u.done = true
+			}
+			return batch, nil
+		}
+		if u.done {
+			return nil, nil
+		}
+		if err := u.start(ctx); err != nil {
+			return nil, err
+		}
+	}
 }
 
 // ParallelSeqScan performs a batch-based parallel table scan.
@@ -884,6 +987,90 @@ func (p *ParallelIndexRangeScan) startScan(ctx context.Context) error {
 func (p *ParallelIndexRangeScan) Close() error {
 	p.done = true
 	return nil
+}
+
+// NextBatch drains the materialized row buffer in batches of BatchSize.
+// On first call, starts the parallel scan if not already started.
+// REQ001981.
+func (p *ParallelIndexRangeScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	for {
+		remaining := len(p.rowBuf) - p.rowPos
+		if remaining > 0 {
+			batchSize := remaining
+			if batchSize > UT.BatchSize {
+				batchSize = UT.BatchSize
+			}
+			batch := rowsToBatch(p.rowBuf[p.rowPos:p.rowPos+batchSize], p.schema, p.types)
+			p.rowPos += batchSize
+			if p.rowPos >= len(p.rowBuf) {
+				p.done = true
+			}
+			return batch, nil
+		}
+		if p.done {
+			return nil, nil
+		}
+		if err := p.startScan(ctx); err != nil {
+			return nil, err
+		}
+	}
+}
+
+// rowsToBatch converts a slice of rows to a columnar Batch.
+// If cols/types are empty, they are derived from the first row's
+// Cols/Types fields (if set). REQ001981.
+func rowsToBatch(rows []Row, cols []string, types []LX.TokenType) *UT.Batch {
+	if len(rows) == 0 {
+		return nil
+	}
+	// Derive schema from first row if not provided.
+	if len(cols) == 0 {
+		cols = rows[0].Cols
+	}
+	if len(types) == 0 {
+		types = rows[0].Types
+	}
+	nCols := len(cols)
+	if nCols == 0 {
+		nCols = len(rows[0].Data)
+	}
+	batch := UT.GetBatch(nCols)
+	for i := 0; i < nCols; i++ {
+		if i < len(cols) {
+			batch.SetColumnName(i, cols[i])
+		}
+	}
+	for _, row := range rows {
+		for i := 0; i < nCols; i++ {
+			var val any
+			isNull := true
+			if i < len(row.Data) {
+				v := row.Data[i]
+				if v.Kind != KindNull {
+					isNull = false
+					val = v.ToAny()
+				}
+			}
+			var typ LX.TokenType
+			if i < len(types) {
+				typ = types[i]
+			} else if i < len(row.Data) {
+				switch row.Data[i].Kind {
+				case KindInt:
+					typ = LX.T_BIGINT
+				case KindFloat:
+					typ = LX.T_FLOAT_KW
+				case KindText, KindBlob:
+					typ = LX.T_TEXT
+				case KindBool:
+					typ = LX.T_BOOL
+				}
+			}
+			batch.AppendRow(i, typ, val, isNull)
+		}
+		batch.AdvanceSize()
+	}
+	return batch
 }
 
 // LX import anchor to prevent unused import error

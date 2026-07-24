@@ -189,6 +189,18 @@ func transformOp(op DT.Operator, p *Planner) UT.BatchProducer {
 			return nil
 		}
 		return OP.NewVectorizedOffset(child, o.OffsetValue())
+	case *OP.ParallelStoreSeqScan:
+		// REQ001981: already has NextBatch — return as-is.
+		return o
+	case *OP.ParallelSeqScanRow:
+		// REQ001981: already has NextBatch — return as-is.
+		return o
+	case *OP.ParallelUnionAll:
+		// REQ001981: already has NextBatch — return as-is.
+		return o
+	case *OP.ParallelIndexRangeScan:
+		// REQ001981: already has NextBatch — return as-is.
+		return o
 	case *AG.WindowOperator:
 		child := transformOp(o.Input(), p)
 		if child == nil {
