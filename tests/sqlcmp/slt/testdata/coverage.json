@@ -39,8 +39,8 @@
     },
     "../corpus/test/index/between/1/slt_good_0.test": {
       "total": 10022,
-      "passed": 7442,
-      "failed": 2577,
+      "passed": 7421,
+      "failed": 2598,
       "skipped": 3,
       "parse_errors": 0
     },
@@ -68,11 +68,11 @@
   },
   "totals": {
     "Total": 16057,
-    "Passed": 10072,
-    "Failed": 5951,
+    "Passed": 10051,
+    "Failed": 5972,
     "Skipped": 15,
     "ParseErrors": 0,
-    "Duration": 212202,
+    "Duration": 180462,
     "Slowest": null,
     "FailFastTriggered": false,
     "FailureContext": null
