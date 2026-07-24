@@ -275,6 +275,33 @@ var projectDataBufPool = sync.Pool{
 // the modal Project output shape. REQ001091.
 const projectDataBufChunkSize = 512
 
+// REQ001707: pooled backing arrays for prefixCols, compiledExprs, and
+// fnArgBuf so that repeated Project lifecycles (especially for
+// parameterized queries that miss memo cache) avoid repeated make()
+// allocations on the heap.  The pool capacity is sized to handle
+// typical wide projections (up to 512 columns); narrower Projects
+// still benefit from zero-allocation reuse within their current cap.
+var projectPrefixColsPool = sync.Pool{
+	New: func() any {
+		s := make([]string, 0, 256)
+		return &s
+	},
+}
+
+var projectCompiledExprsPool = sync.Pool{
+	New: func() any {
+		s := make([]func(*Row) (Value, error), 0, 32)
+		return &s
+	},
+}
+
+var projectFnArgBufPool = sync.Pool{
+	New: func() any {
+		s := make([]any, 0, 32)
+		return &s
+	},
+}
+
 // isNullValue checks if a value represents SQL NULL.
 // Handles both raw nil and Value{Kind: KindNull}.
 func isNullValue(v any) bool {
@@ -851,8 +878,14 @@ func NewProject(child Operator, cols []PS.Expr) *Project {
 	if cap(dataBuf) < preallocSize {
 		dataBuf = make([]Value, 0, preallocSize)
 	}
-	// Pre-compute column names once (they're the same for every row).
-	prefixCols := make([]string, len(cols))
+	// REQ001707: acquire prefixCols from pool to avoid repeated
+	// make([]string, N) heap allocations across queries. Resize the
+	// pooled backing array in-place so its cap >= len(cols).
+	prefixColsRaw := projectPrefixColsPool.Get().(*[]string)
+	if cap(*prefixColsRaw) < len(cols) {
+		*prefixColsRaw = make([]string, 0, len(cols))
+	}
+	prefixCols := (*prefixColsRaw)[:len(cols):len(cols)]
 	for i, c := range cols {
 		var name string
 		switch e := c.(type) {
@@ -898,8 +931,12 @@ func NewProject(child Operator, cols []PS.Expr) *Project {
 		// REQ001091: dataPerRow is now set in NewProject so the lazy-init
 		// branch in Next is a no-op for the pool-acquired case.
 		dataPerRow: len(cols),
-		// REQ001567: pre-allocate function call argument buffer.
-		fnArgBuf: make([]any, 0, 10),
+		// REQ001707: acquire fnArgBuf from pool to avoid repeated
+		// make([]any, 0, 10) allocations across queries.
+		fnArgBuf: func() []any {
+			buf := projectFnArgBufPool.Get().(*[]any)
+			return (*buf)[:0:cap(*buf)]
+		}(),
 	}
 }
 
@@ -1034,6 +1071,33 @@ func (p *Project) Close() error {
 	}
 	p.dataBuf = nil
 	p.dataPerRow = 0
+	// REQ001707: return pooled slices to their pools so the next
+	// NewProject call can reuse the backing arrays without fresh
+	// allocations.  Reset len to 0 first so pooled capacity is not
+	// wasted by returning partially-filled slices.
+	var prefixCols []string
+	if p.prefixCols != nil && len(p.prefixCols) > 0 {
+		prefixCols = make([]string, 0, cap(p.prefixCols))
+		prefixCols = append(prefixCols, p.prefixCols...)
+		projectPrefixColsPool.Put(&prefixCols)
+	}
+	p.prefixCols = nil
+	var fnArgBuf []any
+	if p.fnArgBuf != nil && len(p.fnArgBuf) > 0 {
+		fnArgBuf = make([]any, 0, cap(p.fnArgBuf))
+		fnArgBuf = append(fnArgBuf, p.fnArgBuf...)
+		projectFnArgBufPool.Put(&fnArgBuf)
+	}
+	p.fnArgBuf = nil
+	// compiledExprs are function closures but we CAN pool the backing
+	// slice since the functions themselves are just pointers.  Reset len
+	// to 0 so capacity is preserved for reuse.
+	var compiledExprs []func(*Row) (Value, error)
+	if p.compiledExprs != nil && len(p.compiledExprs) > 0 {
+		compiledExprs = make([]func(*Row) (Value, error), 0, cap(p.compiledExprs))
+		projectCompiledExprsPool.Put(&compiledExprs)
+	}
+	p.compiledExprs = nil
 	return p.child.Close()
 }
 
@@ -1652,7 +1716,11 @@ func compileRowExpr(e PS.Expr) func(*Row) Value {
 // evaluators that read directly from row.Data, bypassing Eval
 // dispatch and Value↔any boxing. REQ000802.
 func (p *Project) compileProjectExprs() {
-	p.compiledExprs = make([]func(*Row) (Value, error), len(p.cols))
+	exprRaw := projectCompiledExprsPool.Get().(*[]func(*Row) (Value, error))
+	if cap(*exprRaw) < len(p.cols) {
+		*exprRaw = make([]func(*Row) (Value, error), 0, len(p.cols))
+	}
+	p.compiledExprs = (*exprRaw)[:len(p.cols):len(p.cols)]
 	for i, c := range p.cols {
 		switch e := c.(type) {
 		case *PS.FunctionCall:

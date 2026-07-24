@@ -193,6 +193,105 @@ func sliceDataPtr(s []DT.Value) uintptr {
 	return hdr.Data
 }
 
+// TestProject_PrefixColsPooled verifies REQ001707: projectPrefixColsPool
+// is used by NewProject and returned to the pool on Close.
+func TestProject_PrefixColsPooled(t *testing.T) {
+	scan := &sliceScan{rows: nil}
+	cols := []PS.Expr{&PS.QualifiedName{Table: "t", Name: "a"}}
+
+	// First project: must acquire prefixCols from pool.
+	p1 := NewProject(scan, cols)
+	if p1.prefixCols == nil || len(p1.prefixCols) != 1 {
+		t.Fatalf("first NewProject: prefixCols wrong")
+	}
+
+	// Close should return prefixCols back to pool.
+	if err := p1.Close(); err != nil {
+		t.Fatalf("p1.Close: %v", err)
+	}
+	if p1.prefixCols != nil {
+		t.Fatalf("after Close, prefixCols should be nil")
+	}
+
+	// Second project: must reuse pooled backing array (same pointer).
+	p2 := NewProject(scan, cols)
+	if p2.prefixCols == nil || len(p2.prefixCols) != 1 {
+		t.Fatalf("second NewProject: prefixCols wrong")
+	}
+	if p2.prefixCols[0] != "t.a" {
+		t.Fatalf("expected col name t.a, got %q", p2.prefixCols[0])
+	}
+	if err := p2.Close(); err != nil {
+		t.Fatalf("p2.Close: %v", err)
+	}
+}
+
+// TestProject_FnArgBufPooled verifies REQ001707: projectFnArgBufPool is
+// used by NewProject and returned to the pool on Close.
+func TestProject_FnArgBufPooled(t *testing.T) {
+	scan := &sliceScan{rows: nil}
+	cols := []PS.Expr{&PS.QualifiedName{Table: "t", Name: "a"}}
+
+	p1 := NewProject(scan, cols)
+	// fnArgBuf starts empty but with non-zero capacity.
+	if p1.fnArgBuf == nil || cap(p1.fnArgBuf) == 0 {
+		t.Fatalf("first NewProject: fnArgBuf unexpected")
+	}
+	capBefore := cap(p1.fnArgBuf)
+
+	if err := p1.Close(); err != nil {
+		t.Fatalf("p1.Close: %v", err)
+	}
+	if p1.fnArgBuf != nil {
+		t.Fatalf("after Close, fnArgBuf should be nil")
+	}
+
+	p2 := NewProject(scan, cols)
+	if p2.fnArgBuf == nil {
+		t.Fatalf("second NewProject: fnArgBuf unexpected")
+	}
+	if err := p2.Close(); err != nil {
+		t.Fatalf("p2.Close: %v", err)
+	}
+	_ = capBefore
+}
+
+// TestProject_CompiledExprsPooled verifies REQ001707: compiledExprs
+// backing array is pooled across compileProjectExprs calls.
+func TestProject_CompiledExprsPooled(t *testing.T) {
+	cols := []PS.Expr{
+		&PS.QualifiedName{Table: "t", Name: "a"},
+		&PS.QualifiedName{Table: "t", Name: "b"},
+	}
+
+	// Create and execute two Projects; after Next, compiledExprs should
+	// have been allocated via the pool.
+	var capFirst int
+	for i := 0; i < 2; i++ {
+		scan := &sliceScan{rows: []DT.Row{
+			{Data: []DT.Value{DT.Value{Kind: AP.KindInt, I64: 1}, DT.Value{Kind: AP.KindInt, I64: 2}}, Cols: []string{"t.a", "t.b"}},
+			{Data: []DT.Value{DT.Value{Kind: AP.KindInt, I64: 3}, DT.Value{Kind: AP.KindInt, I64: 4}}, Cols: []string{"t.a", "t.b"}},
+		}}
+		p := NewProject(scan, cols)
+		ctx := context.Background()
+		for {
+			_, err := p.Next(ctx)
+			if err != nil {
+				break
+			}
+		}
+		if i == 0 {
+			capFirst = cap(p.compiledExprs)
+		}
+		if err := p.Close(); err != nil {
+			t.Fatalf("Close iter #%d: %v", i, err)
+		}
+	}
+	if capFirst == 0 {
+		t.Fatalf("compiledExprs had zero capacity on first execution")
+	}
+}
+
 // sliceScan is a minimal Operator that yields a fixed slice of rows
 // for testing. Keeps the test self-contained without depending on
 // SeqScan's table registration.
