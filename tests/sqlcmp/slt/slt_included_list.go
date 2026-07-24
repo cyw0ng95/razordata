@@ -270,6 +270,12 @@ var includedCases = []includedCase{
 	{Label: "random::groupby::slt_good_5", Path: "random/groupby/slt_good_5", Timeout: 60},
 	{Label: "random::groupby::slt_good_6", Path: "random/groupby/slt_good_6", Timeout: 60},
 	{Label: "random::groupby::slt_good_7", Path: "random/groupby/slt_good_7", Timeout: 60},
+	// REQ001967-REQ001971: slt_good_8..12 pass.
+	{Label: "random::groupby::slt_good_8", Path: "random/groupby/slt_good_8", Timeout: 60},
+	{Label: "random::groupby::slt_good_9", Path: "random/groupby/slt_good_9", Timeout: 60},
+	{Label: "random::groupby::slt_good_10", Path: "random/groupby/slt_good_10", Timeout: 60},
+	{Label: "random::groupby::slt_good_11", Path: "random/groupby/slt_good_11", Timeout: 60},
+	{Label: "random::groupby::slt_good_12", Path: "random/groupby/slt_good_12", Timeout: 60},
 	{Label: "random::groupby::slt_good_13", Path: "random/groupby/slt_good_13", Timeout: 60},
 	// REQ001843-REQ001966: all 124 random/select/slt_good_N files pass.
 	{Label: "random::select::slt_good_0", Path: "random/select/slt_good_0", Timeout: 30},
