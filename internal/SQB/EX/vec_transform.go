@@ -208,6 +208,12 @@ func transformOp(op DT.Operator, p *Planner) UT.BatchProducer {
 	case *WT.Insert:
 		// REQ001983: already has NextBatch — return as-is.
 		return o
+	case *WT.Update:
+		// REQ001984: already has NextBatch — return as-is.
+		return o
+	case *WT.Delete:
+		// REQ001985: already has NextBatch — return as-is.
+		return o
 	case *AG.WindowOperator:
 		child := transformOp(o.Input(), p)
 		if child == nil {

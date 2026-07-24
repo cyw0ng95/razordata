@@ -1310,6 +1310,40 @@ func (u *Update) RowsAffected() int64 {
 	return u.rows
 }
 
+// NextBatch triggers the update on first call and returns RETURNING rows
+// in columnar batches. REQ001984.
+func (u *Update) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if !u.done || (len(u.resultRows) > 0 && u.resultPos == 0) {
+		_, err := u.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				if len(u.resultRows) == 0 {
+					return nil, nil
+				}
+			} else {
+				return nil, err
+			}
+		}
+		if u.resultPos > 0 {
+			u.resultPos--
+		}
+		if len(u.resultRows) == 0 {
+			return nil, nil
+		}
+	}
+	remaining := len(u.resultRows) - u.resultPos
+	if remaining <= 0 {
+		return nil, nil
+	}
+	batchSize := remaining
+	if batchSize > UT.BatchSize {
+		batchSize = UT.BatchSize
+	}
+	batch := rowsToBatchWT(u.resultRows[u.resultPos : u.resultPos+batchSize])
+	u.resultPos += batchSize
+	return batch, nil
+}
+
 type Delete struct {
 	table      string
 	where      PS.Expr
@@ -1600,6 +1634,40 @@ func (d *Delete) Close() error {
 
 func (d *Delete) RowsAffected() int64 {
 	return d.rows
+}
+
+// NextBatch triggers the delete on first call and returns RETURNING rows
+// in columnar batches. REQ001985.
+func (d *Delete) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if !d.done || (len(d.resultRows) > 0 && d.resultPos == 0) {
+		_, err := d.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				if len(d.resultRows) == 0 {
+					return nil, nil
+				}
+			} else {
+				return nil, err
+			}
+		}
+		if d.resultPos > 0 {
+			d.resultPos--
+		}
+		if len(d.resultRows) == 0 {
+			return nil, nil
+		}
+	}
+	remaining := len(d.resultRows) - d.resultPos
+	if remaining <= 0 {
+		return nil, nil
+	}
+	batchSize := remaining
+	if batchSize > UT.BatchSize {
+		batchSize = UT.BatchSize
+	}
+	batch := rowsToBatchWT(d.resultRows[d.resultPos : d.resultPos+batchSize])
+	d.resultPos += batchSize
+	return batch, nil
 }
 
 // expandReturningStar expands StarExpr entries in the RETURNING list
