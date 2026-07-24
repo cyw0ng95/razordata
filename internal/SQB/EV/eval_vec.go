@@ -9,12 +9,49 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
+
+// REQ001986: pool for batchToRow() output rows. Each pooled row has
+// pre-allocated Cols and Data slices sized to a common column count.
+// Rows are obtained via getRowPool(n) and returned via putRowPool(row).
+// The pool reduces per-row allocation overhead in the batch→row fallback
+// path, which is hit for complex expressions (CASE, subqueries, etc.).
+var rowPool = sync.Pool{
+	New: func() any {
+		r := &Row{
+			Cols: make([]string, 0, 16),
+			Data: make([]Value, 0, 16),
+		}
+		return r
+	},
+}
+
+func getRowPool(nCols int) *Row {
+	r := rowPool.Get().(*Row)
+	if cap(r.Cols) < nCols {
+		r.Cols = make([]string, 0, nCols)
+		r.Data = make([]Value, 0, nCols)
+	} else {
+		r.Cols = r.Cols[:0]
+		r.Data = r.Data[:0]
+	}
+	r.ExecCtx = nil
+	return r
+}
+
+func putRowPool(r *Row) {
+	if r == nil {
+		return
+	}
+	r.ExecCtx = nil
+	rowPool.Put(r)
+}
 
 // EvalBatch evaluates a predicate expression over an entire batch,
 // producing a selection vector of matching rows.
@@ -949,12 +986,15 @@ func InvertSelection(sel []uint16, n int) []uint16 {
 // evalRowFallback falls back to row-at-a-time evaluation when
 // vectorized paths are not applicable. Creates a row from batch
 // data and uses the existing Eval() function.
+// REQ001986: uses pooled rows from batchToRow to reduce per-row
+// allocation overhead in the fallback path.
 func evalRowFallback(expr PS.Expr, batch *UT.Batch, params []any) []uint16 {
 	sel := make([]uint16, 0, batch.Size)
 	for i := 0; i < batch.Size; i++ {
 		// Build a synthetic row from batch data
 		row := batchToRow(batch, i)
 		val, err := evalFallbackEvalValue(expr, row, params)
+		putRowPool(row)
 		if err != nil {
 			continue
 		}
@@ -966,15 +1006,14 @@ func evalRowFallback(expr PS.Expr, batch *UT.Batch, params []any) []uint16 {
 }
 
 // batchToRow converts a batch's i-th row to a Row for Eval.
-// This is expensive (allocates per row); used only as fallback.
+// REQ001986: returns a pooled Row — caller must call putRowPool(row)
+// when done to return it to the pool. Never retain the Row after
+// returning it to the pool.
 // REQ001460: forwards the batch's ExecContext so subquery
 // evaluation in the row-fallback path can locate the planner.
 func batchToRow(batch *UT.Batch, idx int) *Row {
-	row := &Row{
-		Cols:    make([]string, 0, len(batch.Cols)),
-		Data:    make([]Value, 0, len(batch.Cols)),
-		ExecCtx: batch.ExecCtx,
-	}
+	row := getRowPool(len(batch.Cols))
+	row.ExecCtx = batch.ExecCtx
 	for c := range batch.Cols {
 		col := &batch.Cols[c]
 		d := col.Data
@@ -1125,10 +1164,13 @@ func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any)
 	}
 	if allUniform {
 		v, err := evalScalarSubquery(subq, firstRow, params)
+		putRowPool(firstRow)
 		if err == nil {
 			return broadcastValueColumn(batch, v)
 		}
 		// On eval failure, fall through to per-row fallback.
+	} else {
+		putRowPool(firstRow)
 	}
 
 	// Per-row path with shared cache.
@@ -1157,9 +1199,11 @@ func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any)
 				allocated = true
 			}
 			writeValueToColumnData(&out, i, v)
+			putRowPool(row)
 			continue
 		}
 		v, err := evalScalarSubquery(subq, row, params)
+		putRowPool(row)
 		if err != nil {
 			if !allocated {
 				out.Type = LX.T_NULL
