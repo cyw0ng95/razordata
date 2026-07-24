@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 
 	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
+	"github.com/cyw0ng95/razordata/internal/SQB/UT"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 type Limit struct {
@@ -71,6 +73,9 @@ type Offset struct {
 func (o *Offset) Child() Operator     { return o.child }
 func (o *Offset) SetChild(c Operator) { o.child = c }
 
+// OffsetValue returns the offset value.
+func (o *Offset) OffsetValue() int64 { return o.offset }
+
 func NewOffset(child Operator, n int64) *Offset {
 	if n < 0 {
 		n = 0
@@ -116,6 +121,151 @@ func (o *Offset) Close() error {
 
 // Reset reinitializes Offset cursor. Does NOT close the child. REQ001464.
 func (o *Offset) Reset(ctx context.Context) error { o.skipped = 0; return nil }
+
+// VectorizedOffset skips the first n rows from its child batch producer
+// before yielding remaining rows. Unlike the row-based Offset which skips
+// one row at a time, it discards full batches in bulk when the remaining
+// offset exceeds the batch size. REQ001980.
+type VectorizedOffset struct {
+	child     UT.BatchProducer
+	offset    int64
+	remaining int64
+}
+
+// NewVectorizedOffset creates a vectorized offset operator.
+func NewVectorizedOffset(child UT.BatchProducer, n int64) *VectorizedOffset {
+	if n < 0 {
+		n = 0
+	}
+	return &VectorizedOffset{child: child, offset: n, remaining: n}
+}
+
+// NextBatch returns the next batch after skipping offset rows.
+// Full batches whose entire logical size fits within the remaining
+// offset are discarded immediately. When the remaining offset falls
+// within a single batch, a truncated batch starting after the skip
+// is returned. Subsequent batches pass through unchanged.
+func (o *VectorizedOffset) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	for o.remaining > 0 {
+		batch, err := o.child.NextBatch(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch == nil {
+			return nil, nil
+		}
+		logical := int64(batch.LogicalSize())
+		if logical <= o.remaining {
+			o.remaining -= logical
+			batch.Put()
+			continue
+		}
+		// Partial skip: slice this batch to drop the first `remaining` rows.
+		skip := int(o.remaining)
+		o.remaining = 0
+		return sliceBatch(batch, skip)
+	}
+	return o.child.NextBatch(ctx)
+}
+
+// Close releases resources.
+func (o *VectorizedOffset) Close() error {
+	if o.child != nil {
+		return o.child.Close()
+	}
+	return nil
+}
+
+// sliceBatch returns a new batch containing rows [start, logicalSize).
+// The original batch is Put back to the pool. Handles both plain batches
+// and batches with a selection vector.
+func sliceBatch(batch *UT.Batch, start int) (*UT.Batch, error) {
+	logical := batch.LogicalSize()
+	if start >= logical {
+		batch.Put()
+		return nil, nil
+	}
+	remaining := logical - start
+	numCols := len(batch.Cols)
+	// Count actual populated columns (stop at first zero-type column).
+	nCols := 0
+	for i := 0; i < numCols; i++ {
+		if batch.Cols[i].Type == 0 && batch.Cols[i].Name == "" {
+			break
+		}
+		nCols = i + 1
+	}
+	out := UT.GetBatch(nCols)
+	out.Size = remaining
+
+	for i := 0; i < nCols; i++ {
+		src := &batch.Cols[i]
+		dst := &out.Cols[i]
+		dst.Name = src.Name
+		dst.Type = src.Type
+
+		if src.Nulls != nil {
+			dst.Nulls = make([]bool, remaining)
+			if batch.Sel != nil {
+				for r := 0; r < remaining; r++ {
+					dst.Nulls[r] = src.Nulls[batch.Sel[start+r]]
+				}
+			} else {
+				copy(dst.Nulls, src.Nulls[start:start+remaining])
+			}
+		}
+
+		switch src.Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			if src.Data.Ints != nil {
+				dst.Data.Ints = UT.PoolGetInts(i, remaining)
+				if batch.Sel != nil {
+					for r := 0; r < remaining; r++ {
+						dst.Data.Ints[r] = src.Data.Ints[batch.Sel[start+r]]
+					}
+				} else {
+					copy(dst.Data.Ints, src.Data.Ints[start:start+remaining])
+				}
+			}
+		case LX.T_FLOAT_KW:
+			if src.Data.Floats != nil {
+				dst.Data.Floats = UT.PoolGetFloats(i, remaining)
+				if batch.Sel != nil {
+					for r := 0; r < remaining; r++ {
+						dst.Data.Floats[r] = src.Data.Floats[batch.Sel[start+r]]
+					}
+				} else {
+					copy(dst.Data.Floats, src.Data.Floats[start:start+remaining])
+				}
+			}
+		case LX.T_BOOL:
+			if src.Data.Bools != nil {
+				dst.Data.Bools = UT.PoolGetBools(i, remaining)
+				if batch.Sel != nil {
+					for r := 0; r < remaining; r++ {
+						dst.Data.Bools[r] = src.Data.Bools[batch.Sel[start+r]]
+					}
+				} else {
+					copy(dst.Data.Bools, src.Data.Bools[start:start+remaining])
+				}
+			}
+		case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+			if src.Data.Strs != nil {
+				dst.Data.Strs = UT.PoolGetStrs(i, remaining)
+				if batch.Sel != nil {
+					for r := 0; r < remaining; r++ {
+						dst.Data.Strs[r] = src.Data.Strs[batch.Sel[start+r]]
+					}
+				} else {
+					copy(dst.Data.Strs, src.Data.Strs[start:start+remaining])
+				}
+			}
+		}
+	}
+
+	batch.Put()
+	return out, nil
+}
 
 // REQ001088: predicate compilation is now per-Filter. The previous
 // global `sync.Map` cache was keyed by `fmt.Sprintf("%v", e)` which

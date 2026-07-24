@@ -183,6 +183,12 @@ func transformOp(op DT.Operator, p *Planner) UT.BatchProducer {
 			return nil
 		}
 		return OP.NewVectorizedLimit(child, o.Limit())
+	case *OP.Offset:
+		child := transformOp(o.Child(), p)
+		if child == nil {
+			return nil
+		}
+		return OP.NewVectorizedOffset(child, o.OffsetValue())
 	case *AG.WindowOperator:
 		child := transformOp(o.Input(), p)
 		if child == nil {
