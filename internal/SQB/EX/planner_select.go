@@ -527,6 +527,12 @@ func (p *Planner) planSelectSubquery(s *PS.Select) DT.Operator {
 		if len(constCols) > 0 {
 			agg.SetConstCols(constCols)
 		}
+		// REQ001710: preserve SELECT list column ordering for scalar
+		// aggregates (no GROUP BY). GROUP BY queries emit group keys
+		// separately, so fullCols would duplicate them.
+		if !isStarExpr(s.Cols) && len(s.GroupBy) == 0 {
+			agg.SetFullCols(s.Cols)
+		}
 		current = agg
 	}
 	if len(s.Cols) > 0 && !isStarExpr(s.Cols) {
@@ -880,6 +886,13 @@ func (p *Planner) planAggregation(s *PS.Select, current DT.Operator) DT.Operator
 		// output row alongside aggregates. See splitSelectCols.
 		if len(constCols) > 0 {
 			agg.SetConstCols(constCols)
+		}
+		// REQ001710: pass the full SELECT list so the aggregate emits
+		// columns in the original SELECT list order. Only for scalar
+		// aggregates (no GROUP BY) — GROUP BY queries emit group keys
+		// separately, and fullCols would duplicate them.
+		if !isStarExpr(s.Cols) && len(s.GroupBy) == 0 {
+			agg.SetFullCols(s.Cols)
 		}
 		current = agg
 	}

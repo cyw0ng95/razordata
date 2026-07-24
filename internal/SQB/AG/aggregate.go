@@ -27,6 +27,11 @@ type Aggregate struct {
 	// — 62 is a constant projection that does not change the group
 	// partition but must appear in every output row).
 	constCols  []PS.Expr
+	// REQ001710: full SELECT list in original order. When set, the
+	// materialize function emits columns in this order instead of
+	// constCols-then-aggs. This preserves the SELECT list column
+	// ordering when aliases conflict with table column names.
+	fullCols   []PS.Expr
 	buf        []Row
 	pos        int
 	params     []any
@@ -44,6 +49,11 @@ func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
 // SetConstCols attaches constant projections that must appear in
 // every output row without affecting the group partition. REQ001711.
 func (a *Aggregate) SetConstCols(cols []PS.Expr) { a.constCols = cols }
+
+// SetFullCols attaches the full SELECT list in original order.
+// When set, the materialize function emits columns in this order
+// instead of constCols-then-aggs. REQ001710.
+func (a *Aggregate) SetFullCols(cols []PS.Expr) { a.fullCols = cols }
 
 // ConstCols returns the constant projections attached via SetConstCols.
 func (a *Aggregate) ConstCols() []PS.Expr { return a.constCols }
@@ -123,34 +133,40 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 			a.scalarRowBuf = []Row{} // ensure non-nil for EvalAggregateOver
 		}
 		// Build output row directly from accumulated state.
-		out := Row{Cols: make([]string, 0, len(a.constCols)+len(a.aggs))}
-// REQ001711: emit constant projections (e.g. `SELECT 62, COUNT(*)`)
-// alongside aggregates. They evaluate to a fixed value independent
-// of the input rows, so a single pass with an empty row suffices.
-		for _, cc := range a.constCols {
-			v, err := EV.EvalValue(cc, &Row{}, a.params)
-			if err != nil {
-				return err
-			}
-			name := aggregateColName(cc)
-			if name == "" {
-				if ae, ok := cc.(*PS.AliasedExpr); ok && ae.Alias != "" {
-					name = ae.Alias
-				} else {
-					name = "?column?"
+		total := len(a.fullCols)
+		if total == 0 {
+			total = len(a.constCols) + len(a.aggs)
+		}
+		out := Row{Cols: make([]string, 0, total), Data: make([]Value, 0, total)}
+		// REQ001710: when fullCols is set, evaluate all items in
+		// SELECT list order to preserve column ordering even when
+		// aliases conflict with table column names.
+		emitOrder := a.fullCols
+		if emitOrder == nil {
+			// Fallback: constCols first, then aggs (legacy order).
+			emitOrder = append(append([]PS.Expr(nil), a.constCols...), a.aggs...)
+		}
+		for _, e := range emitOrder {
+			// Aggregate expressions must use EvalAggregateOver for
+			// proper aggregate evaluation; non-aggregate expressions
+			// use EvalValue since they have no input rows to aggregate.
+			var v Value
+			if DT.ContainsAggregate(e) {
+				val, err := EvalAggregateOver(e, a.scalarRowBuf, a.params)
+				if err != nil {
+					return err
+				}
+				v = DT.ValueFromAny(val)
+			} else {
+				var err error
+				v, err = EV.EvalValue(e, &Row{}, a.params)
+				if err != nil {
+					return err
 				}
 			}
+			name := evalColName(e)
 			out.Cols = append(out.Cols, name)
 			out.Data = append(out.Data, v)
-		}
-		for _, ag := range a.aggs {
-			v, err := EvalAggregateOver(ag, a.scalarRowBuf, a.params)
-			if err != nil {
-				return err
-			}
-			name := aggregateColName(ag)
-			out.Cols = append(out.Cols, name)
-			out.Data = append(out.Data, DT.ValueFromAny(v))
 		}
 		a.buf = []Row{out}
 		return nil
@@ -198,9 +214,13 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 		var out Row
 		if a.expandStar && len(g.rows) > 0 {
 			firstRow := g.rows[0]
+			extraLen := len(a.fullCols)
+			if extraLen == 0 {
+				extraLen = len(a.constCols) + len(a.aggs)
+			}
 			out = Row{
-				Cols: make([]string, len(firstRow.Cols), len(firstRow.Cols)+len(a.constCols)+len(a.aggs)),
-				Data: make([]Value, len(firstRow.Data), len(firstRow.Data)+len(a.constCols)+len(a.aggs)),
+				Cols: make([]string, len(firstRow.Cols), len(firstRow.Cols)+extraLen),
+				Data: make([]Value, len(firstRow.Data), len(firstRow.Data)+extraLen),
 			}
 			copy(out.Cols, firstRow.Cols)
 			copy(out.Data, firstRow.Data)
@@ -214,37 +234,35 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 				}
 			}
 		} else {
-			out = Row{Cols: make([]string, 0, len(a.groupCols)+len(a.constCols)+len(a.aggs)), Data: make([]Value, 0, len(a.groupCols)+len(a.constCols)+len(a.aggs))}
+			out = Row{Cols: make([]string, 0, len(a.groupCols)+len(a.fullCols)), Data: make([]Value, 0, len(a.groupCols)+len(a.fullCols))}
 			for i, gc := range a.groupCols {
 				out.Cols = append(out.Cols, groupColName(gc))
 				out.Data = append(out.Data, g.key[i])
 			}
 		}
-		// REQ001711: emit constant projections alongside aggregates.
-		for _, cc := range a.constCols {
-			v, err := EV.EvalValue(cc, &Row{}, a.params)
-			if err != nil {
-				return err
-			}
-			name := aggregateColName(cc)
-			if name == "" {
-				if ae, ok := cc.(*PS.AliasedExpr); ok && ae.Alias != "" {
-					name = ae.Alias
-				} else {
-					name = "?column?"
+		// REQ001710: evaluate non-group-by items in SELECT list order.
+		emitOrder := a.fullCols
+		if emitOrder == nil {
+			emitOrder = append(append([]PS.Expr(nil), a.constCols...), a.aggs...)
+		}
+		for _, e := range emitOrder {
+			var v Value
+			if DT.ContainsAggregate(e) {
+				val, err := EvalAggregateOver(e, g.rows, a.params)
+				if err != nil {
+					return err
+				}
+				v = DT.ValueFromAny(val)
+			} else {
+				var err error
+				v, err = EV.EvalValue(e, &Row{}, a.params)
+				if err != nil {
+					return err
 				}
 			}
+			name := evalColName(e)
 			out.Cols = append(out.Cols, name)
 			out.Data = append(out.Data, v)
-		}
-		for _, ag := range a.aggs {
-			v, err := EvalAggregateOver(ag, g.rows, a.params)
-			if err != nil {
-				return err
-			}
-			name := aggregateColName(ag)
-			out.Cols = append(out.Cols, name)
-			out.Data = append(out.Data, DT.ValueFromAny(v))
 		}
 		a.buf = append(a.buf, out)
 	}
@@ -415,6 +433,32 @@ func aggregateColName(e PS.Expr) string {
 		return ""
 	}
 	return DT.AggregateLookupKey(agg)
+}
+
+// evalColName returns the column name for an expression, using the
+// same logic as NewProject. REQ001710.
+func evalColName(e PS.Expr) string {
+	if ae, ok := e.(*PS.AliasedExpr); ok && ae.Alias != "" {
+		return ae.Alias
+	}
+	switch v := e.(type) {
+	case *PS.Ident:
+		return v.Name
+	case *PS.QualifiedName:
+		return v.Table + "." + v.Name
+	case *PS.AliasedExpr:
+		if inner, ok := v.Expr.(*PS.Ident); ok {
+			return inner.Name
+		}
+		return v.Alias
+	case *PS.UnaryExpr:
+		if inner, ok := v.Operand.(*PS.Ident); ok {
+			return inner.Name
+		}
+	case *PS.AggregateFunc:
+		return DT.AggregateLookupKey(v)
+	}
+	return ""
 }
 
 // buildAggregateVirtualRow walks e for embedded AggregateFunc
