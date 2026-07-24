@@ -436,7 +436,11 @@ func (b *Batch) AppendRow(colIdx int, typ LX.TokenType, val any, isNull bool) {
 		return // out of bounds, silently drop
 	}
 	col := &b.Cols[colIdx]
-	col.Type = typ
+	if !isNull {
+		col.Type = typ
+	} else if col.Type == 0 {
+		col.Type = typ
+	}
 
 	if isNull {
 		if col.Nulls == nil {

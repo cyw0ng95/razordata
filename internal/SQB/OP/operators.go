@@ -2084,6 +2084,7 @@ func (s *SeqScan) Table() string               { return s.table }
 func (s *SeqScan) Store() DT.Store             { return s.store }
 func (s *SeqScan) Schema() *DT.StoreSchema     { return s.schema }
 func (s *SeqScan) Alias() string               { return s.alias }
+func (s *SeqScan) BatchSupported() bool        { return s.store != nil }
 func (s *SeqScan) UsedCols() []string          { return s.usedCols }
 func (s *SeqScan) UsedColSet() map[string]bool { return s.usedColSet }
 func (s *SeqScan) GetRequestedCols() []int     { return s.RequestedCols }

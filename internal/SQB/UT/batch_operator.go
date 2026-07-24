@@ -10,3 +10,12 @@ type BatchProducer interface {
 	NextBatch(ctx context.Context) (*Batch, error)
 	Close() error
 }
+
+// BatchSupportChecker is an optional interface that BatchProducer
+// implementations may satisfy to indicate whether batch mode is
+// currently available. For example, SeqScan satisfies BatchProducer
+// but only supports batch mode when it has a Store. Operators that
+// always support batch mode do not need to implement this.
+type BatchSupportChecker interface {
+	BatchSupported() bool
+}

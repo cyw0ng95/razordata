@@ -59,16 +59,15 @@ func (d *Distinct) Next(ctx context.Context) (pl.Row, error) {
 		if d.seen == nil {
 			d.seen = make(map[string]bool)
 		}
-		// REQ001988: if child implements BatchProducer (and for
-		// SeqScan, only when it has a store), drain via NextBatch
-		// + ToRows for lower per-row overhead.
+		// REQ001988: if child implements BatchProducer and batch
+		// mode is supported (check BatchSupportChecker if present),
+		// drain via NextBatch + ToRows for lower per-row overhead.
 		useBatch := false
 		var bp UT.BatchProducer
 		if b, ok := d.child.(UT.BatchProducer); ok {
-			if ss, isSeq := d.child.(*SeqScan); isSeq {
-				useBatch = ss.Store() != nil
-			} else {
-				useBatch = true
+			useBatch = true
+			if checker, ok2 := b.(UT.BatchSupportChecker); ok2 {
+				useBatch = checker.BatchSupported()
 			}
 			if useBatch {
 				bp = b

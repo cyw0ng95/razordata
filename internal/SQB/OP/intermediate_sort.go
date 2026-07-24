@@ -84,34 +84,36 @@ func (s *Sort) Next(ctx context.Context) (Row, error) {
 	}
 
 	if !s.materialized {
-		// REQ001987: if child implements BatchProducer (and for SeqScan,
-		// only when it has a store — otherwise NextBatch errors out),
+		// REQ001987: if child implements BatchProducer and batch
+		// mode is supported (check BatchSupportChecker if present),
 		// drain via NextBatch + ToRows for lower per-row overhead.
 		useBatch := false
-		if bp, ok := s.child.(UT.BatchProducer); ok {
-			if ss, isSeq := s.child.(*SeqScan); isSeq {
-				useBatch = ss.Store() != nil
-			} else {
-				useBatch = true
+		var bp UT.BatchProducer
+		if b, ok := s.child.(UT.BatchProducer); ok {
+			useBatch = true
+			if checker, ok2 := b.(UT.BatchSupportChecker); ok2 {
+				useBatch = checker.BatchSupported()
 			}
 			if useBatch {
-				for {
-					batch, err := bp.NextBatch(ctx)
-					if err != nil {
-						return Row{}, err
-					}
-					if batch == nil {
-						break
-					}
-					rows := batch.ToRows()
-					s.buf = append(s.buf, rows...)
-					if batch.Pooled {
-						batch.Put()
-					}
-				}
+				bp = b
 			}
 		}
-		if !useBatch {
+		if useBatch {
+			for {
+				batch, err := bp.NextBatch(ctx)
+				if err != nil {
+					return Row{}, err
+				}
+				if batch == nil {
+					break
+				}
+				rows := batch.ToRows()
+				s.buf = append(s.buf, rows...)
+				if batch.Pooled {
+					batch.Put()
+				}
+			}
+		} else {
 			for {
 				row, err := s.child.Next(ctx)
 				if err != nil {

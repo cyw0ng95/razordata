@@ -14,19 +14,20 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 type Aggregate struct {
-	child      Operator
-	groupCols  []PS.Expr
-	aggs       []PS.Expr
+	child     Operator
+	groupCols []PS.Expr
+	aggs      []PS.Expr
 	// REQ001711: constant non-aggregate SELECT columns that must be
 	// emitted alongside the aggregates (e.g. `SELECT 62, COUNT(*) FROM t`
 	// — 62 is a constant projection that does not change the group
 	// partition but must appear in every output row).
-	constCols  []PS.Expr
+	constCols []PS.Expr
 	// REQ001710: full SELECT list in original order. When set, the
 	// materialize function emits columns in this order instead of
 	// constCols-then-aggs. This preserves the SELECT list column
@@ -116,18 +117,51 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 	if a.scalar {
 		// REQ001697: reuse scalarRowBuf across materialize calls.
 		a.scalarRowBuf = a.scalarRowBuf[:0]
-		for {
-			if err := ctx.Err(); err != nil {
-				return err
+		// REQ001989: if child implements BatchProducer and batch
+		// mode is supported, drain via NextBatch + ToRows.
+		useBatch := false
+		var bp UT.BatchProducer
+		if b, ok := a.child.(UT.BatchProducer); ok {
+			useBatch = true
+			if checker, ok2 := b.(UT.BatchSupportChecker); ok2 {
+				useBatch = checker.BatchSupported()
 			}
-			row, err := a.child.Next(ctx)
-			if err != nil {
-				if err == ErrNoRows {
+			if useBatch {
+				bp = b
+			}
+		}
+		if useBatch {
+			for {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				batch, err := bp.NextBatch(ctx)
+				if err != nil {
+					return err
+				}
+				if batch == nil {
 					break
 				}
-				return err
+				rows := batch.ToRows()
+				a.scalarRowBuf = append(a.scalarRowBuf, rows...)
+				if batch.Pooled {
+					batch.Put()
+				}
 			}
-			a.scalarRowBuf = append(a.scalarRowBuf, row)
+		} else {
+			for {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				row, err := a.child.Next(ctx)
+				if err != nil {
+					if err == ErrNoRows {
+						break
+					}
+					return err
+				}
+				a.scalarRowBuf = append(a.scalarRowBuf, row)
+			}
 		}
 		if len(a.scalarRowBuf) == 0 {
 			a.scalarRowBuf = []Row{} // ensure non-nil for EvalAggregateOver
@@ -174,27 +208,75 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 
 	var groups []groupBucket
 	groupIndex := make(map[string]int)
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
+	// REQ001989: if child implements BatchProducer and batch
+	// mode is supported, drain via NextBatch + ToRows.
+	useBatch := false
+	var bp UT.BatchProducer
+	if b, ok := a.child.(UT.BatchProducer); ok {
+		useBatch = true
+		if checker, ok2 := b.(UT.BatchSupportChecker); ok2 {
+			useBatch = checker.BatchSupported()
 		}
-		row, err := a.child.Next(ctx)
-		if err != nil {
-			if err == ErrNoRows {
+		if useBatch {
+			bp = b
+		}
+	}
+	if useBatch {
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			batch, err := bp.NextBatch(ctx)
+			if err != nil {
+				return err
+			}
+			if batch == nil {
 				break
 			}
-			return err
+			rows := batch.ToRows()
+			for i := range rows {
+				key, err := evalGroupKey(a.groupCols, &rows[i], a.params)
+				if err != nil {
+					if batch.Pooled {
+						batch.Put()
+					}
+					return err
+				}
+				ks := groupKeyString(key)
+				if idx, ok := groupIndex[ks]; ok {
+					groups[idx].rows = append(groups[idx].rows, rows[i])
+				} else {
+					groupIndex[ks] = len(groups)
+					groups = append(groups, groupBucket{key: key, rows: []Row{rows[i]}})
+				}
+			}
+			if batch.Pooled {
+				batch.Put()
+			}
 		}
-		key, err := evalGroupKey(a.groupCols, &row, a.params)
-		if err != nil {
-			return err
-		}
-		ks := groupKeyString(key)
-		if idx, ok := groupIndex[ks]; ok {
-			groups[idx].rows = append(groups[idx].rows, row)
-		} else {
-			groupIndex[ks] = len(groups)
-			groups = append(groups, groupBucket{key: key, rows: []Row{row}})
+	} else {
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			row, err := a.child.Next(ctx)
+			if err != nil {
+				if err == ErrNoRows {
+					break
+				}
+				return err
+			}
+			key, err := evalGroupKey(a.groupCols, &row, a.params)
+			if err != nil {
+				return err
+			}
+			ks := groupKeyString(key)
+			if idx, ok := groupIndex[ks]; ok {
+				groups[idx].rows = append(groups[idx].rows, row)
+			} else {
+				groupIndex[ks] = len(groups)
+				groups = append(groups, groupBucket{key: key, rows: []Row{row}})
+			}
 		}
 	}
 	// REQ000345: no GROUP BY + empty input = single row with
