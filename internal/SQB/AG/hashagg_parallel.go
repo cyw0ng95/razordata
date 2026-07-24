@@ -125,7 +125,7 @@ func rowsToBatchAG(rows []Row) *UT.Batch {
 				}
 			}
 			var typ LX.TokenType
-			if i < len(row.Types) {
+			if i < len(row.Types) && row.Types[i] != 0 {
 				typ = row.Types[i]
 			} else if i < len(row.Data) {
 				switch row.Data[i].Kind {

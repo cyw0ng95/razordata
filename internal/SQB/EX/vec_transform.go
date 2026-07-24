@@ -7,7 +7,8 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
-	"github.com/cyw0ng95/razordata/internal/SQB/UT"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -203,6 +204,9 @@ func transformOp(op DT.Operator, p *Planner) UT.BatchProducer {
 		return o
 	case *OP.ParallelIndexRangeScan:
 		// REQ001981: already has NextBatch — return as-is.
+		return o
+	case *WT.Insert:
+		// REQ001983: already has NextBatch — return as-is.
 		return o
 	case *AG.WindowOperator:
 		child := transformOp(o.Input(), p)

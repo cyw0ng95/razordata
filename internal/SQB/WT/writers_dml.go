@@ -46,12 +46,12 @@ type Insert struct {
 	params         []any
 	resultRows     []DT.Row
 	resultPos      int
-	execCtx        *DT.ExecContext // REQ000812
+	execCtx        *DT.ExecContext     // REQ000812
 	pending        map[string]struct{} // REQ001563: reused pending map for conflict resolution
 	colIndexMap    map[string]int      // REQ001564: pre-computed column index map for INSERT...SELECT
-	rColsBuf  []string       // REQ001557: flat RETURNING col name backing
-	rTypesBuf []LX.TokenType // REQ001557: flat RETURNING type backing
-	rDataBuf  []DT.Value     // REQ001557: flat RETURNING data backing
+	rColsBuf       []string            // REQ001557: flat RETURNING col name backing
+	rTypesBuf      []LX.TokenType      // REQ001557: flat RETURNING type backing
+	rDataBuf       []DT.Value          // REQ001557: flat RETURNING data backing
 }
 
 // SetExecCtx sets the execution context. Used by EX.propagateExecContext.
@@ -390,7 +390,7 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 	} else {
 		lookupFn = func(cols []int, vals []any) (bool, error) { return false, nil }
 	}
-// REQ001030: pre-compute colIdx once for all rows.
+	// REQ001030: pre-compute colIdx once for all rows.
 	colIdx := make([]int, len(i.cols))
 	for ci, nm := range i.cols {
 		idx := -1
@@ -743,18 +743,108 @@ func (i *Insert) RowsAffected() int64 {
 	return i.rows
 }
 
+// NextBatch triggers the insert on first call and returns RETURNING rows
+// in columnar batches. REQ001983.
+func (i *Insert) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	// On first call, trigger the full insert via Next()
+	if !i.done || (len(i.resultRows) > 0 && i.resultPos == 0) {
+		_, err := i.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				// No RETURNING rows — check if we have resultRows
+				if len(i.resultRows) == 0 {
+					return nil, nil
+				}
+			} else {
+				return nil, err
+			}
+		}
+		// Next() consumed one row (resultPos advanced). Back up so
+		// we include it in the first batch.
+		if i.resultPos > 0 {
+			i.resultPos--
+		}
+		if len(i.resultRows) == 0 {
+			// No RETURNING clause — done, no output batches.
+			return nil, nil
+		}
+	}
+	// Drain resultRows in batches.
+	remaining := len(i.resultRows) - i.resultPos
+	if remaining <= 0 {
+		return nil, nil
+	}
+	batchSize := remaining
+	if batchSize > UT.BatchSize {
+		batchSize = UT.BatchSize
+	}
+	batch := rowsToBatchWT(i.resultRows[i.resultPos : i.resultPos+batchSize])
+	i.resultPos += batchSize
+	return batch, nil
+}
+
+// rowsToBatchWT converts a slice of DT.Row to a columnar Batch.
+// REQ001983.
+func rowsToBatchWT(rows []DT.Row) *UT.Batch {
+	if len(rows) == 0 {
+		return nil
+	}
+	first := rows[0]
+	nCols := len(first.Cols)
+	if nCols == 0 {
+		nCols = len(first.Data)
+	}
+	batch := UT.GetBatch(nCols)
+	for i := 0; i < nCols; i++ {
+		if i < len(first.Cols) {
+			batch.SetColumnName(i, first.Cols[i])
+		}
+	}
+	for _, row := range rows {
+		for i := 0; i < nCols; i++ {
+			var val any
+			isNull := true
+			if i < len(row.Data) {
+				v := row.Data[i]
+				if v.Kind != DT.KindNull {
+					isNull = false
+					val = v.ToAny()
+				}
+			}
+			var typ LX.TokenType
+			if i < len(row.Types) && row.Types[i] != 0 {
+				typ = row.Types[i]
+			} else if i < len(row.Data) {
+				switch row.Data[i].Kind {
+				case DT.KindInt:
+					typ = LX.T_BIGINT
+				case DT.KindFloat:
+					typ = LX.T_FLOAT_KW
+				case DT.KindText, DT.KindBlob:
+					typ = LX.T_TEXT
+				case DT.KindBool:
+					typ = LX.T_BOOL
+				}
+			}
+			batch.AppendRow(i, typ, val, isNull)
+		}
+		batch.AdvanceSize()
+	}
+	return batch
+}
+
 type Update struct {
-	table     string
-	set       []PS.Pair
-	where     PS.Expr
-	returning []PS.Expr
-	iter      DT.Operator
-	store     DT.Store
-	schema    *DT.StoreSchema
-	txWriter  DT.TxWriter
-	rows      int64
-	done      bool
-	params    []any
+	table      string
+	set        []PS.Pair
+	where      PS.Expr
+	returning  []PS.Expr
+	iter       DT.Operator
+	store      DT.Store
+	schema     *DT.StoreSchema
+	txWriter   DT.TxWriter
+	rows       int64
+	done       bool
+	params     []any
 	resultRows []DT.Row
 	resultPos  int
 	execCtx    *DT.ExecContext // REQ000812
@@ -763,9 +853,9 @@ type Update struct {
 	// appends; flushChunk fires triggers for the entire chunk in
 	// one pass before clearing the slice. REQ001578.
 	pendingUpdates []triggerEvent
-	rColsBuf  []string       // REQ001557: flat RETURNING col name backing
-	rTypesBuf []LX.TokenType // REQ001557: flat RETURNING type backing
-	rDataBuf  []DT.Value     // REQ001557: flat RETURNING data backing
+	rColsBuf       []string       // REQ001557: flat RETURNING col name backing
+	rTypesBuf      []LX.TokenType // REQ001557: flat RETURNING type backing
+	rDataBuf       []DT.Value     // REQ001557: flat RETURNING data backing
 	// REQ001585: pre-resolved column indices for SET targets.
 	// Eliminates the O(N*M) linear scan per row in ApplyUpdate.
 	setColIdx []int
@@ -1237,9 +1327,9 @@ type Delete struct {
 	// pendingDeletes collects oldRow snapshots whose AFTER DELETE
 	// triggers have not yet been fired. REQ001578.
 	pendingDeletes []triggerEvent
-	rColsBuf  []string       // REQ001557: flat RETURNING col name backing
-	rTypesBuf []LX.TokenType // REQ001557: flat RETURNING type backing
-	rDataBuf  []DT.Value     // REQ001557: flat RETURNING data backing
+	rColsBuf       []string       // REQ001557: flat RETURNING col name backing
+	rTypesBuf      []LX.TokenType // REQ001557: flat RETURNING type backing
+	rDataBuf       []DT.Value     // REQ001557: flat RETURNING data backing
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -1576,6 +1666,7 @@ func evalReturning(exprs []PS.Expr, row *DT.Row, params []any, resultRows *[]DT.
 	*resultRows = append(*resultRows, resultRow)
 	return nil
 }
+
 // ErrTargetWhereFalse is returned by applyConflictUpdate when the
 // partial-index WHERE on the conflict target evaluates false,
 // signaling the caller to treat the row as non-conflicting. REQ001364.
