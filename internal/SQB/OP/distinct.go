@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
@@ -58,18 +59,56 @@ func (d *Distinct) Next(ctx context.Context) (pl.Row, error) {
 		if d.seen == nil {
 			d.seen = make(map[string]bool)
 		}
-		for {
-			row, err := d.child.Next(ctx)
-			if err != nil {
-				if err == ErrNoRows {
+		// REQ001988: if child implements BatchProducer (and for
+		// SeqScan, only when it has a store), drain via NextBatch
+		// + ToRows for lower per-row overhead.
+		useBatch := false
+		var bp UT.BatchProducer
+		if b, ok := d.child.(UT.BatchProducer); ok {
+			if ss, isSeq := d.child.(*SeqScan); isSeq {
+				useBatch = ss.Store() != nil
+			} else {
+				useBatch = true
+			}
+			if useBatch {
+				bp = b
+			}
+		}
+		if useBatch {
+			for {
+				batch, err := bp.NextBatch(ctx)
+				if err != nil {
+					return pl.Row{}, err
+				}
+				if batch == nil {
 					break
 				}
-				return pl.Row{}, err
+				rows := batch.ToRows()
+				for _, row := range rows {
+					key := DistinctKey(row)
+					if !d.seen[key] {
+						d.seen[key] = true
+						d.buf = append(d.buf, row)
+					}
+				}
+				if batch.Pooled {
+					batch.Put()
+				}
 			}
-			key := DistinctKey(row)
-			if !d.seen[key] {
-				d.seen[key] = true
-				d.buf = append(d.buf, row)
+		} else {
+			for {
+				row, err := d.child.Next(ctx)
+				if err != nil {
+					if err == ErrNoRows {
+						break
+					}
+					return pl.Row{}, err
+				}
+				key := DistinctKey(row)
+				if !d.seen[key] {
+					d.seen[key] = true
+					d.buf = append(d.buf, row)
+				}
 			}
 		}
 	}
