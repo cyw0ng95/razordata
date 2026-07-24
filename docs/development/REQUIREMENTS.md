@@ -1,12 +1,4 @@
 ## TBD
-
-> **Schema** — `ID` = REQ id. `Deps` = upstream blockers (must finish first).
-> **Closed REQs** (deleted from TBD on merge): see git log `docs:` commits.
->
-> Last cleanup: `c7ff0553` (REQ001973 done), `2e74b505` (REQ001709 done), `087d3579` (REQ001707 done).
-> Open failures tracked: REQ001974 (LRU pool), REQ001979 (NOT/BETWEEN eval — see exec.go),
-> REQ001977-78 (alias/WHERE, fixed in pgsql-only test runs — see f2951fee); REQ001979 still open.
-
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 | --- | --- | --- | --- | --- | --- | --- |
 | REQ001664 | SQB/EV | **Memoize per-batch column references in EvalBatchExpr to eliminate redundant subtree evaluation.** `evalArithBatch` (`eval_vec.go:1256-1258`) recursively calls `EvalBatchExpr(e.Left, ...)` and `EvalBatchExpr(e.Right, ...)`. For an expression like `a+b*2+c*3+d*4+e*5` over 30 rows, each shared column ref re-walks the BinaryExpr subtree and re-runs `ExtractColumnRef`. In select2 this costs 1.98s of CPU on the left subtree alone (4.47s EvalBatchExpr total cum). The CASE case (`evalCaseBatchExpr`) shows similar redundancy: each `WHEN` clause re-evaluates shared subexpressions across batches. **Fix:** (1) Add a per-batch memo map `map[exprID]UT.Column` keyed by `*Expr` pointer that lives for one `EvalBatchExpr` call. (2) Memoize `*PS.Ident` column refs (already cheap, but extend to other cheap-to-evaluate exprs). (3) At minimum, detect identical `*PS.Ident` repeated inside one batch's expression tree (CSE) and evaluate once. (4) For complex CSE detection: add a `compileMemoizedBatchExpr` pass that pre-computes the memo plan. Estimate: ~100 lines, 2 files, 1 day. | medium | medium | none | SQB/EV/eval_vec.go |
