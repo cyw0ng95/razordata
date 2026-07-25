@@ -1,9 +1,10 @@
 package EX
 
 import (
-	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"fmt"
 	"strings"
+
+	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
@@ -244,7 +245,7 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	// Unqualified columns (e.g. just `a`) prevent elimination since
 	// we can't determine which table owns the column.
 	extractedPreds := map[int]bool{}
-if len(s.Joins) > 0 {
+	if len(s.Joins) > 0 {
 		if refTables := collectReferencedTables(s); refTables != nil {
 			filtered := s.Joins[:0]
 			for _, j := range s.Joins {
@@ -268,6 +269,17 @@ if len(s.Joins) > 0 {
 					// changes the result set. Preserve the join when
 					// its ON references either side (right name,
 					// right alias, left name, left alias).
+					filtered = append(filtered, j)
+				} else if j.On != nil && isConstantExpr(j.On) {
+					// REQ002007: a constant ON clause (e.g. 1=1, 1=0,
+					// NULL IS NULL, NOT NULL IS NULL) references no
+					// tables, so joinOnReferences returns false — but
+					// the constant's truth value is part of the query
+					// semantics. TRUE makes an INNER JOIN a cross
+					// product (multiplying rows); FALSE yields zero
+					// rows. Dropping such a join silently returns only
+					// the left table's rows, producing wrong row counts.
+					// Never eliminate a join whose ON is a constant.
 					filtered = append(filtered, j)
 				}
 			}
@@ -871,6 +883,69 @@ func (p *Planner) tryMergeJoin(left, right DT.Operator, leftTbl, rightTbl string
 	return mj
 }
 
+// planConstantOnJoin handles a JOIN whose ON clause folds to a constant
+// expression (no column references). REQ002007.
+//
+// A constant ON clause is part of the query semantics — its truth value
+// affects the result set, so the join must not be eliminated. This helper
+// short-circuits the generic join-planning paths (equi-key extraction
+// cannot match a constant) and emits the optimal operator directly:
+//
+//   - INNER JOIN ON TRUE  → cross product (NLJ with nil on, kind=CROSS).
+//     The nil on callback skips per-row predicate evaluation entirely.
+//   - INNER JOIN ON FALSE → empty result (NLJ with an always-false on).
+//     No rows match, so zero rows are emitted with the correct schema.
+//
+// Outer joins (LEFT/RIGHT/FULL) return nil here and fall through to the
+// generic NLJ path, which evaluates the folded constant per row. LEFT JOIN
+// ON FALSE correctly emits left rows with NULL-padded right columns via
+// the NLJ's outer-join machinery; converting to a cross join would be
+// wrong when the right side is empty.
+//
+// Returns nil when the ON is not a constant, letting the caller proceed
+// with the standard equi-join / NLJ planning.
+func (p *Planner) planConstantOnJoin(current, rightScan DT.Operator, leftTbl, rightTbl string, j PS.JoinClause, kind OP.JoinKind, projectedCols []string) DT.Operator {
+	if j.On == nil {
+		return nil
+	}
+	folded := foldConstants(j.On)
+	if !isConstantExpr(folded) {
+		return nil
+	}
+	// Only short-circuit INNER joins. Outer joins need the NLJ's
+	// unmatched-row emission, which depends on the per-row on callback.
+	if kind != OP.JoinKindInner {
+		return nil
+	}
+	v, err := EV.EvalValue(folded, nil, nil)
+	if err != nil {
+		return nil
+	}
+	truthy := DT.IsValueTruthy(v)
+	var on func(outer, inner *DT.Row) (bool, error)
+	effKind := kind
+	if truthy {
+		// Constant TRUE → pure cross product. nil on means every
+		// (outer, inner) pair is emitted without a predicate call.
+		on = nil
+		effKind = OP.JoinKindCross
+	} else {
+		// Constant FALSE → no pair matches; zero rows emitted.
+		on = func(outer, inner *DT.Row) (bool, error) { return false, nil }
+	}
+	nlj := OP.NewNestedLoopJoin(current, rightScan, leftTbl, rightTbl, on, effKind)
+	if projectedCols != nil {
+		nlj.WithProjection(projectedCols)
+	}
+	// REQ001575/REQ001656: pre-build shared schema so the NLJ runtime
+	// skips per-row allocations and matches the column-prefixing that
+	// the unaliased-table path produces at execution time.
+	if cols, types, idx := deriveJoinSchema(current, rightScan, leftTbl, rightTbl); cols != nil {
+		nlj.WithSharedSchema(cols, types, idx)
+	}
+	return nlj
+}
+
 // planAggregation handles aggregate selection (HashAggregate vs streaming
 // Aggregate) and HAVING clause application.
 // REQ000981: extracted from planSelect.
@@ -1238,17 +1313,17 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 					leftTbl = jc.RightAlias
 				}
 			}
-		if basePreds := pushedPredicates[baseTable]; len(basePreds) > 0 {
-			// REQ001248: reorder by ascending cost so cheap
-			// predicates short-circuit before expensive ones.
-			if order := CO.ReorderIndices(basePreds); order != nil {
-				basePreds = CO.OrderSlice(basePreds, order)
+			if basePreds := pushedPredicates[baseTable]; len(basePreds) > 0 {
+				// REQ001248: reorder by ascending cost so cheap
+				// predicates short-circuit before expensive ones.
+				if order := CO.ReorderIndices(basePreds); order != nil {
+					basePreds = CO.OrderSlice(basePreds, order)
+				}
+				for _, pred := range basePreds {
+					tryApplyPointLookup(baseOp, pred)
+					baseOp = OP.NewFilter(baseOp, pred, nil)
+				}
 			}
-			for _, pred := range basePreds {
-				tryApplyPointLookup(baseOp, pred)
-				baseOp = OP.NewFilter(baseOp, pred, nil)
-			}
-		}
 			current = baseOp
 			if leftTbl == "" {
 				leftTbl = baseTable
@@ -1315,29 +1390,37 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 					ss.WithAlias(j.RightAlias)
 				}
 			}
-        if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
-			// REQ001248: reorder by ascending cost.
-			if order := CO.ReorderIndices(rightPreds); order != nil {
-				rightPreds = CO.OrderSlice(rightPreds, order)
+			if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
+				// REQ001248: reorder by ascending cost.
+				if order := CO.ReorderIndices(rightPreds); order != nil {
+					rightPreds = CO.OrderSlice(rightPreds, order)
+				}
+				for _, pred := range rightPreds {
+					tryApplyPointLookup(rightScan, pred)
+					rightScan = OP.NewFilter(rightScan, pred, nil)
+				}
 			}
-			for _, pred := range rightPreds {
-                tryApplyPointLookup(rightScan, pred)
-                rightScan = OP.NewFilter(rightScan, pred, nil)
-            }
-        }
-		// REQ001252: stats-driven range filter on the right side
-		// when the join equality has known stats on the left side.
-		// The filter is applied BEFORE the join so the right-side
-		// rows are pruned before row-hash lookup. We extract a
-		// single equi-join key from j.On; for multi-column joins
-		// the propagation is conservative and skipped.
-		if j.On != nil {
-			if propFilter := p.statsRangeFilterForJoin(j.On, leftTbl, j.Right); propFilter != nil {
-				rightScan = OP.NewFilter(rightScan, propFilter, nil)
+			// REQ001252: stats-driven range filter on the right side
+			// when the join equality has known stats on the left side.
+			// The filter is applied BEFORE the join so the right-side
+			// rows are pruned before row-hash lookup. We extract a
+			// single equi-join key from j.On; for multi-column joins
+			// the propagation is conservative and skipped.
+			if j.On != nil {
+				if propFilter := p.statsRangeFilterForJoin(j.On, leftTbl, j.Right); propFilter != nil {
+					rightScan = OP.NewFilter(rightScan, propFilter, nil)
+				}
 			}
-		}
 			var joinOp DT.Operator
-			if (kind == OP.JoinKindInner || kind == OP.JoinKindCross) && len(localConjuncts) > 0 {
+			// REQ002007: short-circuit constant ON clauses before the
+			// equi-join key extraction (which cannot match a constant).
+			// INNER JOIN ON TRUE → cross product; INNER JOIN ON FALSE →
+			// empty result. Outer joins fall through to the generic NLJ
+			// path below, which evaluates the folded constant per row.
+			if joinOp == nil {
+				joinOp = p.planConstantOnJoin(current, rightScan, leftTbl, rightTbl, j, kind, projectedCols)
+			}
+			if joinOp == nil && (kind == OP.JoinKindInner || kind == OP.JoinKindCross) && len(localConjuncts) > 0 {
 				lk, rk, remaining := p.extractEquiJoinKeys(localConjuncts, joinedTables, j.Right)
 				if len(lk) > 0 {
 					for _, orig := range localConjuncts {

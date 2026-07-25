@@ -81,35 +81,41 @@ func TestJoinElimination_PreservesONReferencedTable_Alias(t *testing.T) {
 	}
 }
 
-// TestJoinElimination_DropsUnreferencedTable verifies REQ001155 does
-// not regress the original REQ001076 optimization: a join whose right
-// table is not referenced anywhere (no ON column, no projection, no
-// WHERE/ORDER/GROUP/HAVING reference) is still safe to drop when the
-// ON clause does not constrain it either.
-func TestJoinElimination_DropsUnreferencedTable(t *testing.T) {
+// TestJoinElimination_PreservesConstantON verifies REQ002007: a join
+// whose ON clause is a constant expression (e.g. 1=1) must NOT be
+// eliminated, even when the right table is unreferenced in SELECT/
+// WHERE/ORDER/GROUP/HAVING. The constant's truth value is part of the
+// query semantics — TRUE makes an INNER JOIN a cross product.
+//
+// This supersedes the former REQ001076 behavior, which dropped any join
+// whose ON clause referenced neither joined table. That optimization was
+// unsound: it treated a constant TRUE ON as a no-op, silently returning
+// only the left table's rows instead of the cartesian product, and
+// returned left rows for a constant FALSE ON instead of zero rows.
+func TestJoinElimination_PreservesConstantON(t *testing.T) {
 	ResetForTest(t)
 
 	DT.RegisterTable("t1", []DT.Row{
 		{Cols: []string{"id"}, Data: []DT.Value{DT.NewIntValue(1)}},
 		{Cols: []string{"id"}, Data: []DT.Value{DT.NewIntValue(2)}},
 	})
-	// t2 is never referenced.
+	// t2 is never referenced in SELECT/WHERE/etc, but has 2 rows so the
+	// cross product (4) is distinguishable from the buggy drop (2).
 	DT.RegisterTable("t2", []DT.Row{
 		{Cols: []string{"id"}, Data: []DT.Value{DT.NewIntValue(99)}},
+		{Cols: []string{"id"}, Data: []DT.Value{DT.NewIntValue(100)}},
 	})
 
 	ex := NewExecutor()
 	defer UnregisterAll()
 	ctx := context.Background()
 
-	// ON is "1=1" — no column reference to t2 at all.
+	// ON 1=1 is constant TRUE → INNER JOIN is a cross product: 2×2 = 4.
 	rows, err := ex.QueryAll(ctx, `SELECT t1.id FROM t1 JOIN t2 ON 1=1`)
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
-	// REQ001076 optimization: t2 should be eliminated; we get all 2
-	// t1 rows (not the 2x1 cartesian).
-	if len(rows) != 2 {
-		t.Fatalf("want 2 rows (t2 dropped via REQ001076), got %d", len(rows))
+	if len(rows) != 4 {
+		t.Fatalf("want 4 rows (constant-TRUE ON → cross product), got %d", len(rows))
 	}
 }
