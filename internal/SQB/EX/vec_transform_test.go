@@ -198,15 +198,17 @@ func TestTryVectorizePlan_DistinctAggregate(t *testing.T) {
 }
 
 func TestTryVectorizePlan_GroupConcatAggregate(t *testing.T) {
+	// REQ001993: GROUP_CONCAT is now vectorized.
 	ss := OP.NewSeqScan("t1")
 	aggs := []PS.Expr{
 		&PS.AggregateFunc{Name: "group_concat", Arg: &PS.Ident{Name: "v"}},
 	}
 	agg := AG.NewAggregate(ss, nil, aggs)
 	result := tryVectorizePlan(agg, nil)
-	if result != agg {
-		t.Fatal("GROUP_CONCAT should not be vectorized, expected original root")
+	if result == agg {
+		t.Fatal("GROUP_CONCAT should be vectorized, expected transformed root")
 	}
+	t.Logf("GROUP_CONCAT result type: %T", result)
 }
 
 func TestTryVectorizePlan_SumAggregate(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -626,27 +627,37 @@ func (a *VectorizedMax) Close() error {
 type AggKind int
 
 const (
-	AggSum   AggKind = 0
-	AggCount AggKind = 1
-	AggMin   AggKind = 2
-	AggMax   AggKind = 3
-	AggAvg   AggKind = 4
+	AggSum         AggKind = 0
+	AggCount       AggKind = 1
+	AggMin         AggKind = 2
+	AggMax         AggKind = 3
+	AggAvg         AggKind = 4
+	AggGroupConcat AggKind = 5
+	AggStringAgg   AggKind = 6
 )
 
 // AggDef describes one aggregate column. Kind is the operation,
 // Col is the source column index in the input batch (use -1 for COUNT(*)).
+// Separator is the separator string for GROUP_CONCAT/STRING_AGG.
+// Distinct controls deduplication for GROUP_CONCAT.
 type AggDef struct {
-	Kind AggKind
-	Col  int
+	Kind      AggKind
+	Col       int
+	Separator string
+	Distinct  bool
 }
 
 // aggPayload holds the accumulator state for one hash table slot.
 type aggPayload struct {
-	Count    int64
-	Sum      int64
-	Min      int64
-	Max      int64
-	HasValue bool
+	Count      int64
+	Sum        int64
+	Min        int64
+	Max        int64
+	HasValue   bool
+	StrParts   []string        // REQ001993: GROUP_CONCAT/STRING_AGG accumulator
+	StrSep     string          // REQ001993: separator for string concat
+	StrSeen    map[any]bool    // REQ001993: DISTINCT dedup for GROUP_CONCAT
+	StrDistinct bool           // REQ001993: whether DISTINCT is enabled
 }
 
 // VectorizedHashAggregate is a vectorized hash aggregate that
@@ -857,6 +868,29 @@ func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot in
 				continue
 			}
 			col := batch.Cols[def.Col]
+			// REQ001993: handle string aggregates
+			if def.Kind == AggGroupConcat || def.Kind == AggStringAgg {
+				if col.Data.Strs == nil || src >= len(col.Data.Strs) {
+					continue
+				}
+				if col.Nulls != nil && src < len(col.Nulls) && col.Nulls[src] {
+					continue
+				}
+				val := col.Data.Strs[src]
+				if def.Distinct {
+					if p.StrSeen == nil {
+						p.StrSeen = make(map[any]bool)
+					}
+					if p.StrSeen[val] {
+						continue
+					}
+					p.StrSeen[val] = true
+				}
+				p.StrSep = def.Separator
+				p.StrDistinct = def.Distinct
+				p.StrParts = append(p.StrParts, val)
+				continue
+			}
 			if col.Data.Ints == nil || src >= len(col.Data.Ints) {
 				continue
 			}
@@ -907,6 +941,29 @@ func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot in
 			continue
 		}
 		col := batch.Cols[def.Col]
+		// REQ001993: handle string aggregates
+		if def.Kind == AggGroupConcat || def.Kind == AggStringAgg {
+			if col.Data.Strs == nil || src >= len(col.Data.Strs) {
+				continue
+			}
+			if col.Nulls != nil && src < len(col.Nulls) && col.Nulls[src] {
+				continue
+			}
+			val := col.Data.Strs[src]
+			if def.Distinct {
+				if p.StrSeen == nil {
+					p.StrSeen = make(map[any]bool)
+				}
+				if p.StrSeen[val] {
+					continue
+				}
+				p.StrSeen[val] = true
+			}
+			p.StrSep = def.Separator
+			p.StrDistinct = def.Distinct
+			p.StrParts = append(p.StrParts, val)
+			continue
+		}
 		if col.Data.Ints == nil || src >= len(col.Data.Ints) {
 			continue
 		}
@@ -963,10 +1020,19 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 			batch.SetColumnName(colIdx, "max")
 		case AggAvg:
 			batch.SetColumnName(colIdx, "avg")
+		case AggGroupConcat:
+			batch.SetColumnName(colIdx, "group_concat")
+		case AggStringAgg:
+			batch.SetColumnName(colIdx, "string_agg")
 		}
 
-		batch.Cols[colIdx].Type = LX.T_INT_KW
-		batch.Cols[colIdx].Data.Ints = make([]int64, 0)
+		if def.Kind == AggGroupConcat || def.Kind == AggStringAgg {
+			batch.Cols[colIdx].Type = LX.T_TEXT
+			batch.Cols[colIdx].Data.Strs = make([]string, 0)
+		} else {
+			batch.Cols[colIdx].Type = LX.T_INT_KW
+			batch.Cols[colIdx].Data.Ints = make([]int64, 0)
+		}
 		colIdx++
 	}
 
@@ -977,6 +1043,26 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 		p := a.noGroupPayload
 		colIdx = 0
 		for _, def := range a.aggDefs {
+			if def.Kind == AggGroupConcat || def.Kind == AggStringAgg {
+				var s string
+				if len(p.StrParts) > 0 {
+					var b strings.Builder
+					total := len(p.StrParts[0])
+					for _, part := range p.StrParts[1:] {
+						total += len(p.StrSep) + len(part)
+					}
+					b.Grow(total)
+					b.WriteString(p.StrParts[0])
+					for _, part := range p.StrParts[1:] {
+						b.WriteString(p.StrSep)
+						b.WriteString(part)
+					}
+					s = b.String()
+				}
+				batch.Cols[colIdx].Data.Strs = append(batch.Cols[colIdx].Data.Strs, s)
+				colIdx++
+				continue
+			}
 			var val int64
 			switch def.Kind {
 			case AggCount:
@@ -993,11 +1079,9 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 				}
 			case AggAvg:
 				if p.Count > 0 {
-
 					val = p.Sum / p.Count
 				}
 			}
-
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, val)
 			colIdx++
 		}
@@ -1025,6 +1109,26 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 			colIdx++
 		}
 		for _, def := range a.aggDefs {
+			if def.Kind == AggGroupConcat || def.Kind == AggStringAgg {
+				var s string
+				if len(p.StrParts) > 0 {
+					var b strings.Builder
+					total := len(p.StrParts[0])
+					for _, part := range p.StrParts[1:] {
+						total += len(p.StrSep) + len(part)
+					}
+					b.Grow(total)
+					b.WriteString(p.StrParts[0])
+					for _, part := range p.StrParts[1:] {
+						b.WriteString(p.StrSep)
+						b.WriteString(part)
+					}
+					s = b.String()
+				}
+				batch.Cols[colIdx].Data.Strs = append(batch.Cols[colIdx].Data.Strs, s)
+				colIdx++
+				continue
+			}
 			var val int64
 			switch def.Kind {
 			case AggCount:
@@ -1037,16 +1141,13 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 				}
 			case AggMax:
 				if p.HasValue {
-
 					val = p.Max
 				}
 			case AggAvg:
 				if p.Count > 0 {
-
 					val = p.Sum / p.Count
 				}
 			}
-
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, val)
 			colIdx++
 		}
@@ -1070,14 +1171,24 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 			colIdx++
 		}
 		for range a.aggDefs {
+			di := colIdx - stride
+			if di >= 0 && di < len(a.aggDefs) && (a.aggDefs[di].Kind == AggGroupConcat || a.aggDefs[di].Kind == AggStringAgg) {
+				batch.Cols[colIdx].Data.Strs = append(batch.Cols[colIdx].Data.Strs, "")
+				if batch.Cols[colIdx].Nulls == nil {
+					batch.Cols[colIdx].Nulls = make([]bool, 1)
+				} else if len(batch.Cols[colIdx].Nulls) < 1 {
+					batch.Cols[colIdx].Nulls = append(batch.Cols[colIdx].Nulls, false)
+				}
+				batch.Cols[colIdx].Nulls[0] = true
+				colIdx++
+				continue
+			}
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, 0)
 			if batch.Cols[colIdx].Nulls == nil {
-
 				batch.Cols[colIdx].Nulls = make([]bool, 1)
 			} else if len(batch.Cols[colIdx].Nulls) < 1 {
 				batch.Cols[colIdx].Nulls = append(batch.Cols[colIdx].Nulls, false)
 			}
-
 			batch.Cols[colIdx].Nulls[0] = true
 			colIdx++
 		}

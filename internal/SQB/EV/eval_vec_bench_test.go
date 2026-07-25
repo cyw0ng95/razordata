@@ -225,3 +225,48 @@ func BenchmarkEvalBatchExpr_Subquery_CorrelatedPerRow(b *testing.B) {
 		_ = EvalBatchExpr(subq, batch, nil)
 	}
 }
+
+// BenchmarkEvalBatchExpr_Subquery_CorrelatedFewKeys exercises the REQ001992
+// group-by-key path: a correlated scalar subquery where the batch has only
+// a few distinct correlated values (e.g., 4 keys shared across 1024 rows).
+// The benchmark pre-populates the cache so it measures hash-grouping + column
+// write overhead rather than planner execution.
+func BenchmarkEvalBatchExpr_Subquery_CorrelatedFewKeys(b *testing.B) {
+	n := 1024
+	numKeys := 4
+	batch := UT.GetBatch(2)
+	batch.Cols[0].Name = "outer_b"
+	batch.Cols[1].Name = "other"
+	batch.SetColMap(map[string]int{"outer_b": 0, "other": 1})
+	for i := 0; i < n; i++ {
+		// Cycle through numKeys distinct correlated values.
+		keyVal := int64(i % numKeys)
+		batch.AppendRow(0, LX.T_INT_KW, keyVal, false)
+		batch.AppendRow(1, LX.T_INT_KW, int64(i), false)
+		batch.AdvanceSize()
+	}
+
+	subq := &PS.SubqueryExpr{Subquery: &PS.Select{
+		From: "t2",
+		Cols: []PS.Expr{&PS.NumberLiteral{Val: 99}},
+		Where: &PS.BinaryExpr{
+			Left:  &PS.Ident{Name: "c"},
+			Op:    LX.T_EQ,
+			Right: &PS.Ident{Name: "outer_b"},
+		},
+	}}
+
+	// Pre-populate the correlated cache for the numKeys distinct values.
+	subqPtr := uintptr(reflect.ValueOf(subq).Pointer())
+	for k := 0; k < numKeys; k++ {
+		h := fnv.New64a()
+		writeHashToFNV(h, DT.NewIntValue(int64(k)))
+		key := fmt.Sprintf("%x:%x", subqPtr, h.Sum64())
+		correlatedSubqueryCache.Put(key, DT.NewIntValue(99))
+	}
+
+	b.ResetTimer()
+	for range b.N {
+		_ = EvalBatchExpr(subq, batch, nil)
+	}
+}

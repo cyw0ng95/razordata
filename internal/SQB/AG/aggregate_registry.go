@@ -39,6 +39,7 @@ func init() {
 	registerAggregateFunc("MIN", evalAggMin)
 	registerAggregateFunc("MAX", evalAggMax)
 	registerAggregateFunc("GROUP_CONCAT", evalAggGroupConcat)
+	registerAggregateFunc("STRING_AGG", evalAggGroupConcat)
 }
 
 func evalAggCount(agg *PS.AggregateFunc, rows []Row, params []any) (any, error) {

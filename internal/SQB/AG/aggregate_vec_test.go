@@ -478,3 +478,151 @@ func TestVectorizedHashAggregate_NoGroupBy(t *testing.T) {
 		t.Fatalf("expected COUNT=3, got %v", batch.Value(0, 0))
 	}
 }
+
+// REQ001993: GROUP_CONCAT vectorized tests.
+
+// makeStrBatch creates a 1-column TEXT batch with the given values.
+func makeStrBatch(values []string) *UT.Batch {
+	b := UT.GetBatch(1)
+	b.SetColumnName(0, "v")
+	b.Cols[0].Type = LX.T_TEXT
+	b.Cols[0].Data.Strs = make([]string, len(values))
+	copy(b.Cols[0].Data.Strs, values)
+	b.Size = len(values)
+	return b
+}
+
+// makeGroupStrBatch creates a 2-column batch: col 0 = group key (INT),
+// col 1 = value (TEXT).
+func makeGroupStrBatch(keys []int64, values []string) *UT.Batch {
+	b := UT.GetBatch(2)
+	b.SetColumnName(0, "g")
+	b.SetColumnName(1, "v")
+	b.Cols[0].Type = LX.T_INT_KW
+	b.Cols[0].Data.Ints = make([]int64, len(keys))
+	copy(b.Cols[0].Data.Ints, keys)
+	b.Cols[1].Type = LX.T_TEXT
+	b.Cols[1].Data.Strs = make([]string, len(values))
+	copy(b.Cols[1].Data.Strs, values)
+	b.Size = len(keys)
+	return b
+}
+
+func TestVectorizedHashAggregate_GroupConcatNoGroup(t *testing.T) {
+	src := &testBatchSource{
+		batches: []*UT.Batch{
+			makeStrBatch([]string{"a", "b", "c"}),
+		},
+	}
+	agg := NewVectorizedHashAggregate(src, nil, []AggDef{{Kind: AggGroupConcat, Col: 0, Separator: ","}})
+	defer agg.Close()
+
+	batch, err := agg.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch == nil {
+		t.Fatal("expected result batch, got nil")
+	}
+	if batch.Size != 1 {
+		t.Fatalf("expected 1 row, got %d", batch.Size)
+	}
+	val := batch.Value(0, 0)
+	if val != "a,b,c" {
+		t.Fatalf("expected GROUP_CONCAT='a,b,c', got %v", val)
+	}
+}
+
+func TestVectorizedHashAggregate_GroupConcatCustomSeparator(t *testing.T) {
+	src := &testBatchSource{
+		batches: []*UT.Batch{
+			makeStrBatch([]string{"x", "y", "z"}),
+		},
+	}
+	agg := NewVectorizedHashAggregate(src, nil, []AggDef{{Kind: AggGroupConcat, Col: 0, Separator: "|"}})
+	defer agg.Close()
+
+	batch, err := agg.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	val := batch.Value(0, 0)
+	if val != "x|y|z" {
+		t.Fatalf("expected GROUP_CONCAT='x|y|z', got %v", val)
+	}
+}
+
+func TestVectorizedHashAggregate_GroupConcatGroupBy(t *testing.T) {
+	src := &testBatchSource{
+		batches: []*UT.Batch{
+			makeGroupStrBatch([]int64{1, 1, 2, 2}, []string{"a", "b", "c", "d"}),
+		},
+	}
+	agg := NewVectorizedHashAggregate(src, []int{0}, []AggDef{{Kind: AggGroupConcat, Col: 1, Separator: ","}})
+	defer agg.Close()
+
+	batch, err := agg.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch.Size != 2 {
+		t.Fatalf("expected 2 rows, got %d", batch.Size)
+	}
+	// Hash order is not guaranteed; collect results into a map
+	results := make(map[int64]string)
+	for i := 0; i < batch.Size; i++ {
+		key := batch.Value(0, i)
+		val := batch.Cols[1].Data.Strs[i]
+		results[key.(int64)] = val
+	}
+	if results[1] != "a,b" {
+		t.Fatalf("expected group 1 = 'a,b', got %q", results[1])
+	}
+	if results[2] != "c,d" {
+		t.Fatalf("expected group 2 = 'c,d', got %q", results[2])
+	}
+}
+
+func TestVectorizedHashAggregate_GroupConcatDistinct(t *testing.T) {
+	src := &testBatchSource{
+		batches: []*UT.Batch{
+			makeStrBatch([]string{"a", "b", "a", "c", "b"}),
+		},
+	}
+	agg := NewVectorizedHashAggregate(src, nil, []AggDef{{Kind: AggGroupConcat, Col: 0, Separator: ",", Distinct: true}})
+	defer agg.Close()
+
+	batch, err := agg.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	val := batch.Value(0, 0)
+	// DISTINCT order: first-seen order = a, b, c
+	if val != "a,b,c" {
+		t.Fatalf("expected DISTINCT GROUP_CONCAT='a,b,c', got %v", val)
+	}
+}
+
+func TestVectorizedHashAggregate_GroupConcatEmpty(t *testing.T) {
+	src := &testBatchSource{
+		batches: []*UT.Batch{},
+	}
+	agg := NewVectorizedHashAggregate(src, nil, []AggDef{{Kind: AggGroupConcat, Col: 0, Separator: ","}})
+	defer agg.Close()
+
+	batch, err := agg.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch == nil {
+		t.Fatal("expected result batch, got nil")
+	}
+	if batch.Size != 1 {
+		t.Fatalf("expected 1 row (empty result placeholder), got %d", batch.Size)
+	}
+	// Empty GROUP_CONCAT returns NULL (represented as empty string in this test)
+	val := batch.Value(0, 0)
+	if val != "" {
+		t.Fatalf("expected empty string for empty GROUP_CONCAT, got %v", val)
+	}
+}

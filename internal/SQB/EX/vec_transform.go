@@ -1,11 +1,13 @@
 package EX
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
+	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
@@ -319,12 +321,12 @@ func transformAggregate(a *AG.Aggregate, bp UT.BatchProducer) *AG.VectorizedHash
 	defs := make([]AG.AggDef, 0, len(aggs))
 	child := a.Child()
 	for _, ag := range aggs {
-		kind, colIdx, ok := resolveAggDef(ag, child)
+		def, ok := resolveAggDef(ag, child)
 		if !ok {
 			// unsupported aggregate — fallback to row-based
 			return nil
 		}
-		defs = append(defs, AG.AggDef{Kind: kind, Col: colIdx})
+		defs = append(defs, def)
 	}
 	groupColIdxs := make([]int, len(groupCols))
 	for i, gc := range groupCols {
@@ -358,11 +360,11 @@ func transformHashAggregate(h *AG.HashAggregate, bp UT.BatchProducer) *AG.Vector
 	defs := make([]AG.AggDef, 0, len(aggs))
 	child := h.Child()
 	for _, ag := range aggs {
-		kind, colIdx, ok := resolveAggDef(ag, child)
+		def, ok := resolveAggDef(ag, child)
 		if !ok {
 			return nil
 		}
-		defs = append(defs, AG.AggDef{Kind: kind, Col: colIdx})
+		defs = append(defs, def)
 	}
 	groupColIdxs := make([]int, len(groupCols))
 	for i, gc := range groupCols {
@@ -400,23 +402,21 @@ func resolveColumnIndex(child DT.Operator, colName string) (int, bool) {
 	return 0, false
 }
 
-// resolveAggDef parses an aggregate expression into (AggKind, ColIdx, ok).
-// COUNT(*) returns (AggCount, -1, true). COUNT(col) returns (AggCount, colIdx, true).
-// Returns (0, 0, false) for unsupported aggregates (DISTINCT, GROUP_CONCAT, etc.).
-func resolveAggDef(expr PS.Expr, child DT.Operator) (AG.AggKind, int, bool) {
+// resolveAggDef parses an aggregate expression into (AggDef, ok).
+// COUNT(*) returns (AggDef{Kind: AggCount, Col: -1}, true).
+// Returns ({AggDef{}, false}, false) for unsupported aggregates.
+// REQ001993: GROUP_CONCAT/STRING_AGG supported with DISTINCT and SEPARATOR.
+func resolveAggDef(expr PS.Expr, child DT.Operator) (AG.AggDef, bool) {
 	// Unwrap AliasedExpr (e.g., SUM(v) AS total)
 	if ae, ok := expr.(*PS.AliasedExpr); ok {
 		return resolveAggDef(ae.Expr, child)
 	}
 	af, ok := expr.(*PS.AggregateFunc)
 	if !ok {
-		return 0, 0, false
-	}
-	// DISTINCT not supported in vectorized path
-	if af.Distinct {
-		return 0, 0, false
+		return AG.AggDef{}, false
 	}
 	var kind AG.AggKind
+	isStringAgg := false
 	switch strings.ToUpper(af.Name) {
 	case "COUNT":
 		kind = AG.AggCount
@@ -428,21 +428,46 @@ func resolveAggDef(expr PS.Expr, child DT.Operator) (AG.AggKind, int, bool) {
 		kind = AG.AggMax
 	case "AVG":
 		kind = AG.AggAvg
+	case "GROUP_CONCAT":
+		kind = AG.AggGroupConcat
+		isStringAgg = true
+	case "STRING_AGG":
+		kind = AG.AggStringAgg
+		isStringAgg = true
 	default:
-		return 0, 0, false
+		return AG.AggDef{}, false
 	}
+	// DISTINCT not supported for numeric aggregates, but allowed for GROUP_CONCAT/STRING_AGG
+	if af.Distinct && !isStringAgg {
+		return AG.AggDef{}, false
+	}
+	// REQ001993: extract separator for GROUP_CONCAT/STRING_AGG
+	sep := ","
+	if isStringAgg && af.Separator != nil {
+		// Evaluate separator as a constant expression.
+		sv, err := EV.EvalValue(af.Separator, nil, nil)
+		if err == nil && sv.Kind != DT.KindNull {
+			sep = fmt.Sprintf("%v", sv.ToAny())
+		}
+	}
+	def := AG.AggDef{Kind: kind, Separator: sep, Distinct: af.Distinct && isStringAgg}
 	switch arg := af.Arg.(type) {
 	case *PS.StarExpr:
 		// COUNT(*) uses Col: -1 (no column needed)
-		return kind, -1, true
+		return def, true
 	case *PS.Ident:
 		idx, ok := resolveColumnIndex(child, arg.Name)
 		if !ok {
-			return 0, 0, false
+			return AG.AggDef{}, false
 		}
-		return kind, idx, true
+		def.Col = idx
+		return def, true
 	default:
-		return 0, 0, false
+		// REQ001993: GROUP_CONCAT/STRING_AGG with expression args (e.g., CAST) not yet supported
+		if isStringAgg {
+			return AG.AggDef{}, false
+		}
+		return AG.AggDef{}, false
 	}
 }
 

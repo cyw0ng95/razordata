@@ -1190,38 +1190,67 @@ func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any)
 		putRowPool(firstRow)
 	}
 
-	// Per-row path with shared cache.
+	// REQ001992: per-row path with group-by-key optimization.
+	// Group rows by unique correlation key, evaluate subquery once per group,
+	// then map results back. Avoids per-row batchToRow allocation.
 	var out UT.Column
 	allocated := false
-	for i := 0; i < n; i++ {
-		row := batchToRow(batch, i)
-		// Compute hash of correlated column values for cache key.
-		h := fnv.New64a()
-		for _, col := range corrCols {
-			for ci, name := range row.Cols {
-				if name == col {
-					if ci < len(row.Data) {
-						writeHashToFNV(h, row.Data[ci])
-					}
-					break
-				}
-			}
+
+	// Pass 1: compute hash for each row and group by hash.
+	// REQ001992: hash directly from batch typed arrays (no batchToRow).
+	type keyGroup struct {
+		hash    uint64
+		indices []int
+	}
+	groups := make(map[uint64]*keyGroup)
+	groupOrder := make([]uint64, 0, n)
+
+	for pos := 0; pos < n; pos++ {
+		phys := pos
+		if batch.Sel != nil && pos < len(batch.Sel) {
+			phys = int(batch.Sel[pos])
 		}
-		key := fmt.Sprintf("%x:%x", subqPtr, h.Sum64())
-		if cached, ok := correlatedSubqueryCache.Get(key); ok {
-			v := cached
-			if !allocated {
-				out.Type = tokenTypeFromValue(v)
-				allocateColumnData(&out, batch.Size)
-				allocated = true
-			}
-			writeValueToColumnData(&out, i, v)
-			putRowPool(row)
+		if phys >= batch.Size {
 			continue
 		}
+		h := fnv.New64a()
+		hashBatchCorrelatedCols(h, batch, phys, corIdx)
+		key := h.Sum64()
+		g, ok := groups[key]
+		if !ok {
+			g = &keyGroup{hash: key, indices: make([]int, 0, 4)}
+			groups[key] = g
+			groupOrder = append(groupOrder, key)
+		}
+		g.indices = append(g.indices, pos)
+	}
+
+	// Pass 2: evaluate subquery once per unique group (with LRU cache).
+	values := make(map[uint64]Value, len(groups))
+	errGroups := make(map[uint64]bool)
+
+	for _, key := range groupOrder {
+		cacheKey := fmt.Sprintf("%x:%x", subqPtr, key)
+		if cached, ok := correlatedSubqueryCache.Get(cacheKey); ok {
+			values[key] = cached
+			continue
+		}
+		g := groups[key]
+		row := batchToRow(batch, g.indices[0])
 		v, err := evalScalarSubquery(subq, row, params)
 		putRowPool(row)
 		if err != nil {
+			errGroups[key] = true
+			continue
+		}
+		correlatedSubqueryCache.Put(cacheKey, v)
+		values[key] = v
+	}
+
+	// Pass 3: map results back to all rows.
+	for _, key := range groupOrder {
+		g := groups[key]
+		if errGroups[key] {
 			if !allocated {
 				out.Type = LX.T_NULL
 				out.Data = UT.ColumnData{}
@@ -1230,16 +1259,20 @@ func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any)
 			if out.Nulls == nil {
 				out.Nulls = make([]bool, batch.Size)
 			}
-			out.Nulls[i] = true
+			for _, idx := range g.indices {
+				out.Nulls[idx] = true
+			}
 			continue
 		}
-		correlatedSubqueryCache.Put(key, v)
+		v := values[key]
 		if !allocated {
 			out.Type = tokenTypeFromValue(v)
 			allocateColumnData(&out, batch.Size)
 			allocated = true
 		}
-		writeValueToColumnData(&out, i, v)
+		for _, idx := range g.indices {
+			writeValueToColumnData(&out, idx, v)
+		}
 	}
 	return out
 }
@@ -2646,6 +2679,68 @@ func evalBatchINSubquery(e *PS.InExpr, batch *UT.Batch, params []any) UT.Column 
 		}
 	}
 	return out
+}
+
+// hashBatchCorrelatedCols computes an FNV hash of the correlated column values
+// at the given physical row position in the batch, reading directly from the
+// batch's typed data arrays. This avoids the batchToRow allocation in the
+// per-row hash loop. REQ001992.
+func hashBatchCorrelatedCols(h hash.Hash64, batch *UT.Batch, phys int, corIdx []int) {
+	if h == nil {
+		return
+	}
+	for _, idx := range corIdx {
+		if idx < 0 || idx >= len(batch.Cols) {
+			continue
+		}
+		col := &batch.Cols[idx]
+		if col.Nulls != nil && phys < len(col.Nulls) && col.Nulls[phys] {
+			h.Write([]byte{0xff})
+			continue
+		}
+		switch col.Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			if phys < len(col.Data.Ints) {
+				var b [8]byte
+				u := uint64(col.Data.Ints[phys])
+				b[0] = byte(u)
+				b[1] = byte(u >> 8)
+				b[2] = byte(u >> 16)
+				b[3] = byte(u >> 24)
+				b[4] = byte(u >> 32)
+				b[5] = byte(u >> 40)
+				b[6] = byte(u >> 48)
+				b[7] = byte(u >> 56)
+				h.Write(b[:])
+			}
+		case LX.T_FLOAT_KW:
+			if phys < len(col.Data.Floats) {
+				var b [8]byte
+				u := math.Float64bits(col.Data.Floats[phys])
+				b[0] = byte(u)
+				b[1] = byte(u >> 8)
+				b[2] = byte(u >> 16)
+				b[3] = byte(u >> 24)
+				b[4] = byte(u >> 32)
+				b[5] = byte(u >> 40)
+				b[6] = byte(u >> 48)
+				b[7] = byte(u >> 56)
+				h.Write(b[:])
+			}
+		case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+			if phys < len(col.Data.Strs) {
+				h.Write([]byte(col.Data.Strs[phys]))
+			}
+		case LX.T_BOOL:
+			if phys < len(col.Data.Bools) {
+				if col.Data.Bools[phys] {
+					h.Write([]byte{1})
+				} else {
+					h.Write([]byte{0})
+				}
+			}
+		}
+	}
 }
 
 // writeHashToFNV writes a pl.Value to an fnv hash for use as a cache key.
