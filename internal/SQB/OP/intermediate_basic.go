@@ -1160,26 +1160,22 @@ func compileFilterExpr(e PS.Expr) func(*Row) (bool, error) {
 		return compileInExpr(v)
 	case *PS.UnaryExpr:
 		if v.Op == LX.T_NOT {
-			// REQ001127: NOT InExpr requires NULL-aware three-valued
-			// logic that the compiled (bool,error) path cannot express
-			// (NULL IN list is NULL, not FALSE, so NOT NULL is NULL,
-			// not TRUE). Fall back to the per-row Eval path which
-			// handles NULL correctly.
-			if _, ok := v.Operand.(*PS.InExpr); ok {
-				return nil
-			}
-			inner := compileFilterExpr(v.Operand)
-			if inner == nil {
-				return nil
-			}
-			return func(row *Row) (bool, error) {
-				res, err := inner(row)
-				if err != nil {
-					return false, err
-				}
-				return !res, nil
-			}
+			// REQ001979: NOT requires NULL-aware three-valued logic.
+			// The compiled (bool,error) path cannot distinguish NULL
+			// from FALSE — makeCompiledCmp returns (false, nil) for
+			// NULL data, and compiled NOT flips it to (true, nil),
+			// which is wrong (NOT NULL = NULL, not TRUE). Always
+			// fall back to the per-row Eval path which handles NULL
+			// correctly (eval.go:842 returns NULL for unary NOT).
+			return nil
 		}
+		return nil
+	case *PS.BetweenExpr:
+		// REQ001979: BETWEEN has three-valued NULL semantics
+		// (NULL BETWEEN x AND y = NULL). The compiled (bool,error)
+		// path cannot express NULL, so always fall back to the
+		// per-row Eval path (evalBetween in eval.go:998) which
+		// handles NULL correctly via lowOk/highOk tracking.
 		return nil
 	default:
 		return nil
