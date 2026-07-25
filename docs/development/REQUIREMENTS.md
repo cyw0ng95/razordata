@@ -1,7 +1,6 @@
 ## TBD
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 | --- | --- | --- | --- | --- | --- | --- |
-| REQ001717 | tests/sqlcmp/slt | **Pass random/aggregates/slt_good_4 in pre-commit gate.** 129 failures / 22,673 records. Fixed via REQ001979. When resolved, add to `includedCases`. | high | medium |  | tests/sqlcmp/slt/slt_included_list.go |
 | REQ001718 | tests/sqlcmp/slt | **Pass random/aggregates/slt_good_5 in pre-commit gate.** 136 failures / 22,735 records. Fixed via REQ001979. When resolved, add to `includedCases`. | high | medium |  | tests/sqlcmp/slt/slt_included_list.go |
 | REQ001719 | tests/sqlcmp/slt | **Pass random/aggregates/slt_good_6 in pre-commit gate.** 102 failures / 22,732 records. Fixed via REQ001979. When resolved, add to `includedCases`. | high | medium |  | tests/sqlcmp/slt/slt_included_list.go |
 | REQ001720 | tests/sqlcmp/slt | **Pass random/aggregates/slt_good_7 in pre-commit gate.** 121 failures / 22,565 records. Fixed via REQ001979. When resolved, add to `includedCases`. | high | medium |  | tests/sqlcmp/slt/slt_included_list.go |
