@@ -161,6 +161,43 @@ func BenchmarkSSTReaderOpenAndIterate(b *testing.B) {
 	}
 }
 
+// BenchmarkSSTReader_ReadBlock measures the block-batched iteration path
+// (REQ001995). Consumes the entire SST block-by-block instead of pair-by-pair.
+// Comparable to BenchmarkSSTReaderOpenAndIterate to quantify the
+// per-row iterator overhead.
+func BenchmarkSSTReader_ReadBlock(b *testing.B) {
+	keys := makeBenchKeys(10_000, 16)
+	values := make([][]byte, len(keys))
+	for i := range values {
+		values[i] = []byte(fmt.Sprintf("v%d", i))
+	}
+	w := newSSTWriter()
+	for j, k := range keys {
+		w.Add(k, values[j])
+	}
+	data, err := w.Finish()
+	if err != nil {
+		b.Fatalf("setup: w.Finish: %v", err)
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		r, err := openSST(data)
+		if err != nil {
+			b.Fatalf("openSST: %v", err)
+		}
+		it := r.Iterator()
+		for {
+			_, values, ok := it.ReadBlock()
+			if !ok {
+				break
+			}
+			_ = values
+		}
+		_ = r.Close()
+	}
+}
+
 // BenchmarkFlushMemtableToSST measures the end-to-end flush
 // path: build a memtable with N keys, drive requestFlush +
 // WaitForFlush. This is what a real writer hits when

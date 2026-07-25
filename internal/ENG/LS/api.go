@@ -357,6 +357,12 @@ func (s *sstIter) Value() []byte { return s.it.Value() }
 func (s *sstIter) Err() error    { return s.it.Err() }
 func (s *sstIter) Close() error  { return s.it.Close() }
 
+// ReadBlock exposes the batch-block decode capability to callers that
+// type-assert to OP.BlockReader. REQ001995.
+func (s *sstIter) ReadBlock() (keys, values [][]byte, ok bool) {
+	return s.it.ReadBlock()
+}
+
 type iterHeapItem struct {
 	key   []byte // borrowed from mergeIterator.sourceKeys[src] (REQ001258)
 	value []byte // borrowed from mergeIterator.sourceVals[src] (REQ001258)

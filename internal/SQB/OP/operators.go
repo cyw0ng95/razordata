@@ -74,6 +74,17 @@ type BlockStatProvider interface {
 	BlockColumnStats(colIdx int) (min, max []byte, ok bool)
 }
 
+// REQ001995: BlockReader is implemented by iterators that can decode an
+// entire data block in a single call, returning all surviving K/V pairs in
+// zero-copy form. VectorizedSeqScan uses this to amortize per-row iterator
+// overhead across all rows in the block.
+type BlockReader interface {
+	// ReadBlock returns the next block's surviving K/V pairs. Returns
+	// ok=false at EOF. After this call, subsequent calls (or Next())
+	// advance past the consumed block.
+	ReadBlock() (keys, values [][]byte, ok bool)
+}
+
 // rows without decoding (e.g., SeqScan, IndexScan).
 type Skipper interface {
 	Skip(ctx context.Context, n int64) error
@@ -1114,6 +1125,12 @@ func prefixRowCols(r Row, alias string) Row {
 // Row construction. Decodes only the columns in wantedCols via
 // DecodeRowSubsetIntoColumnar and writes directly to batch column
 // slices. REQ001480.
+//
+// REQ001995: when the iterator implements BlockReader, consume a full
+// SST block per outer iteration. This amortizes per-row iterator
+// overhead (range-tombstone check, tombstone skip, key compare) across
+// all rows in the block. Falls back to per-row Next()/Value() when the
+// iterator doesn't expose the capability.
 func (s *SeqScan) nextColumnarBatch(ctx context.Context, batch *UT.Batch, wantedCols []int, wantedTypes []LX.TokenType) (int, error) {
 	if s.it == nil {
 		s.it = s.store.NewIterator(s.prefix)
@@ -1134,6 +1151,42 @@ func (s *SeqScan) nextColumnarBatch(ctx context.Context, batch *UT.Batch, wanted
 		types:  wantedTypes,
 		intern: s.interner,
 	}
+
+	// REQ001995: fast path — consume full block at once.
+	if br, ok := s.it.(BlockReader); ok {
+		for rowIdx < maxRows {
+			_, values, ok := br.ReadBlock()
+			if !ok {
+				return rowIdx, nil
+			}
+			s.ctxCheckCounter++
+			if s.ctxCheckCounter >= 1024 {
+				s.ctxCheckCounter = 0
+				if err := ctx.Err(); err != nil {
+					return rowIdx, err
+				}
+			}
+			for i := range values {
+				if rowIdx >= maxRows {
+					break
+				}
+				if s.rawByteFilter != nil && !s.rawByteFilter(values[i]) {
+					continue
+				}
+				w.rowIdx = rowIdx
+				if err := DT.DecodeRowSubsetIntoColumnar(values[i], s.schema, wantedCols, w); err != nil {
+					return rowIdx, err
+				}
+				rowIdx++
+			}
+		}
+		if err := s.it.Err(); err != nil {
+			return rowIdx, err
+		}
+		return rowIdx, nil
+	}
+
+	// Slow path — per-row Next()/Value().
 	for rowIdx < maxRows && s.it.Next() {
 		s.ctxCheckCounter++
 		if s.ctxCheckCounter >= 1024 {

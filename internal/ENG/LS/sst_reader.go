@@ -878,6 +878,53 @@ func (it *sstIterator) loadBlock(blockIdx int) bool {
 	return true
 }
 
+// ReadBlock returns all surviving key/value pairs from the next block in
+// zero-copy form. Returns ok=false at EOF. Applies the same filtering as
+// Next() — tombstones, empty values, and range-tombstoned keys are dropped.
+// After this call, the iterator's pairs slice is cleared and blockIdx
+// points at the consumed block; subsequent Next() calls advance to the
+// following block (REQ001995).
+func (it *sstIterator) ReadBlock() (keys, values [][]byte, ok bool) {
+	// Determine which block to read next.
+	// blockIdx == -1 means no block loaded yet (initial state).
+	// blockIdx >= 0 means the block at index blockIdx is currently in pairs;
+	// we want the NEXT block.
+	nextBlock := it.blockIdx + 1
+	if it.blockIdx < 0 {
+		nextBlock = 0
+	}
+	for nextBlock < len(it.reader.indexBlock) {
+		it.loadBlock(nextBlock)
+		it.pairIdx = 0
+
+		// Filter the block's pairs.
+		var filteredKeys, filteredVals [][]byte
+		for i := range it.pairs {
+			kv := it.pairs[i]
+			if isTombstone(kv.value) {
+				continue
+			}
+			if len(kv.value) == 0 {
+				continue
+			}
+			if it.reader.isInRangeTombstone(kv.key) {
+				continue
+			}
+			filteredKeys = append(filteredKeys, kv.key)
+			filteredVals = append(filteredVals, kv.value)
+		}
+		if len(filteredKeys) > 0 {
+			// Mark block consumed: clear pairs so Next() loads the next block.
+			it.pairs = nil
+			return filteredKeys, filteredVals, true
+		}
+		// Entire block filtered out — try the next one.
+		nextBlock++
+		it.pairs = nil
+	}
+	return nil, nil, false
+}
+
 func (it *sstIterator) Next() bool {
 	for {
 		if it.pairs == nil {

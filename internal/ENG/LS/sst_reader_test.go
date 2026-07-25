@@ -622,3 +622,156 @@ func TestRangeTombstone_MultipleRanges(t *testing.T) {
 		}
 	}
 }
+
+// TestSSTIterator_ReadBlock_AllPairsReturned verifies that ReadBlock
+// returns every surviving K/V pair from the SST in order, and that
+// subsequent ReadBlock calls advance past consumed blocks. REQ001995.
+func TestSSTIterator_ReadBlock_AllPairsReturned(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_sst_readblock_iter")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+
+	w := newSSTWriter()
+	for i := 0; i < 32; i++ {
+		key := []byte(fmt.Sprintf("k%02d", i))
+		val := []byte(fmt.Sprintf("v%02d", i))
+		w.Add(key, val)
+	}
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	reader, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST: %v", err)
+	}
+
+	it := reader.Iterator()
+	defer it.Close()
+
+	var collected [][]byte
+	for {
+		_, values, ok := it.ReadBlock()
+		if !ok {
+			break
+		}
+		collected = append(collected, values...)
+	}
+	if len(collected) != 32 {
+		t.Fatalf("ReadBlock yielded %d pairs, want 32", len(collected))
+	}
+	for i, v := range collected {
+		want := fmt.Sprintf("v%02d", i)
+		if string(v) != want {
+			t.Errorf("pair[%d]=%s, want %s", i, string(v), want)
+		}
+	}
+}
+
+// TestSSTIterator_ReadBlock_Filtered verifies that ReadBlock skips
+// tombstones and empty values, mirroring Next()'s filtering. REQ001995.
+func TestSSTIterator_ReadBlock_Filtered(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_sst_readblock_filtered")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+
+	w := newSSTWriter()
+	w.Add([]byte("a"), []byte("1"))
+	w.Add([]byte("b"), tombstoneValue) // tombstone — should be dropped
+	w.Add([]byte("c"), []byte(""))
+	w.Add([]byte("d"), []byte("4"))
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	reader, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST: %v", err)
+	}
+
+	it := reader.Iterator()
+	defer it.Close()
+
+	var collected [][]byte
+	for {
+		_, values, ok := it.ReadBlock()
+		if !ok {
+			break
+		}
+		collected = append(collected, values...)
+	}
+	if len(collected) != 2 {
+		t.Fatalf("ReadBlock yielded %d pairs, want 2 (tombstone and empty dropped)", len(collected))
+	}
+	if string(collected[0]) != "1" || string(collected[1]) != "4" {
+		t.Errorf("unexpected pair order: %q, %q", collected[0], collected[1])
+	}
+}
+
+// TestSSTIterator_ReadBlock_EqualsNext verifies that iterating via
+// ReadBlock yields exactly the same K/V stream as iterating via
+// Next()/Key()/Value(). REQ001995 equivalence guarantee.
+func TestSSTIterator_ReadBlock_EqualsNext(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_sst_readblock_equals")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+
+	w := newSSTWriter()
+	for i := 0; i < 16; i++ {
+		key := []byte(fmt.Sprintf("key%02d", i))
+		val := []byte(fmt.Sprintf("val%02d", i))
+		w.Add(key, val)
+	}
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	// Per-row reference path.
+	reader1, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST(1): %v", err)
+	}
+	it1 := reader1.Iterator()
+	var refKeys, refVals [][]byte
+	for it1.Next() {
+		refKeys = append(refKeys, append([]byte(nil), it1.Key()...))
+		refVals = append(refVals, append([]byte(nil), it1.Value()...))
+	}
+	it1.Close()
+
+	// Block path.
+	reader2, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST(2): %v", err)
+	}
+	it2 := reader2.Iterator()
+	var blkKeys, blkVals [][]byte
+	for {
+		k, v, ok := it2.ReadBlock()
+		if !ok {
+			break
+		}
+		blkKeys = append(blkKeys, k...)
+		blkVals = append(blkVals, v...)
+	}
+	it2.Close()
+
+	if len(refKeys) != len(blkKeys) || len(refVals) != len(blkVals) {
+		t.Fatalf("length mismatch: ref=%d blk=%d", len(refKeys), len(blkKeys))
+	}
+	for i := range refKeys {
+		if string(refKeys[i]) != string(blkKeys[i]) {
+			t.Errorf("key[%d]: ref=%q blk=%q", i, refKeys[i], blkKeys[i])
+		}
+		if string(refVals[i]) != string(blkVals[i]) {
+			t.Errorf("val[%d]: ref=%q blk=%q", i, refVals[i], blkVals[i])
+		}
+	}
+}

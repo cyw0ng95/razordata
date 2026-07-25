@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -31,6 +32,28 @@ var rowPool = sync.Pool{
 		}
 		return r
 	},
+}
+
+// REQ001994: session-wide counter of batch→row fallback hits. Incremented
+// whenever batchToRow, evalRowFallback, or evalRowFallbackColumn is invoked.
+// Read+reset by PRAGMA eval_fallback_stats. Atomic so concurrent statements
+// (parallel probes, worker pools) don't lose counts.
+var fallbackHitsGlobal atomic.Int64
+
+// REQ001994: increment the fallback counter on the batch's ExecCtx
+// (preferred — survives across statements via the executor) and the
+// global counter (fallback when ExecCtx is missing, e.g. unit tests).
+func incrementFallbackHits(batch *UT.Batch) {
+	fallbackHitsGlobal.Add(1)
+	if batch != nil && batch.ExecCtx != nil {
+		batch.ExecCtx.FallbackHits.Add(1)
+	}
+}
+
+// ReadAndResetFallbackHits atomically reads and resets the global fallback
+// counter. REQ001994.
+func ReadAndResetFallbackHits() int64 {
+	return fallbackHitsGlobal.Swap(0)
 }
 
 func getRowPool(nCols int) *Row {
@@ -1013,6 +1036,7 @@ func evalRowFallback(expr PS.Expr, batch *UT.Batch, params []any) []uint16 {
 // REQ001460: forwards the batch's ExecContext so subquery
 // evaluation in the row-fallback path can locate the planner.
 func batchToRow(batch *UT.Batch, idx int) *Row {
+	incrementFallbackHits(batch)
 	row := getRowPool(len(batch.Cols))
 	row.ExecCtx = batch.ExecCtx
 	for c := range batch.Cols {
@@ -2056,6 +2080,7 @@ func evalCastBatchExpr(e *PS.CastExpr, batch *UT.Batch, params []any) UT.Column 
 // UT.Column with the batch-size results. REQ001460.
 // REQ001612: uses a pre-allocated Row to avoid per-row allocation.
 func evalRowFallbackColumn(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
+	incrementFallbackHits(batch)
 	n := batch.LogicalSize()
 	if n == 0 {
 		return UT.Column{}

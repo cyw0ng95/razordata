@@ -496,3 +496,78 @@ func TestEvalBatch_8Wide(t *testing.T) {
 		}
 	}
 }
+
+// REQ001994: fallback counter tests.
+
+// TestIncrementFallbackHits_RowFallback verifies that evalRowFallback
+// (triggered by unsupported expression types like FunctionCall) bumps the
+// global fallback counter.
+func TestIncrementFallbackHits_RowFallback(t *testing.T) {
+	before := ReadAndResetFallbackHits()
+
+	b := UT.GetBatch(1)
+	b.Cols[0].Name = "x"
+	for i := 0; i < 4; i++ {
+		b.AppendRow(0, LX.T_INT_KW, int64(i), false)
+		b.AdvanceSize()
+	}
+	// FunctionCall always falls back to row-at-a-time eval.
+	expr := &PS.FunctionCall{Name: "abs", Args: []PS.Expr{&PS.Ident{Name: "x"}}}
+	_ = EvalBatch(expr, b, nil)
+
+	hits := ReadAndResetFallbackHits()
+	if hits != 4 {
+		t.Fatalf("expected 4 fallback hits, got %d", hits)
+	}
+	if before != 0 {
+		t.Logf("note: before-count was %d (test isolation issue)", before)
+	}
+}
+
+// TestIncrementFallbackHits_BatchNoBump verifies that fully-vectorized
+// expressions do NOT bump the counter (zero false positives).
+func TestIncrementFallbackHits_BatchNoBump(t *testing.T) {
+	ReadAndResetFallbackHits()
+
+	b := UT.GetBatch(1)
+	b.Cols[0].Name = "x"
+	for i := 0; i < 8; i++ {
+		b.AppendRow(0, LX.T_INT_KW, int64(i), false)
+		b.AdvanceSize()
+	}
+	// Binary comparison is fully vectorized (CompareInt64Cols path).
+	expr := &PS.BinaryExpr{
+		Left:  &PS.Ident{Name: "x"},
+		Op:    LX.T_GT,
+		Right: &PS.NumberLiteral{Val: 3},
+	}
+	sel := EvalBatch(expr, b, nil)
+	if len(sel) != 4 {
+		t.Fatalf("expected 4 sel rows, got %d", len(sel))
+	}
+
+	hits := ReadAndResetFallbackHits()
+	if hits != 0 {
+		t.Fatalf("vectorized path should not bump counter, got %d", hits)
+	}
+}
+
+// TestIncrementFallbackHits_BatchToRowDirect verifies the helper increments
+// the counter even when batchToRow is invoked outside evalRowFallback (e.g.
+// correlated subquery materialization).
+func TestIncrementFallbackHits_BatchToRowDirect(t *testing.T) {
+	ReadAndResetFallbackHits()
+
+	b := UT.GetBatch(1)
+	b.Cols[0].Name = "x"
+	b.AppendRow(0, LX.T_INT_KW, int64(42), false)
+	b.AdvanceSize()
+
+	row := batchToRow(b, 0)
+	putRowPool(row)
+
+	hits := ReadAndResetFallbackHits()
+	if hits != 1 {
+		t.Fatalf("expected 1 fallback hit, got %d", hits)
+	}
+}

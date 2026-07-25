@@ -1138,6 +1138,10 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 		// kick off the pass via the store adapter and report 0
 		// (async; the next sync will observe reclaimed bytes).
 		return OP.NewIncrementalVacuumResult(p.store)
+	case "eval_fallback_stats":
+		// REQ001994: read+reset the batch→row fallback counter.
+		hits := EV.ReadAndResetFallbackHits()
+		return OP.NewPragmaIntResult("eval_fallback_stats", hits)
 	default:
 		return OP.NewSeqScan("__pragma_unknown__")
 	}

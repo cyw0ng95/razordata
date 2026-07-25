@@ -4,6 +4,8 @@
 // breaking the import cycle that would otherwise block cluster extraction.
 package PL
 
+import "sync/atomic"
+
 import (
 	"context"
 	"errors"
@@ -217,6 +219,10 @@ type ExecContext struct {
 	// (DT imports PL, so PL cannot import DT). Type-assert to
 	// *DT.RowArena at usage sites.
 	RowArena any // *DT.RowArena
+	// REQ001994: FallbackHits counts how many times vectorized
+	// expression evaluation fell back to row-at-a-time (batchToRow
+	// + per-row Eval). Reset to 0 by PRAGMA eval_fallback_stats.
+	FallbackHits atomic.Int64
 }
 
 // PlanResult is the planner-side container for a memoized plan.
