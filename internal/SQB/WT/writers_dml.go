@@ -52,6 +52,10 @@ type Insert struct {
 	rColsBuf       []string            // REQ001557: flat RETURNING col name backing
 	rTypesBuf      []LX.TokenType      // REQ001557: flat RETURNING type backing
 	rDataBuf       []DT.Value          // REQ001557: flat RETURNING data backing
+	// REQ001675: pooled scratch buffers reused across INSERT calls.
+	scratchColIdx    []int     // pre-computed column index mapping
+	scratchInsertBuf []DT.Row  // batch insert buffer
+	scratchBigBuf    []DT.Value // contiguous value buffer for multi-row INSERT
 }
 
 // SetExecCtx sets the execution context. Used by EX.propagateExecContext.
@@ -391,7 +395,13 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 		lookupFn = func(cols []int, vals []any) (bool, error) { return false, nil }
 	}
 	// REQ001030: pre-compute colIdx once for all rows.
-	colIdx := make([]int, len(i.cols))
+	// REQ001675: reuse scratch buffer across INSERT calls.
+	if cap(i.scratchColIdx) < len(i.cols) {
+		i.scratchColIdx = make([]int, len(i.cols))
+	} else {
+		i.scratchColIdx = i.scratchColIdx[:len(i.cols)]
+	}
+	colIdx := i.scratchColIdx
 	for ci, nm := range i.cols {
 		idx := -1
 		for j, s := range i.schema.Cols {
@@ -407,15 +417,26 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 	// replaces 100 small allocs with 1 larger one.
 	nRows := len(iterValues)
 	nCols := len(i.schema.Cols)
-	var bigBuf []DT.Value
+	// REQ001675: reuse scratch buffer; grow only when capacity is insufficient.
 	if i.schema != nil && nRows > 1 && nCols > 0 {
-		bigBuf = make([]DT.Value, nRows*nCols)
+		need := nRows * nCols
+		if cap(i.scratchBigBuf) < need {
+			i.scratchBigBuf = make([]DT.Value, need)
+		} else {
+			i.scratchBigBuf = i.scratchBigBuf[:need]
+		}
 	}
 	// REQ001589: batch INSERT rows into InsertRowBatch for amortised
 	// PK extraction, encoding, and store write. The batch is flushed
 	// when full or when conflict handling requires per-row insertion.
 	const insertChunkSize = 256
-	insertBuf := make([]DT.Row, 0, insertChunkSize)
+	// REQ001675: reuse scratch insert buffer.
+	if cap(i.scratchInsertBuf) < insertChunkSize {
+		i.scratchInsertBuf = make([]DT.Row, 0, insertChunkSize)
+	} else {
+		i.scratchInsertBuf = i.scratchInsertBuf[:0]
+	}
+	insertBuf := i.scratchInsertBuf
 	flushInsertBuf := func() error {
 		if len(insertBuf) == 0 {
 			return nil
@@ -442,9 +463,9 @@ func (i *Insert) nextFromStore(ctx context.Context) (DT.Row, error) {
 		var err error
 		// REQ001426: use pre-allocated bigBuf slot when available.
 		var dataBuf []DT.Value
-		if bigBuf != nil {
+		if i.scratchBigBuf != nil {
 			off := ri * nCols
-			dataBuf = bigBuf[off : off : off+nCols]
+			dataBuf = i.scratchBigBuf[off : off : off+nCols]
 		}
 		if row == nil && i.defaultValues {
 			out = DT.Row{Cols: i.schema.Cols}

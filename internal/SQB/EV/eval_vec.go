@@ -1067,82 +1067,109 @@ func BatchValueAt(col UT.Column, i int) any {
 	return UT.BatchValueAt(col, i)
 }
 
+// REQ001664: per-call expression memoization. Caches the result of
+// EvalBatchExpr for each subexpression pointer within a single top-level
+// call. Cleared automatically when the depth counter reaches 0.
+var evalBatchExprMemo map[PS.Expr]UT.Column
+var evalBatchExprDepth int
+
 // EvalBatchExpr evaluates an expression over an entire batch, producing
 // a column result. This is the batch-parallel equivalent of EvalValue.
 // Dispatches by expression type to vectorized kernels where available.
 // REQ001210.
+//
+// REQ001664: memoizes subexpression results for the duration of one
+// top-level call. When the same *PS.Ident appears in multiple places
+// in the expression tree (e.g. `a + b*2 + a*3`), it is evaluated
+// once and the cached column is reused.
 func EvalBatchExpr(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
 	if expr == nil {
 		return UT.Column{Type: LX.T_NULL}
 	}
 
+	// REQ001664: top-level call initializes/clears the memo.
+	if evalBatchExprDepth == 0 {
+		if evalBatchExprMemo == nil {
+			evalBatchExprMemo = make(map[PS.Expr]UT.Column, 16)
+		} else {
+			clear(evalBatchExprMemo)
+		}
+	}
+	evalBatchExprDepth++
+	defer func() { evalBatchExprDepth-- }()
+
+	// REQ001664: return cached result for already-evaluated subexpressions.
+	if cached, ok := evalBatchExprMemo[expr]; ok {
+		return cached
+	}
+
+	var result UT.Column
 	switch e := expr.(type) {
 	case *PS.Ident:
 		// Column reference: shallow copy of source column.
 		if col, ok := ExtractColumnRef(e, batch); ok {
-			return col
+			result = col
+		} else {
+			result = UT.Column{Type: LX.T_NULL}
 		}
-		return UT.Column{Type: LX.T_NULL}
 
 	case *PS.NumberLiteral:
-		return FillLiteralColumn(batch, LX.T_INT_KW, e.Val)
+		result = FillLiteralColumn(batch, LX.T_INT_KW, e.Val)
 
 	case *PS.FloatLiteral:
-		return FillLiteralColumn(batch, LX.T_FLOAT_KW, e.Val)
+		result = FillLiteralColumn(batch, LX.T_FLOAT_KW, e.Val)
 
 	case *PS.StringLiteral:
-		return FillLiteralColumn(batch, LX.T_TEXT, e.Val)
+		result = FillLiteralColumn(batch, LX.T_TEXT, e.Val)
 
 	case *PS.BoolLiteral:
-		return FillLiteralColumn(batch, LX.T_BOOL, e.Val)
+		result = FillLiteralColumn(batch, LX.T_BOOL, e.Val)
 
 	case *PS.NullLiteral:
-		return FillNullColumn(batch)
+		result = FillNullColumn(batch)
 
 	case *PS.Param:
 		if e.Index < len(params) {
-			return evalAnyLiteral(params[e.Index], batch)
+			result = evalAnyLiteral(params[e.Index], batch)
+		} else {
+			result = FillNullColumn(batch)
 		}
-		return FillNullColumn(batch)
 
 	case *PS.BinaryExpr:
-		return evalBinaryBatchExpr(e, batch, params)
+		result = evalBinaryBatchExpr(e, batch, params)
 
 	case *PS.UnaryExpr:
-		// REQ001991: complex WHEN conditions like `WHEN NOT x` or `WHEN -y`
-		// now batch-evaluate via evalUnaryBatchExpr (previously fell back
-		// to row-at-a-time evalRowFallbackColumn).
-		return evalUnaryBatchExpr(e, batch, params)
+		result = evalUnaryBatchExpr(e, batch, params)
 
 	case *PS.AliasedExpr:
-		return EvalBatchExpr(e.Expr, batch, params)
+		result = EvalBatchExpr(e.Expr, batch, params)
 
 	case *PS.CaseExpr:
-		return evalCaseBatchExpr(e, batch, params)
+		result = evalCaseBatchExpr(e, batch, params)
 
 	case *PS.FunctionCall:
-		return evalFunctionBatchExpr(e, batch, params)
+		result = evalFunctionBatchExpr(e, batch, params)
 
-case *PS.SubqueryExpr:
-		// REQ001460: vectorized scalar subquery evaluation.
-		return evalSubqueryBatchExpr(e, batch, params)
+	case *PS.SubqueryExpr:
+		result = evalSubqueryBatchExpr(e, batch, params)
 
 	case *PS.InExpr:
-		// REQ001990: vectorized IN (SELECT ...) evaluation. Previously
-		// any IN-subquery fell through to row-at-a-time via
-		// evalRowFallbackColumn, which triggered per-row evalInSubquery
-		// (N×M round-trips). Now materialize once, hash-probe per row.
 		if e.Subquery != nil {
-			return evalBatchINSubquery(e, batch, params)
+			result = evalBatchINSubquery(e, batch, params)
+		} else {
+			result = evalRowFallbackColumn(e, batch, params)
 		}
-		return evalRowFallbackColumn(e, batch, params)
 
 	case *PS.CastExpr:
-		return evalCastBatchExpr(e, batch, params)
+		result = evalCastBatchExpr(e, batch, params)
 
 	default:
-		return evalRowFallbackColumn(expr, batch, params)
+		result = evalRowFallbackColumn(expr, batch, params)
 	}
+
+	// REQ001664: cache for reuse within the same top-level call.
+	evalBatchExprMemo[expr] = result
+	return result
 }
 
 // REQ001610: per-session cache for correlated subquery results.
