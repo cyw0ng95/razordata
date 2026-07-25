@@ -159,7 +159,15 @@ func (a *AdaptiveOp) tryCompile(ctx context.Context) {
 		return
 	}
 
-	opType := fmt.Sprintf("%T", a.Inner)
+	// REQ001975: gate the fmt.Sprintf behind debug-level enabled
+	// check. opType is only consumed by slog.Debug below; when debug
+	// logging is disabled (the default), we skip the %T formatting
+	// entirely. This removes a per-AdaptiveOp allocation that
+	// dominated SLT hot paths (~0.85M alloc objects).
+	var opType string
+	if slog.Default().Enabled(ctx, slog.LevelDebug) {
+		opType = fmt.Sprintf("%T", a.Inner)
+	}
 	a.state.Store(uint32(AdqcInterpreted))
 	// REQ000845: mark as attempted so we don't retry on every Next()
 	// call. No compiled function is available, so interpreted path

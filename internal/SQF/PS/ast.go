@@ -1,6 +1,12 @@
 package PS
 
-import "github.com/cyw0ng95/razordata/internal/SQF/LX"
+import (
+	"reflect"
+	"strconv"
+	"sync"
+
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
+)
 
 // Loc holds source position information for an AST node (REQ001004).
 type Loc struct {
@@ -127,9 +133,48 @@ type AggregateFunc struct {
 	Distinct  bool
 	Separator Expr
 	Filter    Expr
+
+	// REQ001975: lookupKey caches the per-AggregateFunc lookup key
+	// used by DT.AggregateLookupKey. Computed once on first access
+	// via sync.Once; the AST node is stable within a query so this
+	// is safe. Eliminates a fmt.Sprintf per call (~0.85M alloc
+	// objects in SLT hot paths).
+	lookupKeyOnce sync.Once
+	lookupKey     string
 }
 
 func (a *AggregateFunc) exprNode() {}
+
+// LookupKey returns a stable per-AggregateFunc key suitable for
+// storing/looking up the aggregate's result in a virtual row.
+// Computed once and cached. REQ001975.
+func (a *AggregateFunc) LookupKey() string {
+	a.lookupKeyOnce.Do(func() {
+		a.lookupKey = computeAggregateLookupKey(a)
+	})
+	return a.lookupKey
+}
+
+// computeAggregateLookupKey mirrors the previous DT.AggregateLookupKey
+// logic but without fmt.Sprintf: StarExpr → "NAME(*)", Ident →
+// "NAME(arg)", everything else → "NAME(reflectType:ptr)" using
+// reflect.Type.String and strconv on the pointer. REQ001975.
+func computeAggregateLookupKey(a *AggregateFunc) string {
+	if _, ok := a.Arg.(*StarExpr); ok {
+		return a.Name + "(*)"
+	}
+	if ident, ok := a.Arg.(*Ident); ok {
+		return a.Name + "(" + ident.Name + ")"
+	}
+	// For complex args (literals, unary, binary, etc.), use the
+	// pointer address of the arg node as a disambiguator. Both
+	// buildAggregateVirtualRow and evalAggregate walk the same
+	// expression tree, so pointer addresses are stable within a
+	// single query evaluation.
+	tName := reflect.TypeOf(a.Arg).String()
+	ptr := strconv.FormatUint(uint64(reflect.ValueOf(a.Arg).Pointer()), 16)
+	return a.Name + "(" + tName + ":" + ptr + ")"
+}
 
 type WindowSpec struct {
 	Loc
