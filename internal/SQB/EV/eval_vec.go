@@ -1,6 +1,7 @@
 package EV
 
 import (
+	"context"
 	"fmt"
 	"hash"
 	"hash/fnv"
@@ -1083,6 +1084,12 @@ func EvalBatchExpr(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
 	case *PS.BinaryExpr:
 		return evalBinaryBatchExpr(e, batch, params)
 
+	case *PS.UnaryExpr:
+		// REQ001991: complex WHEN conditions like `WHEN NOT x` or `WHEN -y`
+		// now batch-evaluate via evalUnaryBatchExpr (previously fell back
+		// to row-at-a-time evalRowFallbackColumn).
+		return evalUnaryBatchExpr(e, batch, params)
+
 	case *PS.AliasedExpr:
 		return EvalBatchExpr(e.Expr, batch, params)
 
@@ -1095,6 +1102,16 @@ func EvalBatchExpr(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
 case *PS.SubqueryExpr:
 		// REQ001460: vectorized scalar subquery evaluation.
 		return evalSubqueryBatchExpr(e, batch, params)
+
+	case *PS.InExpr:
+		// REQ001990: vectorized IN (SELECT ...) evaluation. Previously
+		// any IN-subquery fell through to row-at-a-time via
+		// evalRowFallbackColumn, which triggered per-row evalInSubquery
+		// (N×M round-trips). Now materialize once, hash-probe per row.
+		if e.Subquery != nil {
+			return evalBatchINSubquery(e, batch, params)
+		}
+		return evalRowFallbackColumn(e, batch, params)
 
 	case *PS.CastExpr:
 		return evalCastBatchExpr(e, batch, params)
@@ -1305,6 +1322,103 @@ func evalBinaryBatchExpr(e *PS.BinaryExpr, batch *UT.Batch, params []any) UT.Col
 		return evalConcatBatchExpr(e, batch, params)
 	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
 		return evalComparisonBatch(e, batch, params)
+	default:
+		return evalRowFallbackColumn(e, batch, params)
+	}
+}
+
+// evalUnaryBatchExpr evaluates a unary expression over a batch and returns
+// a UT.Column result. REQ001991: previously complex CASE WHEN conditions
+// like `WHEN NOT x` or `WHEN -y` fell back to row-at-a-time via
+// evalRowFallbackColumn. This dispatch handles them without fallback
+// for T_NOT, T_UMINUS, and other unary operators.
+func evalUnaryBatchExpr(e *PS.UnaryExpr, batch *UT.Batch, params []any) UT.Column {
+	if e == nil {
+		return UT.Column{Type: LX.T_NULL}
+	}
+	n := batch.LogicalSize()
+	if n == 0 {
+		return UT.Column{Type: LX.T_NULL}
+	}
+	switch e.Op {
+	case LX.T_NOT:
+		// Boolean NOT: invert predicate. Compute inner selection vector
+		// then broadcast 0/1 to a UT.Column.
+		inner := EvalBatch(e.Operand, batch, params)
+		out := UT.Column{Type: LX.T_BOOL}
+		allocateColumnData(&out, batch.Size)
+		out.Nulls = make([]bool, batch.Size)
+		// Build inverted selection: rows NOT in `inner`.
+		isTrue := make([]bool, batch.Size)
+		for _, idx := range inner {
+			isTrue[idx] = true
+		}
+		for i := 0; i < n; i++ {
+			phys := i
+			if batch.Sel != nil && i < len(batch.Sel) {
+				phys = int(batch.Sel[i])
+			}
+			out.Data.Bools[phys] = !isTrue[phys]
+		}
+		return out
+
+	case LX.T_MINUS:
+		// Negation: invert numeric sign.
+		inner := EvalBatchExpr(e.Operand, batch, params)
+		switch inner.Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			out := UT.Column{Type: inner.Type}
+			allocateColumnData(&out, batch.Size)
+			if inner.Nulls != nil {
+				out.Nulls = make([]bool, batch.Size)
+				for i := 0; i < n; i++ {
+					phys := i
+					if batch.Sel != nil && i < len(batch.Sel) {
+						phys = int(batch.Sel[i])
+					}
+					out.Nulls[phys] = inner.Nulls[phys]
+					if !inner.Nulls[phys] {
+						out.Data.Ints[phys] = -inner.Data.Ints[phys]
+					}
+				}
+			} else {
+				for i := 0; i < n; i++ {
+					phys := i
+					if batch.Sel != nil && i < len(batch.Sel) {
+						phys = int(batch.Sel[i])
+					}
+					out.Data.Ints[phys] = -inner.Data.Ints[phys]
+				}
+			}
+			return out
+		case LX.T_FLOAT_KW:
+			out := UT.Column{Type: inner.Type}
+			allocateColumnData(&out, batch.Size)
+			if inner.Nulls != nil {
+				out.Nulls = make([]bool, batch.Size)
+				for i := 0; i < n; i++ {
+					phys := i
+					if batch.Sel != nil && i < len(batch.Sel) {
+						phys = int(batch.Sel[i])
+					}
+					out.Nulls[phys] = inner.Nulls[phys]
+					if !inner.Nulls[phys] {
+						out.Data.Floats[phys] = -inner.Data.Floats[phys]
+					}
+				}
+			} else {
+				for i := 0; i < n; i++ {
+					phys := i
+					if batch.Sel != nil && i < len(batch.Sel) {
+						phys = int(batch.Sel[i])
+					}
+					out.Data.Floats[phys] = -inner.Data.Floats[phys]
+				}
+			}
+			return out
+		default:
+			return evalRowFallbackColumn(e, batch, params)
+		}
 	default:
 		return evalRowFallbackColumn(e, batch, params)
 	}
@@ -2374,6 +2488,164 @@ func evalInListBatch(col UT.Column, list []any, n int) []uint16 {
 		return sel
 	}
 	return nil
+}
+
+// evalBatchINSubquery evaluates IN (SELECT ...) over a batch using a
+// hash set built once from materialized subquery rows. REQ001990.
+// Previously the dispatch fell back to evalRowFallbackColumn, which
+// triggered per-row evalInSubquery — N×M round-trips through
+// batchToRow. Here we materialize the subquery once via the planner,
+// build a small int64 hash set (or string set for text columns), then
+// probe the target column values per row using the selection vector.
+//
+// Falls back to evalRowFallbackColumn if the planner is unavailable
+// or the subquery cannot be materialized in this batch.
+func evalBatchINSubquery(e *PS.InExpr, batch *UT.Batch, params []any) UT.Column {
+	n := batch.LogicalSize()
+	if n == 0 {
+		return UT.Column{Type: LX.T_BOOL}
+	}
+	if e.Subquery == nil {
+		return evalRowFallbackColumn(e, batch, params)
+	}
+
+	// Extract the target column once from the batch schema. If it's not
+	// a plain column reference, fall back to row-at-a-time evaluation.
+	targetCol, ok := ExtractColumnRef(e.Expr, batch)
+	if !ok {
+		return evalRowFallbackColumn(e, batch, params)
+	}
+
+	// Obtain planner from the batch's ExecCtx or first logical row.
+	probeRow := batchToRow(batch, 0)
+	defer putRowPool(probeRow)
+	planner := getSubqueryPlanner(probeRow)
+	if planner == nil {
+		return evalRowFallbackColumn(e, batch, params)
+	}
+
+	// Materialize the subquery once (single materialization per batch).
+	rows, err := planner.ExecuteSubquery(context.Background(), e.Subquery, probeRow, params)
+	if err != nil {
+		return evalRowFallbackColumn(e, batch, params)
+	}
+
+	// Allocate output bool column.
+	out := UT.Column{Type: LX.T_BOOL}
+	allocateColumnData(&out, batch.Size)
+
+	// Build hash set(s) keyed by column type. Track whether ANY nulls
+	// were seen in the RHS so we can propagate three-valued logic.
+	hadNull := false
+	intSet := make(map[int64]struct{}, len(rows))
+	strSet := make(map[string]struct{}, len(rows))
+	floatSet := make(map[float64]struct{}, len(rows))
+	intSeen := false
+	strSeen := false
+	floatSeen := false
+
+	for _, r := range rows {
+		if len(r.Data) == 0 {
+			continue
+		}
+		v := r.Data[0]
+		if v.Kind == KindNull {
+			hadNull = true
+			continue
+		}
+		switch v.Kind {
+		case KindInt:
+			intSet[v.I64] = struct{}{}
+			intSeen = true
+		case KindFloat:
+			floatSet[v.F64] = struct{}{}
+			floatSeen = true
+		case KindText:
+			strSet[v.S] = struct{}{}
+			strSeen = true
+		}
+	}
+
+	// Probe each row in the batch using the physical index layout
+	// (selection vector awareness).
+	d := targetCol.Data
+	for i := 0; i < n; i++ {
+		phys := i
+		if batch.Sel != nil && i < len(batch.Sel) {
+			phys = int(batch.Sel[i])
+		}
+		// Three-valued NULL propagation: NULL IN (set) → NULL.
+		if targetCol.Nulls != nil && phys < len(targetCol.Nulls) && targetCol.Nulls[phys] {
+			if out.Nulls == nil {
+				out.Nulls = make([]bool, batch.Size)
+			}
+			out.Nulls[phys] = true
+			continue
+		}
+		matched := false
+		if intSeen {
+			if d.Ints != nil && phys < len(d.Ints) {
+				if _, ok := intSet[d.Ints[phys]]; ok {
+					matched = true
+				}
+			}
+		}
+		if !matched && strSeen {
+			if d.Strs != nil && phys < len(d.Strs) {
+				if _, ok := strSet[d.Strs[phys]]; ok {
+					matched = true
+				}
+			}
+		}
+		if !matched && floatSeen {
+			if d.Floats != nil && phys < len(d.Floats) {
+				if _, ok := floatSet[d.Floats[phys]]; ok {
+					matched = true
+				}
+			}
+		}
+		// Fallback cross-type scan (rare).
+		if !matched && (intSeen && strSeen) {
+			for _, r := range rows {
+				if len(r.Data) == 0 {
+					continue
+				}
+				v := r.Data[0]
+				if v.Kind == KindNull {
+					continue
+				}
+				if d.Ints != nil && phys < len(d.Ints) {
+					if v.Kind == KindInt && v.I64 == d.Ints[phys] {
+						matched = true
+						break
+					}
+					if v.Kind == KindText {
+						if d.Strs != nil && phys < len(d.Strs) && v.S == d.Strs[phys] {
+							matched = true
+							break
+						}
+					}
+				} else if d.Strs != nil && phys < len(d.Strs) {
+					if v.Kind == KindText && v.S == d.Strs[phys] {
+						matched = true
+						break
+					}
+				}
+			}
+		}
+		if matched {
+			out.Data.Bools[phys] = true
+		} else if hadNull {
+			// Per SQL: NULL IN (set with NULLs) → NULL.
+			if out.Nulls == nil {
+				out.Nulls = make([]bool, batch.Size)
+			}
+			out.Nulls[phys] = true
+		} else {
+			out.Data.Bools[phys] = false
+		}
+	}
+	return out
 }
 
 // writeHashToFNV writes a pl.Value to an fnv hash for use as a cache key.
