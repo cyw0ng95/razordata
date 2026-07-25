@@ -39,6 +39,7 @@ var includedCases = []includedCase{
 	{Label: "random::aggregates::slt_good_6", Path: "random/aggregates/slt_good_6", Timeout: 60},
 	{Label: "random::aggregates::slt_good_7", Path: "random/aggregates/slt_good_7", Timeout: 60},
 	{Label: "random::aggregates::slt_good_8", Path: "random/aggregates/slt_good_8", Timeout: 60},
+	{Label: "random::aggregates::slt_good_9", Path: "random/aggregates/slt_good_9", Timeout: 60},
 	{Label: "random::aggregates::slt_good_10", Path: "random/aggregates/slt_good_10", Timeout: 60},
 	{Label: "random::aggregates::slt_good_11", Path: "random/aggregates/slt_good_11", Timeout: 60},
 	{Label: "random::aggregates::slt_good_12", Path: "random/aggregates/slt_good_12", Timeout: 60},

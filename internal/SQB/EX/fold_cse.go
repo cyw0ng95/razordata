@@ -60,6 +60,15 @@ func isConstantExpr(e PS.Expr) bool {
 		return isConstantExpr(v.Operand)
 	case *PS.BinaryExpr:
 		return isConstantExpr(v.Left) && isConstantExpr(v.Right)
+	case *PS.BetweenExpr:
+		// REQ001722: NOT BETWEEN expressions like `-15 NOT BETWEEN NULL AND NULL`
+		// are parsed as UnaryExpr(NOT, BetweenExpr(...)). Without this case,
+		// isConstantExpr returns false for any BetweenExpr, causing the join
+		// elimination pass to drop joins whose ON is a constant BETWEEN/NOT
+		// BETWEEN expression (the constant-ON preservation rule at line 273
+		// never fires). This silently turns a 0-row INNER JOIN into a
+		// left-table-only scan.
+		return isConstantExpr(v.Expr) && isConstantExpr(v.Low) && isConstantExpr(v.High)
 	case *PS.FunctionCall:
 		for _, a := range v.Args {
 			if !isConstantExpr(a) {
@@ -71,6 +80,39 @@ func isConstantExpr(e PS.Expr) bool {
 		return isConstantExpr(v.Expr)
 	case *PS.AliasedExpr:
 		return isConstantExpr(v.Expr)
+	case *PS.CaseExpr:
+		if !isConstantExpr(v.Expr) {
+			return false
+		}
+		for _, w := range v.WhenList {
+			if !isConstantExpr(w.Cond) || !isConstantExpr(w.Then) {
+				return false
+			}
+		}
+		return isConstantExpr(v.Else)
+	case *PS.InExpr:
+		// InExpr with a subquery is never constant.
+		if v.Subquery != nil {
+			return false
+		}
+		if !isConstantExpr(v.Expr) {
+			return false
+		}
+		for _, item := range v.List {
+			if !isConstantExpr(item) {
+				return false
+			}
+		}
+		return true
+	case *PS.ListExpr:
+		for _, item := range v.Items {
+			if !isConstantExpr(item) {
+				return false
+			}
+		}
+		return true
+	case *PS.IntervalLiteral:
+		return true
 	}
 	return false
 }
