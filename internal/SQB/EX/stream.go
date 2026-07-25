@@ -228,7 +228,6 @@ func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*s
 	if stmt == nil {
 		parser := PS.NewParser(sql)
 		defer parser.Close()
-	defer parser.Close()
 		parsed, err := parser.Parse()
 		if err != nil {
 			return nil, err

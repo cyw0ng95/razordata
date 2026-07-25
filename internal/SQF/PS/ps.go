@@ -3,6 +3,7 @@ package PS
 import (
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	"strings"
+	"sync"
 )
 
 // Parser is a recursive-descent SQL parser that produces an AST.
@@ -17,22 +18,56 @@ type Parser struct {
 	parenTableExpr       bool // REQ000834: inside parenthesized table expression
 }
 
-// NewParser creates a new Parser for the given SQL input string.
-// REQ001700: uses GetLexer from the pool to avoid per-query Lexer allocation.
-func NewParser(input string) *Parser {
-	return &Parser{
-		lex:     LX.GetLexer(input),
-		current: LX.Token{Type: LX.T_EOF, Lexeme: "", Line: 0, Col: 0},
-	}
+// REQ001976: parserPool amortizes per-query Parser struct allocation
+// across many small SQL statements, mirroring LX.lexerPool. The Lexer
+// itself is already pooled (REQ001700); this extends pooling to the
+// Parser wrapper struct, eliminating one heap allocation per query.
+var parserPool = sync.Pool{
+	New: func() any { return &Parser{} },
 }
 
-// Close returns the lexer to the pool. Callers should defer parser.Close()
-// after parsing. REQ001700.
-func (p *Parser) Close() {
-	if p.lex != nil {
-		LX.PutLexer(p.lex)
-		p.lex = nil
+// GetParser retrieves a Parser from the pool, resetting it for the
+// given input. Callers must return the Parser to the pool via
+// PutParser (or Close) when done. REQ001976.
+func GetParser(input string) *Parser {
+	p := parserPool.Get().(*Parser)
+	p.lex = LX.GetLexer(input)
+	p.current = LX.Token{Type: LX.T_EOF, Lexeme: "", Line: 0, Col: 0}
+	p.reset()
+	return p
+}
+
+// PutParser returns a Parser to the pool. The caller must not use p
+// after calling PutParser. Idempotent: a Parser whose lex is already
+// nil (already returned) is a no-op, so deferred Close calls are
+// safe even if invoked more than once. REQ001976.
+func PutParser(p *Parser) {
+	if p == nil || p.lex == nil {
+		return
 	}
+	LX.PutLexer(p.lex)
+	p.lex = nil
+	p.pendingJoins = nil
+	p.pendingJoinAliases = nil
+	p.pendingSubquery = nil
+	p.pendingSubqueryAlias = ""
+	p.parenTableExpr = false
+	parserPool.Put(p)
+}
+
+// NewParser creates a new Parser for the given SQL input string.
+// REQ001700: uses GetLexer from the pool to avoid per-query Lexer allocation.
+// REQ001976: returns a pooled Parser struct; callers must call Close()
+// to return it (and the lexer) to the pool.
+func NewParser(input string) *Parser {
+	return GetParser(input)
+}
+
+// Close returns the parser (and its lexer) to the pool. Callers
+// should defer parser.Close() after parsing. Idempotent.
+// REQ001700 / REQ001976.
+func (p *Parser) Close() {
+	PutParser(p)
 }
 
 func (p *Parser) reset() {
