@@ -74,6 +74,9 @@ func (d *Distinct) Next(ctx context.Context) (pl.Row, error) {
 			}
 		}
 		if useBatch {
+			// REQ001704: first pass — count rows, then pre-size map+buf.
+			var totalRows int
+			var batches []*UT.Batch
 			for {
 				batch, err := bp.NextBatch(ctx)
 				if err != nil {
@@ -82,6 +85,14 @@ func (d *Distinct) Next(ctx context.Context) (pl.Row, error) {
 				if batch == nil {
 					break
 				}
+				batches = append(batches, batch)
+				totalRows += batch.Size
+			}
+			if totalRows > 0 {
+				d.seen = make(map[string]bool, totalRows*2)
+				d.buf = make([]pl.Row, 0, totalRows)
+			}
+			for _, batch := range batches {
 				rows := batch.ToRows()
 				for _, row := range rows {
 					key := DistinctKey(row)

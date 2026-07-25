@@ -798,7 +798,9 @@ func (d *VectorizedDistinct) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		return nil, err
 	}
 
-	seen := make(map[string]bool)
+	// REQ001704: pre-size seen map to first batch size (heuristic).
+	var seen map[string]bool
+	var seenInit bool
 	var resultCols []UT.Column
 	nCols := len(d.cols)
 
@@ -810,6 +812,15 @@ func (d *VectorizedDistinct) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		}
 		if batch == nil {
 			break
+		}
+		// REQ001704: pre-size map on first batch.
+		if !seenInit {
+			cap := batch.Size * 2
+			if cap < 64 {
+				cap = 64
+			}
+			seen = make(map[string]bool, cap)
+			seenInit = true
 		}
 		sel := batch.Sel
 		for r := 0; r < batch.Size; r++ {

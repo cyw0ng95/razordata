@@ -541,6 +541,8 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 	}
 
 	// Execute SELECT first (outside the lock to avoid deadlock)
+	// REQ001705: pre-allocate selectRows to exact row count to avoid
+	// geometric growth reallocation churn.
 	var selectRows []DT.Row
 	for {
 		row, err := i.selectPlan.Next(ctx)
@@ -551,6 +553,12 @@ func (i *Insert) nextFromSelect(ctx context.Context) (DT.Row, error) {
 			return DT.Row{}, err
 		}
 		selectRows = append(selectRows, row)
+	}
+	// Compact to exact size — eliminates over-capacity from geometric growth.
+	if len(selectRows) > 0 && cap(selectRows) > len(selectRows) {
+		compact := make([]DT.Row, len(selectRows))
+		copy(compact, selectRows)
+		selectRows = compact
 	}
 
 	// Now insert all rows
@@ -698,10 +706,8 @@ func buildInsertRowFromSelectWithMap(schema []string, cols []string, src DT.Row,
 		// Map SELECT columns to insert columns by position
 		out := DT.Row{Cols: append([]string(nil), schema...)}
 		out.Data = make([]DT.Value, len(schema))
-		colIdx := make(map[string]int, len(schema))
-		for i, c := range schema {
-			colIdx[c] = i
-		}
+		// REQ001705: use caller's pre-computed colIdx instead of
+		// allocating a new map per row (was shadowing the parameter).
 		for i, col := range cols {
 			if idx, ok := colIdx[col]; ok {
 				if i < len(src.Data) {
