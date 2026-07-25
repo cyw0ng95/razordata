@@ -48,6 +48,14 @@ func tryVectorizePlan(root DT.Operator, p *Planner) DT.Operator {
 	// REQ001587: when the inner plan starts with a SeqScan that has
 	// no store schema (in-memory tables without column metadata),
 	// transformOp returns nil, so the original AdaptiveOp is kept.
+
+	// REQ002002: try push-based pipeline for eligible Filter+Project+Limit
+	// shapes. Conservative gating keeps SLT on the proven pull path for
+	// anything non-trivial. Returns nil if the shape is not eligible.
+	if pushAdapter := tryPushPipeline(root, p); pushAdapter != nil {
+		return UT.NewBatchToRowAdapter(pushAdapter)
+	}
+
 	vec := transformRoot(root, p)
 	if vec != nil {
 		return UT.NewBatchToRowAdapter(vec)
@@ -701,4 +709,208 @@ func extractRangePredicate(expr PS.Expr) (colIdx int, min, max int64, ok bool) {
 		return 0, val, val, true
 	}
 	return 0, 0, 0, false
+}
+
+// tryPushPipeline detects the eligible Filter+Project+Limit over
+// SeqScan shape and constructs a PushPipeline wrapped in a
+// PushToPullAdapter. Returns nil if the shape is not eligible, in
+// which case tryVectorizePlan falls through to the pull-based
+// transformRoot path. REQ002002.
+//
+// Eligible shape (any prefix of): Limit(Project(Filter(SeqScan)))
+//   - Each level is optional, but the order must be Limit→Project→Filter→SeqScan.
+//   - The SeqScan must have a store (avoids in-memory table edge cases).
+//   - The Filter predicate must not contain subqueries.
+//   - The Project columns must be simple (Ident, QualifiedName,
+//     literals, AliasedExpr wrapping those) — arithmetic and function
+//     calls are rejected because the push path doesn't propagate
+//     ExecCtx for subquery evaluation.
+//   - The Limit value must be >= 0 (negative = unlimited, allowed).
+//
+// Gating is intentionally conservative to keep SLT on the proven
+// pull path for anything non-trivial.
+func tryPushPipeline(root DT.Operator, p *Planner) UT.BatchProducer {
+	if root == nil {
+		return nil
+	}
+	// Unwrap AdaptiveOp (planner wraps the root).
+	inner := root
+	if aop, ok := root.(*AD.AdaptiveOp); ok {
+		inner = aop.Inner
+	}
+
+	// Walk Limit → Project → Filter → SeqScan, each level optional.
+	var limitOp *OP.Limit
+	var projectOp *OP.Project
+	var filterOp *OP.Filter
+	var seqScan *OP.SeqScan
+
+	cur := inner
+	if l, ok := cur.(*OP.Limit); ok {
+		limitOp = l
+		cur = l.Child()
+	}
+	if cur == nil {
+		return nil
+	}
+	if proj, ok := cur.(*OP.Project); ok {
+		projectOp = proj
+		cur = proj.Child()
+	}
+	if cur == nil {
+		return nil
+	}
+	if f, ok := cur.(*OP.Filter); ok {
+		filterOp = f
+		cur = f.Child()
+	}
+	if cur == nil {
+		return nil
+	}
+	if ss, ok := cur.(*OP.SeqScan); ok {
+		seqScan = ss
+	}
+	if seqScan == nil {
+		return nil
+	}
+	// SeqScan must have a store (in-memory tables have different semantics).
+	if seqScan.Store() == nil {
+		return nil
+	}
+
+	// Filter predicate must not contain subqueries.
+	if filterOp != nil {
+		if containsSubquery(filterOp.Predicate()) {
+			return nil
+		}
+	}
+
+	// Project columns must be simple.
+	if projectOp != nil {
+		if !isSimpleProject(projectOp.Cols()) {
+			return nil
+		}
+	}
+
+	// Transform the SeqScan into a BatchProducer (VectorizedSeqScan).
+	// We reuse transformOp so the same store-backed fast path applies.
+	source := transformOp(seqScan, p)
+	if source == nil {
+		return nil
+	}
+
+	// Build the push operator chain.
+	var ops []OP.PushOperator
+	if filterOp != nil {
+		pf := OP.NewPushFilter(filterOp.Predicate())
+		ops = append(ops, pf)
+	}
+	if projectOp != nil {
+		exprs := projectOp.Cols()
+		names := make([]string, len(exprs))
+		for i, e := range exprs {
+			names[i] = exprName(e)
+		}
+		pp := OP.NewPushProject(exprs, names)
+		// Forward ExecCtx so row-fallback paths (notably scalar
+		// subqueries in projection) can locate the QueryPlanner.
+		if ec := projectOp.ExecCtx(); ec != nil {
+			_ = ec // PushProject.execCtx is a placeholder; subquery
+			// support in the push path is deferred. Simple projections
+			// (the only kind we accept here) don't need it.
+		}
+		ops = append(ops, pp)
+	}
+	if limitOp != nil {
+		pl := OP.NewPushLimit(limitOp.LimitValue())
+		ops = append(ops, pl)
+	}
+	if len(ops) == 0 {
+		// Degenerate: bare SeqScan with no Filter/Project/Limit.
+		// The pull path handles this fine; no benefit from push.
+		return nil
+	}
+
+	pipeline := OP.NewPushPipeline(source, ops...)
+	return OP.NewPushToPullAdapter(pipeline)
+}
+
+// containsSubquery reports whether an expression tree contains any
+// SubqueryExpr node. The push pipeline does not support correlated
+// subqueries in the filter predicate (no ExecCtx propagation), so
+// we reject such shapes. REQ002002.
+func containsSubquery(e PS.Expr) bool {
+	if e == nil {
+		return false
+	}
+	switch v := e.(type) {
+	case *PS.SubqueryExpr:
+		return true
+	case *PS.BinaryExpr:
+		return containsSubquery(v.Left) || containsSubquery(v.Right)
+	case *PS.UnaryExpr:
+		return containsSubquery(v.Operand)
+	case *PS.AliasedExpr:
+		return containsSubquery(v.Expr)
+	case *PS.CastExpr:
+		return containsSubquery(v.Expr)
+	case *PS.FunctionCall:
+		for _, a := range v.Args {
+			if containsSubquery(a) {
+				return true
+			}
+		}
+	case *PS.CaseExpr:
+		if containsSubquery(v.Expr) {
+			return true
+		}
+		for _, w := range v.WhenList {
+			if containsSubquery(w.Cond) || containsSubquery(w.Then) {
+				return true
+			}
+		}
+		return containsSubquery(v.Else)
+	case *PS.BetweenExpr:
+		return containsSubquery(v.Expr) || containsSubquery(v.Low) || containsSubquery(v.High)
+	case *PS.InExpr:
+		if containsSubquery(v.Expr) {
+			return true
+		}
+		if v.Subquery != nil {
+			return true
+		}
+		for _, a := range v.List {
+			if containsSubquery(a) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isSimpleProject reports whether all projection expressions are
+// simple (column refs, literals, or AliasedExpr wrapping those).
+// Arithmetic, function calls, and CASE are rejected because the
+// push path doesn't propagate ExecCtx for subquery evaluation.
+// REQ002002.
+func isSimpleProject(cols []PS.Expr) bool {
+	for _, c := range cols {
+		if !isSimpleProjectExpr(c) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSimpleProjectExpr(e PS.Expr) bool {
+	switch v := e.(type) {
+	case *PS.Ident, *PS.QualifiedName,
+		*PS.NumberLiteral, *PS.FloatLiteral,
+		*PS.StringLiteral, *PS.BoolLiteral, *PS.NullLiteral,
+		*PS.StarExpr:
+		return true
+	case *PS.AliasedExpr:
+		return isSimpleProjectExpr(v.Expr)
+	}
+	return false
 }
