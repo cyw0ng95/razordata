@@ -714,7 +714,8 @@ func buildInsertRowFromSelect(schema []string, cols []string, src DT.Row) (DT.Ro
 		return buildInsertRowFromSelectWithMap(schema, cols, src, colIdx)
 	}
 	// No column list: use SELECT columns directly
-	out := DT.Row{Cols: append([]string(nil), src.Cols...)}
+	out := DT.Row{Cols: make([]string, len(src.Cols))}
+	copy(out.Cols, src.Cols)
 	out.Data = append([]DT.Value(nil), src.Data...)
 	return out, nil
 }
@@ -725,7 +726,8 @@ func buildInsertRowFromSelect(schema []string, cols []string, src DT.Row) (DT.Ro
 func buildInsertRowFromSelectWithMap(schema []string, cols []string, src DT.Row, colIdx map[string]int) (DT.Row, error) {
 	if len(cols) > 0 {
 		// Map SELECT columns to insert columns by position
-		out := DT.Row{Cols: append([]string(nil), schema...)}
+		// REQ001681: share the schema Cols slice (stable across all rows).
+		out := DT.Row{Cols: schema}
 		out.Data = make([]DT.Value, len(schema))
 		// REQ001705: use caller's pre-computed colIdx instead of
 		// allocating a new map per row (was shadowing the parameter).
@@ -739,7 +741,8 @@ func buildInsertRowFromSelectWithMap(schema []string, cols []string, src DT.Row,
 		return out, nil
 	}
 	// No column list: use SELECT columns directly
-	out := DT.Row{Cols: append([]string(nil), src.Cols...)}
+	out := DT.Row{Cols: make([]string, len(src.Cols))}
+	copy(out.Cols, src.Cols)
 	out.Data = append([]DT.Value(nil), src.Data...)
 	return out, nil
 }
