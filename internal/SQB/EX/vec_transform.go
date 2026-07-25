@@ -49,6 +49,14 @@ func tryVectorizePlan(root DT.Operator, p *Planner) DT.Operator {
 	// no store schema (in-memory tables without column metadata),
 	// transformOp returns nil, so the original AdaptiveOp is kept.
 
+	// REQ002003: try fused batch scan first — for the eligible
+	// Limit(Project(Filter(SeqScan))) shape, a single FusedBatchScan
+	// replaces three separate operators and their per-batch handoffs.
+	// Falls through to the push pipeline / pull path if not eligible.
+	if fused := tryFusedBatchScan(root, p); fused != nil {
+		return UT.NewBatchToRowAdapter(fused)
+	}
+
 	// REQ002002: try push-based pipeline for eligible Filter+Project+Limit
 	// shapes. Conservative gating keeps SLT on the proven pull path for
 	// anything non-trivial. Returns nil if the shape is not eligible.
@@ -833,6 +841,120 @@ func tryPushPipeline(root DT.Operator, p *Planner) UT.BatchProducer {
 
 	pipeline := OP.NewPushPipeline(source, ops...)
 	return OP.NewPushToPullAdapter(pipeline)
+}
+
+// tryFusedBatchScan detects the same Limit(Project(Filter(SeqScan)))
+// shape as tryPushPipeline but collapses it into a single FusedBatchScan
+// operator. Because fusion performs one NextBatch call per output batch
+// (versus three PushBatch calls in the push pipeline), it is the
+// preferred path for OLTP-sized queries. REQ002003.
+//
+// Eligibility mirrors tryPushPipeline:
+//   - Each level (Limit→Project→Filter→SeqScan) is optional, order fixed.
+//   - SeqScan must have a store.
+//   - Filter predicate must not contain subqueries.
+//   - Project columns must be simple (no arithmetic/function calls).
+//
+// At least one of Filter/Project/Limit must be present; a bare SeqScan
+// returns nil (no fusion benefit over VectorizedSeqScan).
+func tryFusedBatchScan(root DT.Operator, p *Planner) UT.BatchProducer {
+	if root == nil {
+		return nil
+	}
+	// Unwrap AdaptiveOp (planner wraps the root).
+	inner := root
+	if aop, ok := root.(*AD.AdaptiveOp); ok {
+		inner = aop.Inner
+	}
+
+	// Walk Limit → Project → Filter → SeqScan, each level optional.
+	var limitOp *OP.Limit
+	var projectOp *OP.Project
+	var filterOp *OP.Filter
+	var seqScan *OP.SeqScan
+
+	cur := inner
+	if l, ok := cur.(*OP.Limit); ok {
+		limitOp = l
+		cur = l.Child()
+	}
+	if cur == nil {
+		return nil
+	}
+	if proj, ok := cur.(*OP.Project); ok {
+		projectOp = proj
+		cur = proj.Child()
+	}
+	if cur == nil {
+		return nil
+	}
+	if f, ok := cur.(*OP.Filter); ok {
+		filterOp = f
+		cur = f.Child()
+	}
+	if cur == nil {
+		return nil
+	}
+	if ss, ok := cur.(*OP.SeqScan); ok {
+		seqScan = ss
+	}
+	if seqScan == nil {
+		return nil
+	}
+	// SeqScan must have a store (in-memory tables have different semantics).
+	if seqScan.Store() == nil {
+		return nil
+	}
+
+	// Filter predicate must not contain subqueries.
+	if filterOp != nil {
+		if containsSubquery(filterOp.Predicate()) {
+			return nil
+		}
+	}
+
+	// Project columns must be simple.
+	if projectOp != nil {
+		if !isSimpleProject(projectOp.Cols()) {
+			return nil
+		}
+	}
+
+	// At least one of Filter/Project/Limit must be present.
+	if filterOp == nil && projectOp == nil && limitOp == nil {
+		return nil
+	}
+
+	// Transform the SeqScan into a BatchProducer (VectorizedSeqScan).
+	source := transformOp(seqScan, p)
+	if source == nil {
+		return nil
+	}
+
+	// Extract filter predicate (nil if absent).
+	var pred PS.Expr
+	if filterOp != nil {
+		pred = filterOp.Predicate()
+	}
+
+	// Extract projection exprs + names (nil if absent → SELECT *).
+	var exprs []PS.Expr
+	var names []string
+	if projectOp != nil {
+		exprs = projectOp.Cols()
+		names = make([]string, len(exprs))
+		for i, e := range exprs {
+			names[i] = exprName(e)
+		}
+	}
+
+	// Extract limit (-1 = unlimited if absent).
+	limit := int64(-1)
+	if limitOp != nil {
+		limit = limitOp.LimitValue()
+	}
+
+	return OP.NewFusedBatchScan(source, pred, exprs, names, limit)
 }
 
 // containsSubquery reports whether an expression tree contains any
