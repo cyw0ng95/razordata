@@ -85,6 +85,30 @@ type BlockReader interface {
 	ReadBlock() (keys, values [][]byte, ok bool)
 }
 
+// REQ001996: BlockStatProvider was the original interface for per-block
+// column stats. BlockRangeProvider extends the capability — for the
+// block-batched fast path (REQ001995), the iterator exposes the *previous*
+// block's stats after ReadBlock returns so the caller can decide to skip
+// the next batch's decode. REQ001996.
+type BlockRangeProvider interface {
+	// LastBlockColumnStats returns the min/max stats for the block that
+	// the most recent ReadBlock (or Next) returned. Returns
+	// (nil, nil, false) if not available.
+	LastBlockColumnStats(colIdx int) (min, max []byte, ok bool)
+}
+
+// REQ001997: Seeker is implemented by iterators that support jumping
+// to a specific block. Used by range/prefix scans to skip blocks
+// whose largestKey is before the scan's lower bound.
+type Seeker interface {
+	// SeekToBlock positions the iterator so the next block to be returned
+	// is at the given index (clamped to [0, NumBlocks]).
+	SeekToBlock(blockIdx int)
+	// FindBlock returns the index of the block whose largestKey >= key,
+	// or -1 if all blocks' largestKeys are < key. REQ001997.
+	FindBlock(key []byte) int
+}
+
 // rows without decoding (e.g., SeqScan, IndexScan).
 type Skipper interface {
 	Skip(ctx context.Context, n int64) error
@@ -230,6 +254,12 @@ type SeqScan struct {
 	predicateMin   int64
 	predicateMax   int64
 	predicateIsSet bool
+
+	// REQ001997: itInitialized tracks whether the underlying iterator
+	// has been positioned. False → nextColumnarBatch will seek to the
+	// start block (when Seeker is available). True → iterator already
+	// advanced past the seek.
+	itInitialized bool
 
 	// REQ001666: batch-scoped string interner reused across NextBatch
 	// calls. Created once per scan, cleared between batches.
@@ -1131,12 +1161,30 @@ func prefixRowCols(r Row, alias string) Row {
 // overhead (range-tombstone check, tombstone skip, key compare) across
 // all rows in the block. Falls back to per-row Next()/Value() when the
 // iterator doesn't expose the capability.
+//
+// REQ001997: when the iterator implements Seeker, jump the iterator to
+// the block containing the predicate's lower bound on the first call.
+// Subsequent calls continue from where they left off.
 func (s *SeqScan) nextColumnarBatch(ctx context.Context, batch *UT.Batch, wantedCols []int, wantedTypes []LX.TokenType) (int, error) {
 	if s.it == nil {
 		s.it = s.store.NewIterator(s.prefix)
 	}
 	if s.it == nil {
 		return 0, nil
+	}
+	// REQ001997: on the first call, seek to the block containing
+	// predicateMin (when the iterator supports seek and we have an
+	// int64 PK predicate).
+	if !s.itInitialized {
+		s.itInitialized = true
+		if seeker, ok := s.it.(Seeker); ok && s.predicateIsSet && s.predicateCol == 0 {
+			seekKey := make([]byte, len(s.prefix)+8)
+			copy(seekKey, s.prefix)
+			binary.BigEndian.PutUint64(seekKey[len(s.prefix):], uint64(s.predicateMin))
+			if blockIdx := seeker.FindBlock(seekKey); blockIdx >= 0 {
+				seeker.SeekToBlock(blockIdx)
+			}
+		}
 	}
 	rowIdx := 0
 	maxRows := UT.BatchSize
@@ -1164,6 +1212,19 @@ func (s *SeqScan) nextColumnarBatch(ctx context.Context, batch *UT.Batch, wanted
 				s.ctxCheckCounter = 0
 				if err := ctx.Err(); err != nil {
 					return rowIdx, err
+				}
+			}
+			// REQ001996: skip the entire block when the block's stats
+			// prove no row can match the range predicate.
+			if s.predicateIsSet {
+				if bp, ok := s.it.(BlockRangeProvider); ok {
+					if min, max, ok := bp.LastBlockColumnStats(s.predicateCol); ok && len(min) > 0 && len(max) > 0 {
+						blockMin := int64(binary.BigEndian.Uint64(min))
+						blockMax := int64(binary.BigEndian.Uint64(max))
+						if s.predicateMin > blockMax || s.predicateMax < blockMin {
+							continue
+						}
+					}
 				}
 			}
 			for i := range values {

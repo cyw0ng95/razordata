@@ -925,6 +925,52 @@ func (it *sstIterator) ReadBlock() (keys, values [][]byte, ok bool) {
 	return nil, nil, false
 }
 
+// LastBlockColumnStats returns the min/max stats for the block that the
+// most recent ReadBlock (or Next) returned. Returns (nil, nil, false)
+// if stats are not available or no block has been consumed yet.
+// REQ001996: lets the block-batched fast path apply range-predicate
+// skipping at block granularity without per-row scans.
+func (it *sstIterator) LastBlockColumnStats(colIdx int) (min, max []byte, ok bool) {
+	if len(it.currentBlockStats) == 0 {
+		return nil, nil, false
+	}
+	return parseBlockStats(it.currentBlockStats, colIdx)
+}
+
+// SeekToBlock positions the iterator so that the next block to be
+// returned by Next() or ReadBlock() is at index blockIdx. REQ001997.
+// Callers should pass the result of searchIndex(startKey) for the
+// scan's lower bound. Out-of-range values are clamped.
+func (it *sstIterator) SeekToBlock(blockIdx int) {
+	if blockIdx < 0 {
+		blockIdx = 0
+	}
+	if blockIdx >= len(it.reader.indexBlock) {
+		blockIdx = len(it.reader.indexBlock)
+	}
+	// ReadBlock computes nextBlock = it.blockIdx + 1 (or 0 if blockIdx < 0).
+	// Set blockIdx one less than the target so the next read lands on it.
+	it.blockIdx = blockIdx - 1
+	it.pairs = nil
+	it.currentBlockStats = nil
+}
+
+// FindBlock returns the index of the block whose largestKey is the
+// first >= key, or -1 if every block's largestKey is < key.
+// REQ001997: lets SeqScan skip blocks entirely outside the scan range.
+func (it *sstIterator) FindBlock(key []byte) int {
+	n := len(it.reader.indexBlock)
+	if n == 0 {
+		return -1
+	}
+	// searchIndex clamps the result; if even the last block's largestKey
+	// is < key, there's no candidate — return -1.
+	if bytes.Compare(it.reader.indexBlock[n-1].largestKey, key) < 0 {
+		return -1
+	}
+	return it.reader.searchIndex(key)
+}
+
 func (it *sstIterator) Next() bool {
 	for {
 		if it.pairs == nil {
@@ -991,8 +1037,14 @@ func (it *sstIterator) BlockColumnStats(colIdx int) (min, max []byte, ok bool) {
 	if len(it.currentBlockStats) == 0 {
 		return nil, nil, false
 	}
+	return parseBlockStats(it.currentBlockStats, colIdx)
+}
+
+// parseBlockStats extracts the min/max for colIdx from a serialized
+// block-stats blob. REQ001996: shared by BlockColumnStats (per-row path)
+// and LastBlockColumnStats (block-batched path).
+func parseBlockStats(data []byte, colIdx int) (min, max []byte, ok bool) {
 	// Format: [numCols:varint] [colIdx:varint] [minLen:varint] [minBytes] [maxLen:varint] [maxBytes]...
-	data := it.currentBlockStats
 	pos := 0
 	numCols, n := decodeVarint(data)
 	if n <= 0 {

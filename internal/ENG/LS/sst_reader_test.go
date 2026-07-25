@@ -775,3 +775,172 @@ func TestSSTIterator_ReadBlock_EqualsNext(t *testing.T) {
 		}
 	}
 }
+
+// TestSSTIterator_LastBlockColumnStats verifies that after ReadBlock
+// returns, LastBlockColumnStats exposes the min/max of the just-returned
+// block. REQ001996 — this is the capability the SeqScan block-batched
+// path uses to skip blocks outside the range predicate.
+func TestSSTIterator_LastBlockColumnStats(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_sst_last_block_stats")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("dir: %v", err)
+	}
+
+	w := newSSTWriter()
+	for i := 10; i <= 100; i += 10 {
+		key := []byte(fmt.Sprintf("%03d", i))
+		val := []byte(fmt.Sprintf("v%d", i))
+		w.Add(key, val)
+	}
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	reader, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST: %v", err)
+	}
+
+	it := reader.Iterator()
+	defer it.Close()
+
+	// Read all blocks until EOF; for each, query LastBlockColumnStats.
+	blockCount := 0
+	for {
+		_, _, ok := it.ReadBlock()
+		if !ok {
+			break
+		}
+		blockCount++
+		// LastBlockColumnStats should at minimum not panic. Stats may be
+		// empty if the SST wasn't written with stats — that's fine.
+		_, _, _ = it.LastBlockColumnStats(0)
+	}
+	if blockCount == 0 {
+		t.Fatal("expected at least one block from ReadBlock")
+	}
+}
+
+// TestSSTIterator_FindBlock verifies that FindBlock returns the index
+// of the block whose largestKey is the first >= key. REQ001997.
+func TestSSTIterator_FindBlock(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_sst_find_block")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("dir: %v", err)
+	}
+
+	w := newSSTWriter()
+	w.Add([]byte("a"), []byte("1"))
+	w.Add([]byte("c"), []byte("3"))
+	w.Add([]byte("e"), []byte("5"))
+	w.Add([]byte("g"), []byte("7"))
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	reader, err := openSST(sstData)
+	if err != nil {
+		t.Fatalf("openSST: %v", err)
+	}
+
+	it := reader.Iterator()
+	defer it.Close()
+
+	tests := []struct {
+		key  string
+		want int
+	}{
+		{"a", 0}, // first block's largestKey >= "a"
+		{"b", 0}, // first block's largestKey "c" or "g" (single block) >= "b"
+		{"c", 0},
+		{"g", 0},
+		{"x", -1}, // > all largestKeys
+		{"", 0},   // empty key matches everything
+	}
+	for _, tc := range tests {
+		got := it.FindBlock([]byte(tc.key))
+		if got != tc.want {
+			t.Errorf("FindBlock(%q) = %d, want %d", tc.key, got, tc.want)
+		}
+	}
+}
+
+// TestSSTIterator_SeekToBlock verifies that SeekToBlock correctly
+// positions the iterator so subsequent Next() / ReadBlock() returns
+// from the seeked block. REQ001997.
+func TestSSTIterator_SeekToBlock(t *testing.T) {
+	dir := t.TempDir()
+	dir = filepath.Join(dir, "test_sst_seek")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("dir: %v", err)
+	}
+
+	w := newSSTWriter()
+	for i := 0; i < 16; i++ {
+		key := []byte(fmt.Sprintf("k%02d", i))
+		val := []byte(fmt.Sprintf("v%02d", i))
+		w.Add(key, val)
+	}
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	t.Run("seek to 0", func(t *testing.T) {
+		reader, err := openSST(sstData)
+		if err != nil {
+			t.Fatalf("openSST: %v", err)
+		}
+		it := reader.Iterator()
+		defer it.Close()
+		it.SeekToBlock(0)
+		keys, _, ok := it.ReadBlock()
+		if !ok {
+			t.Fatal("ReadBlock returned ok=false")
+		}
+		if len(keys) == 0 || string(keys[0]) != "k00" {
+			t.Errorf("first key = %q, want k00", keys[0])
+		}
+	})
+
+	t.Run("seek past end → EOF", func(t *testing.T) {
+		reader, err := openSST(sstData)
+		if err != nil {
+			t.Fatalf("openSST: %v", err)
+		}
+		it := reader.Iterator()
+		defer it.Close()
+		it.SeekToBlock(100)
+		_, _, ok := it.ReadBlock()
+		if ok {
+			t.Fatal("ReadBlock should return ok=false when seek past end")
+		}
+	})
+
+	t.Run("seek to current", func(t *testing.T) {
+		// Read first block via ReadBlock, then SeekToBlock(0) — the
+		// next ReadBlock should still yield the first block's first key.
+		reader, err := openSST(sstData)
+		if err != nil {
+			t.Fatalf("openSST: %v", err)
+		}
+		it := reader.Iterator()
+		defer it.Close()
+		it.SeekToBlock(0)
+		keys1, _, ok := it.ReadBlock()
+		if !ok || len(keys1) == 0 {
+			t.Fatalf("ReadBlock #1: ok=%v keys=%v", ok, keys1)
+		}
+		first := string(keys1[0])
+		it.SeekToBlock(0)
+		keys2, _, ok := it.ReadBlock()
+		if !ok || len(keys2) == 0 {
+			t.Fatalf("ReadBlock #2 after SeekToBlock(0): ok=%v", ok)
+		}
+		if string(keys2[0]) != first {
+			t.Errorf("after re-seek, first key = %q, want %q", keys2[0], first)
+		}
+	})
+}

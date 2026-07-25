@@ -363,6 +363,23 @@ func (s *sstIter) ReadBlock() (keys, values [][]byte, ok bool) {
 	return s.it.ReadBlock()
 }
 
+// LastBlockColumnStats exposes the most-recently-read block's stats for
+// block-batched range-predicate skipping. REQ001996.
+func (s *sstIter) LastBlockColumnStats(colIdx int) (min, max []byte, ok bool) {
+	return s.it.LastBlockColumnStats(colIdx)
+}
+
+// SeekToBlock jumps the iterator to the given block. REQ001997.
+func (s *sstIter) SeekToBlock(blockIdx int) {
+	s.it.SeekToBlock(blockIdx)
+}
+
+// FindBlock returns the index of the first block whose largestKey >= key.
+// REQ001997.
+func (s *sstIter) FindBlock(key []byte) int {
+	return s.it.FindBlock(key)
+}
+
 type iterHeapItem struct {
 	key   []byte // borrowed from mergeIterator.sourceKeys[src] (REQ001258)
 	value []byte // borrowed from mergeIterator.sourceVals[src] (REQ001258)
