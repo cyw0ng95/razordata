@@ -119,7 +119,7 @@ func (v *Values) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		data[i] = val
-		types[i] = inferType(val.ToAny())
+		types[i] = inferTypeFromValue(val)
 	}
 
 	v.row = Row{Cols: v.colNames, Types: types, Data: data}
@@ -239,6 +239,28 @@ func inferType(v any) LX.TokenType {
 	return LX.T_TEXT
 }
 
+// REQ001696/REQ001706: inferTypeFromValue avoids boxing to any by
+// switching on Value.Kind directly. Used by Values.Next and
+// ValuesRows.Next to eliminate per-cell ToAny() allocation.
+func inferTypeFromValue(v Value) LX.TokenType {
+	switch v.Kind {
+	case KindNull:
+		return LX.TokenType(-1)
+	case KindInt:
+		return LX.T_INT_KW
+	case KindFloat:
+		return LX.T_FLOAT_KW
+	case KindBool:
+		return LX.T_BOOL
+	case KindText:
+		return LX.T_TEXT
+	case KindBlob:
+		return LX.T_BLOB
+	default:
+		return LX.T_TEXT
+	}
+}
+
 // ValuesRows implements a multi-row operator for standalone VALUES
 // statements (REQ000564). Each row is a list of scalar expressions.
 type ValuesRows struct {
@@ -273,7 +295,7 @@ func (v *ValuesRows) Next(ctx context.Context) (Row, error) {
 			return Row{}, err
 		}
 		data[i] = val
-		types[i] = inferType(val.ToAny())
+		types[i] = inferTypeFromValue(val)
 	}
 	// REQ001571: use pre-computed schema for column names (first row defines them).
 	cols := v.schema
