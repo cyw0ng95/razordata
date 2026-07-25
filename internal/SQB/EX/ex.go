@@ -1243,14 +1243,14 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 }
 
 func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.Row, error) {
-	// REQ001712: textPlanCache disabled for QueryAll — the cached plan's
-	// operator tree state (e.g., Aggregate.buf, ValuesOp.evaluated) is
-	// modified by the first execution and not fully reset by Close().
-	// The stmtCache (parsed AST) still provides the main perf benefit
-	// (12.70% CPU on parsing). The textPlanCache remains active for
-	// the single-row Query path (used by QueryStreamCompiled).
-	_ = e.getTextPlan
-	_ = e.putTextPlan
+	// REQ002010: textPlanCache not consulted in QueryAll — the cached
+	// plan's operator tree state (e.g., Aggregate.buf, ValuesOp.evaluated)
+	// is modified by the first execution and not fully reset by Close(),
+	// and cached plans retain closed operator tree memory preventing GC
+	// from collecting Filter/Project/SeqScan buffers (26% of alloc bytes
+	// indirectly via batchBufPool). The stmtCache (parsed AST) still
+	// provides the parse-speedup (12.7% CPU). textPlanCache remains
+	// active for Query/Explain/QueryStreamCompiled paths.
 
 	// Try cache first (P0: StmtCache wiring, saves 12.70% CPU on parsing)
 	if e.stmtCache.entries != nil {
@@ -1262,10 +1262,6 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 			}
 			if plan == nil || plan.Root == nil {
 				return nil, errors.New("ex: plan produced no root")
-			}
-			// REQ001712: textPlanCache disabled for QueryAll.
-			if plan.Root != nil && !isConstRowPlan(plan.Root) {
-				e.putTextPlan(sql, plan)
 			}
 			propagateParams(plan.Root, args, &e.paramBuf)
 			propagatePlanner(plan.Root, e.planner)
@@ -1294,11 +1290,8 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 	if plan == nil || plan.Root == nil {
 		return nil, errors.New("ex: plan produced no root")
 	}
-	// REQ001464: cache the plan by exact SQL text.
-	// REQ001712: textPlanCache disabled for QueryAll.
-	if plan.Root != nil && !isConstRowPlan(plan.Root) {
-		e.putTextPlan(sql, plan)
-	}
+	// REQ002010: do not cache plans via textPlanCache in QueryAll.
+	// See comment above; cached plans leak operator tree memory.
 	propagateParams(plan.Root, args, &e.paramBuf)
 	// REQ000366: thread the main-plan planner so SeqScan rows
 	// carry it into subquery evals. propagatePlanner is a
@@ -1579,6 +1572,12 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 	}
 	if val, ok := root.(*OP.Values); ok {
 		val.SetExecCtx(ec)
+	}
+	// REQ002009: SeqScan.decodeRowBuffered reuses the persistent
+	// RowArena when execCtx is linked. Without this, every SeqScan
+	// allocates a fresh RowArena + Init → getSlab on first decode.
+	if scan, ok := root.(*OP.SeqScan); ok {
+		scan.SetExecCtx(ec)
 	}
 	type childer interface {
 		Child() DT.Operator

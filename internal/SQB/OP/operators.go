@@ -220,6 +220,13 @@ type SeqScan struct {
 	// REQ001221: rowArena replaces decodeBuf for bump-pointer
 	rowArena *DT.RowArena
 
+	// REQ002009: execCtx is set by EX.propagateExecContext. When
+	// present, decodeRowBuffered reuses execCtx.RowArena (the
+	// Engine's persistent arena) instead of allocating a fresh
+	// RowArena per SeqScan. ResetOffset is invoked by the Executor
+	// at the start of each query; the slab survives across queries.
+	execCtx *pl.ExecContext
+
 	// REQ001558: pre-computed projection metadata. When RequestedCols
 	// is set, these are built once in NewSeqScan and reused across
 	// all rows, eliminating per-row make([]string) + make([]Value) +
@@ -946,6 +953,16 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 // wanted indices) so downstream Project sees only the columns the
 // query actually references, eliminating a per-row pruneRowCols pass.
 func (s *SeqScan) decodeRowBuffered(data []byte) (Row, error) {
+	// REQ002009: prefer the Engine's persistent RowArena when
+	// propagateExecContext linked one in. This avoids per-query
+	// getSlab + Init calls (54% of alloc bytes on slt_good_2) and
+	// eliminates the GC death spiral where sync.Pool clears on
+	// every GC, but GC itself is driven by this allocation.
+	if s.execCtx != nil {
+		if arena, ok := s.execCtx.RowArena.(*DT.RowArena); ok && arena != nil {
+			s.rowArena = arena
+		}
+	}
 	if s.rowArena == nil {
 		s.rowArena = &DT.RowArena{}
 		s.rowArena.Init(engineBatchSize, len(s.schema.Cols))
@@ -1077,7 +1094,14 @@ func (s *SeqScan) Close() error {
 	s.pos = 0
 	s.rows = nil
 	if s.rowArena != nil {
-		s.rowArena.Reset()
+		// REQ002009: only Reset the arena when it is owned by this
+		// SeqScan. When linked from execCtx, the arena is persistent
+		// across queries — ResetOffset is called by the Executor
+		// before each query, not by Close.
+		if s.execCtx == nil {
+			s.rowArena.Reset()
+			s.rowArena = nil
+		}
 	}
 	// REQ001421: clear prune buffers so next user of the cached
 	// SeqScan starts fresh.
@@ -1093,6 +1117,10 @@ func (s *SeqScan) Close() error {
 	s.pointLookupPos = 0
 	return nil
 }
+
+// SetExecCtx links the persistent ExecContext from EX.propagateExecContext
+// so decodeRowBuffered can reuse the Engine's RowArena. REQ002009.
+func (s *SeqScan) SetExecCtx(ec *pl.ExecContext) { s.execCtx = ec }
 
 // Reset reinitializes SeqScan cursor state for operator tree reuse.
 // Does NOT close the iterator (reopened lazily on next Next() call)
