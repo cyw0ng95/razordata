@@ -96,12 +96,22 @@ func HashComposite(cols []int64) uint64 {
 //	found — true if cols already exist at this slot
 //	ok    — true if the slot is usable (existing match or empty)
 //
-// ok=false means the table is full and must be resized.
+//	ok=false means the table is completely full (no empty slot found)
+// and the key is not present; the caller must resize before inserting.
+//
+// REQ001999 fix: the prior loop bounded probing to Capacity/8 iterations,
+// which is incorrect for linear probing at high fill ratios. With 13 rows
+// in a cap-16 table (81% fill), secondary collisions routinely push keys
+// 3+ slots from their home, and the Capacity/8=2 bound caused Lookup to
+// return "not found" for keys that were actually present. This surfaced as
+// VJH missing matched rows in the GraceHashJoin equivalence test (case 3).
+// The correct linear-probing termination is: probe until an empty slot is
+// found (key absent) or the key is matched, scanning the full capacity.
 func (ht *HashTable) Lookup(cols []int64, hash uint64) (idx int, found bool, ok bool) {
 	mask := uint64(ht.Capacity - 1)
 	slot := int(hash & mask)
 	stride := ht.NumCols
-	for i := 0; i < int(ht.Capacity)/8; i++ {
+	for i := 0; i < int(ht.Capacity); i++ {
 		s := (slot + i) & int(mask)
 		occupied := (ht.Bitmap[s/64]>>(s%64))&1 == 1
 		if !occupied {

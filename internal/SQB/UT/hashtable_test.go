@@ -249,10 +249,17 @@ func TestHashTable_CompositeResize(t *testing.T) {
 		t.Fatalf("expected 12 occupied, got %d", ht.Occupied)
 	}
 
-	// Trigger resize by lookup that would exceed probe limit
-	_, _, ok := ht.Lookup([]int64{999, 9990}, HashComposite([]int64{999, 9990}))
-	if ok {
-		t.Fatal("expected full before resize")
+	// REQ001999 fix: Lookup now probes the full capacity (not Capacity/8),
+	// so a non-existent key in a partially-filled table correctly returns
+	// ok=true (empty slot found, key absent). The old Capacity/8 bound
+	// incorrectly returned ok=false here. We resize manually to verify
+	// entry preservation.
+	_, found, ok := ht.Lookup([]int64{999, 9990}, HashComposite([]int64{999, 9990}))
+	if found {
+		t.Fatal("non-existent key should not be found")
+	}
+	if !ok {
+		t.Fatal("table is not full (12/16 slots), lookup should find an empty slot")
 	}
 	ht.resize()
 

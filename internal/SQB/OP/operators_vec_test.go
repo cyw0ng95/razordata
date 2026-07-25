@@ -25,7 +25,21 @@ func (s *testBatchProducer) NextBatch(_ context.Context) (*UT.Batch, error) {
 	return b, nil
 }
 
-func (s *testBatchProducer) Close() error { return nil }
+// Close releases any un-consumed batches back to the pool. REQ001999:
+// without this, partially-drained producers (e.g. when a join short-
+// circuits on an empty build side) leak pooled batches across test
+// cases, which under GOMEMLIMIT can compound into OOM during long
+// equivalence runs. Consumed batches are already Put()ed by the
+// joining operator, so we only release the tail starting at s.idx.
+func (s *testBatchProducer) Close() error {
+	for i := s.idx; i < len(s.batches); i++ {
+		if s.batches[i] != nil {
+			s.batches[i].Put()
+		}
+	}
+	s.batches = nil
+	return nil
+}
 
 func makeTestBatchForProject(n int) *UT.Batch {
 	b := UT.GetBatch(2)

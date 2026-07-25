@@ -152,8 +152,16 @@ func (j *VectorizedHashJoin) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		}
 	}
 	if j.ht == nil {
-		j.done = true
-		return nil, nil
+		// Empty build side. For INNER/LEFT, no output is correct.
+		// For RIGHT/FULL, all probe rows are unmatched and must be
+		// emitted with NULL build columns. REQ001999: this path is
+		// exercised by GraceHashJoin partitions that receive probe
+		// rows but no build rows.
+		if j.kind != JoinKindRight && j.kind != JoinKindFull {
+			j.done = true
+			return nil, nil
+		}
+		return j.drainEmptyBuildProbe(ctx)
 	}
 
 	// REQ001619: multi-phase emission.
@@ -180,16 +188,17 @@ func (j *VectorizedHashJoin) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		// Probe exhausted. Decide next phase.
 		switch j.kind {
 		case JoinKindLeft, JoinKindFull:
-			// Debug: ensure we reach here
 			if j.unmatchedBuf == nil {
 				j.initUnmatchedBuf()
 			}
 			if batch := j.emitUnmatchedBuild(); batch != nil {
 				return batch, nil
 			}
-			if j.kind == JoinKindFull {
-				continue // also need RIGHT unmatched
+			if j.kind == JoinKindLeft {
+				break // LEFT done after build-unmatched emission
 			}
+			// FULL: fall through to probe-side unmatched emission.
+			fallthrough
 		case JoinKindRight:
 			if j.unmatchedBuf == nil {
 				j.initUnmatchedBuf()
@@ -597,12 +606,18 @@ func (j *VectorizedHashJoin) emitBatchedMatches(output *UT.Batch, nBuild int) {
 	outStart := output.Size
 	outEnd := outStart + n
 	if outEnd > UT.BatchSize {
-		// Caller ensures output.Size < BatchSize before calling, so this
-		// branch shouldn't fire; fall back to per-row emit for safety.
-		for _, bid := range j.pending {
-			j.emitOneRow(output, nBuild, int(bid))
+		// REQ001999: the pending list would overflow the output batch.
+		// Emit only enough rows to fill the batch to BatchSize; retain
+		// the rest in j.pending for the next probePhase call. The prior
+		// code emitted ALL pending rows via per-row emit, pushing
+		// output.Size past BatchSize and causing out-of-bounds reads
+		// (BatchValueAt returns nil for indices >= len(Data.Ints)),
+		// which surfaced as spurious NULL rows in INNER joins.
+		room := UT.BatchSize - outStart
+		for i := 0; i < room; i++ {
+			j.emitOneRow(output, nBuild, int(j.pending[i]))
 		}
-		j.pending = j.pending[:0]
+		j.pending = j.pending[room:]
 		return
 	}
 
@@ -1013,6 +1028,17 @@ func (j *VectorizedHashJoin) emitUnmatchedBuild() *UT.Batch {
 		for c := 0; c < j.buildN; c++ {
 			copyRowToColumn(&output.Cols[c], &j.buildCols[c], output.Size, buildRowIdx)
 		}
+		// REQ001999: mark probe columns NULL for unmatched build rows.
+		// Without this, the probe side shows zero values (0, "", false)
+		// instead of NULL — a latent bug surfaced by GraceHashJoin's
+		// partitioned outer-join tests.
+		for c := 0; c < j.probeN; c++ {
+			probeCol := &output.Cols[j.buildN+c]
+			if probeCol.Nulls == nil {
+				probeCol.Nulls = make([]bool, UT.BatchSize)
+			}
+			probeCol.Nulls[output.Size] = true
+		}
 		output.Size++
 	}
 
@@ -1056,7 +1082,17 @@ func (j *VectorizedHashJoin) emitUnmatchedProbe() *UT.Batch {
 			if probeRow < len(j.matchedProbe) {
 				j.matchedProbe[probeRow] = true
 			}
-			// Build columns are NULL (already allocated) — copy probe columns.
+			// REQ001999: mark build columns NULL for unmatched probe rows.
+			// Without this, the build side shows zero values (0, "", false)
+			// instead of NULL — same latent bug as emitUnmatchedBuild.
+			for c := 0; c < j.buildN; c++ {
+				buildCol := &output.Cols[c]
+				if buildCol.Nulls == nil {
+					buildCol.Nulls = make([]bool, UT.BatchSize)
+				}
+				buildCol.Nulls[output.Size] = true
+			}
+			// Copy probe columns.
 			for c := 0; c < j.probeN; c++ {
 				copyRowToColumn(&output.Cols[j.buildN+c], &batch.Cols[c], output.Size, r)
 			}
@@ -1070,6 +1106,49 @@ func (j *VectorizedHashJoin) emitUnmatchedProbe() *UT.Batch {
 		return nil
 	}
 	return output
+}
+
+// drainEmptyBuildProbe handles RIGHT/FULL outer joins when the build side
+// is empty (j.ht == nil). All probe rows are unmatched and must be emitted
+// with NULL build columns. The probe side is drained into probeBatches on
+// the first call; subsequent calls emit batches until exhausted.
+// REQ001999: exercised by GraceHashJoin partitions that receive probe
+// rows but no build rows.
+func (j *VectorizedHashJoin) drainEmptyBuildProbe(ctx context.Context) (*UT.Batch, error) {
+	if j.probeBatches == nil && j.probe != nil {
+		j.probeBatches = make([]*UT.Batch, 0, 8)
+		for {
+			b, err := j.probe.NextBatch(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if b == nil {
+				break
+			}
+			if j.probeNames == nil {
+				j.probeN = meaningfulCols([]*UT.Batch{b})
+				j.probeNames = make([]string, j.probeN)
+				j.probeTypes = make([]LX.TokenType, j.probeN)
+				for i := 0; i < j.probeN; i++ {
+					j.probeNames[i] = b.Cols[i].Name
+					j.probeTypes[i] = b.Cols[i].Type
+				}
+			}
+			// All probe rows are unmatched (no build rows to match against).
+			j.matchedProbe = append(j.matchedProbe, make([]bool, b.Size)...)
+			j.probeBatches = append(j.probeBatches, b)
+		}
+	}
+	if len(j.probeBatches) > 0 {
+		if j.unmatchedBuf == nil {
+			j.initUnmatchedBuf()
+		}
+		if batch := j.emitUnmatchedProbe(); batch != nil {
+			return batch, nil
+		}
+	}
+	j.done = true
+	return nil, nil
 }
 
 // replayProbeBatches drains the probe producer and returns all batches.
