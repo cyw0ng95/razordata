@@ -36,11 +36,11 @@ quick_fail
 
 cd "$ROOT/tests/sqlcmp"
 
-# SLT included cases — all 23 cases in a SINGLE go-test invocation
+# SLT included cases — all 243 cases in a SINGLE go-test invocation
 # via TestSLT_InList. Per-case results shown as subtests with -v;
 # quick-fail on first error. No overall timeout — per-case limits
 # are set in includedCases (select4 gets 30 min).
-run_step "slt-inlist" "SLT included cases (23 files, 1 invocation)" \
+run_step "slt-inlist" "SLT included cases (243 files, 1 invocation)" \
   go test -v -tags slt_corpus -run TestSLT_InList -count=1 ./slt/
 quick_fail
 
