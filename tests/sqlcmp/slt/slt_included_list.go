@@ -31,6 +31,7 @@ var includedCases = []includedCase{
 	{Label: "evidence::in2", Path: "evidence/in2", Timeout: 30},
 	{Label: "evidence::slt_lang_reindex", Path: "evidence/slt_lang_reindex", Timeout: 30},
 	{Label: "evidence::slt_lang_replace", Path: "evidence/slt_lang_replace", Timeout: 30},
+	{Label: "random::aggregates::slt_good_1", Path: "random/aggregates/slt_good_1", Timeout: 60},
 	{Label: "random::expr::slt_good_0", Path: "random/expr/slt_good_0", Timeout: 60},
 	{Label: "random::expr::slt_good_1", Path: "random/expr/slt_good_1", Timeout: 60},
 	{Label: "random::expr::slt_good_2", Path: "random/expr/slt_good_2", Timeout: 60},

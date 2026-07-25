@@ -718,6 +718,17 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 		// REQ001080: prune unused columns from the output row.
 		if s.usedCols != nil && !s.shallow {
 			out = pruneRowCols(out, s.usedCols, s.usedColSet, s)
+			// REQ002005: pruneRowCols reuses SeqScan.pruneBufData[:0]
+			// as the backing array for newData. Multiple consecutive
+			// Next() calls share this buffer, so a row stored by
+			// Aggregate.materialize would be silently overwritten when
+			// the next row is pruned. Copy Data to give each row its
+			// own backing array.
+			if len(out.Data) > 0 {
+				cp := make([]Value, len(out.Data))
+				copy(cp, out.Data)
+				out.Data = cp
+			}
 		}
 	}
 	if s.planner != nil {
@@ -866,14 +877,14 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 		// REQ001080: prune unused columns from the store-backed row.
 		if s.usedCols != nil && !row.RowFromSubsetDecode {
 			row = pruneRowCols(row, s.usedCols, s.usedColSet, s)
-			// REQ001481: no defensive copy needed. Downstream Project.Next
-			// evaluates expressions synchronously (fn(&row) / EvalValue)
-			// and writes results into its own dataBuf — it does not retain
-			// a reference to row.Data. The prune buffer (pruneBufCols/
-			// pruneBufData) lives on the SeqScan and is reused across
-			// rows; since Project.Next is called before the next
-			// nextFromStore call, the buffer's contents are still valid
-			// throughout Project.Next's synchronous evaluation.
+			// REQ002005: same defensive copy as cloneRow — pruneRowCols
+			// shares the backing array across rows; Aggregate.materialize
+			// retains rows past the next Next() call.
+			if len(row.Data) > 0 {
+				cp := make([]Value, len(row.Data))
+				copy(cp, row.Data)
+				row.Data = cp
+			}
 		}
 
 		return row, nil
