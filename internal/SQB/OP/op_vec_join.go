@@ -523,10 +523,16 @@ func (j *VectorizedHashJoin) probePhase(ctx context.Context) (*UT.Batch, error) 
 	output := j.newOutputBatch(nCols)
 
 	for output.Size < UT.BatchSize {
-		// Drain pending matches first.
-		for len(j.pending) > 0 && output.Size < UT.BatchSize {
-			j.emitOneRow(output, nBuild, int(j.pending[0]))
-			j.pending = j.pending[1:]
+		// Drain pending matches first. REQ002000: when the pending list
+		// has multiple matches for the same probe row, batch-emit them in
+		// one tight per-column loop instead of per-row copyRowToColumn.
+		if len(j.pending) > 1 {
+			j.emitBatchedMatches(output, nBuild)
+		} else {
+			for len(j.pending) > 0 && output.Size < UT.BatchSize {
+				j.emitOneRow(output, nBuild, int(j.pending[0]))
+				j.pending = j.pending[1:]
+			}
 		}
 		if output.Size >= UT.BatchSize {
 			break
@@ -576,6 +582,124 @@ func (j *VectorizedHashJoin) emitOneRow(output *UT.Batch, nBuild, buildRowIdx in
 	if j.matchedProbe != nil && j.probeRow < len(j.matchedProbe) {
 		j.matchedProbe[j.probeRow] = true
 	}
+}
+
+// emitBatchedMatches emits all pending matches in one tight per-column
+// loop. REQ002000: replaces per-row copyRowToColumn (N*K cells, N*K type
+// switches) with one type switch per column and a tight cell-copy loop
+// per column. Probe-side columns are broadcast (single source row → K
+// output rows) since the probe row is constant for the whole pending list.
+func (j *VectorizedHashJoin) emitBatchedMatches(output *UT.Batch, nBuild int) {
+	n := len(j.pending)
+	if n == 0 {
+		return
+	}
+	outStart := output.Size
+	outEnd := outStart + n
+	if outEnd > UT.BatchSize {
+		// Caller ensures output.Size < BatchSize before calling, so this
+		// branch shouldn't fire; fall back to per-row emit for safety.
+		for _, bid := range j.pending {
+			j.emitOneRow(output, nBuild, int(bid))
+		}
+		j.pending = j.pending[:0]
+		return
+	}
+
+	// Build columns: tight per-column loop.
+	for c := 0; c < nBuild; c++ {
+		src := &j.buildCols[c]
+		dst := &output.Cols[c]
+		switch src.Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			srcInts := src.Data.Ints
+			dstInts := dst.Data.Ints
+			for i, bid := range j.pending {
+				if int(bid) < len(srcInts) {
+					dstInts[outStart+i] = srcInts[bid]
+				}
+			}
+		case LX.T_FLOAT_KW:
+			srcFloats := src.Data.Floats
+			dstFloats := dst.Data.Floats
+			for i, bid := range j.pending {
+				if int(bid) < len(srcFloats) {
+					dstFloats[outStart+i] = srcFloats[bid]
+				}
+			}
+		case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+			srcStrs := src.Data.Strs
+			dstStrs := dst.Data.Strs
+			for i, bid := range j.pending {
+				if int(bid) < len(srcStrs) {
+					dstStrs[outStart+i] = srcStrs[bid]
+				}
+			}
+		case LX.T_BOOL:
+			srcBools := src.Data.Bools
+			dstBools := dst.Data.Bools
+			for i, bid := range j.pending {
+				if int(bid) < len(srcBools) {
+					dstBools[outStart+i] = srcBools[bid]
+				}
+			}
+		}
+	}
+
+	// Probe columns: broadcast single source row across K output rows.
+	for c := 0; c < j.probeN; c++ {
+		src := &j.probeBatch.Cols[c]
+		dst := &output.Cols[nBuild+c]
+		switch src.Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			if j.probeRow < len(src.Data.Ints) {
+				val := src.Data.Ints[j.probeRow]
+				dstInts := dst.Data.Ints
+				for i := outStart; i < outEnd; i++ {
+					dstInts[i] = val
+				}
+			}
+		case LX.T_FLOAT_KW:
+			if j.probeRow < len(src.Data.Floats) {
+				val := src.Data.Floats[j.probeRow]
+				dstFloats := dst.Data.Floats
+				for i := outStart; i < outEnd; i++ {
+					dstFloats[i] = val
+				}
+			}
+		case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+			if j.probeRow < len(src.Data.Strs) {
+				val := src.Data.Strs[j.probeRow]
+				dstStrs := dst.Data.Strs
+				for i := outStart; i < outEnd; i++ {
+					dstStrs[i] = val
+				}
+			}
+		case LX.T_BOOL:
+			if j.probeRow < len(src.Data.Bools) {
+				val := src.Data.Bools[j.probeRow]
+				dstBools := dst.Data.Bools
+				for i := outStart; i < outEnd; i++ {
+					dstBools[i] = val
+				}
+			}
+		}
+	}
+
+	// Update matched tracking.
+	if j.matchedBuild != nil {
+		for _, bid := range j.pending {
+			if int(bid) < len(j.matchedBuild) {
+				j.matchedBuild[bid] = true
+			}
+		}
+	}
+	if j.matchedProbe != nil && j.probeRow < len(j.matchedProbe) {
+		j.matchedProbe[j.probeRow] = true
+	}
+
+	output.Size = outEnd
+	j.pending = j.pending[:0]
 }
 
 // emitMatchedRow copies one matched (build, probe) pair into output. Unlike

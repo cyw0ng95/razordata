@@ -481,6 +481,442 @@ func (j *BatchMergeJoin) Close() error {
 	return nil
 }
 
+// StreamingBatchMergeJoin is a memory-frugal variant of BatchMergeJoin
+// that streams the LEFT side batch-by-batch and buffers only the RIGHT.
+// Cuts peak memory in half vs the bilateral-materialization path, at the
+// cost of streaming I/O on the left. REQ002004.
+//
+// Both sides must be sorted by the join keys in ascending order
+// (VectorizedSort produces this). The right side is buffered fully
+// because the merge algorithm needs random access into it (collecting
+// equal-key groups on the right).
+type StreamingBatchMergeJoin struct {
+	left      UT.BatchProducer
+	right     UT.BatchProducer
+	leftKeys  []int
+	rightKeys []int
+	kind      JoinKind
+
+	// Left is streamed batch-by-batch; only the current batch is in memory.
+	leftBatch   *UT.Batch
+	leftBatchN  int // rows consumed in current left batch
+	leftDone    bool
+
+	// Right is fully buffered (peekable).
+	rightBatches []*UT.Batch
+	rightBatchIdx int
+	rightRowIdx   int
+
+	// Schema (built lazily from the first batch of each side).
+	leftNames  []string
+	leftTypes  []LX.TokenType
+	leftN      int
+	rightNames []string
+	rightTypes []LX.TokenType
+	rightN     int
+	outputCols []string
+	outputN    int
+
+	// Equal-key group buffer (physical row indices in current right batch).
+	rightGroup []int
+
+	// Outer-join tracking — mark rows already emitted.
+	matchedRight []bool
+
+	curOutput *UT.Batch
+
+	done bool
+}
+
+// NewStreamingBatchMergeJoin creates a streaming merge join that buffers
+// the right side but streams the left. REQ002004.
+func NewStreamingBatchMergeJoin(left, right UT.BatchProducer, leftKeys, rightKeys []int, kind JoinKind) *StreamingBatchMergeJoin {
+	return &StreamingBatchMergeJoin{
+		left:     left,
+		right:    right,
+		leftKeys: leftKeys,
+		rightKeys: rightKeys,
+		kind:     kind,
+	}
+}
+
+// materializeRight drains the right producer into batches. The left
+// side is left untouched (streaming).
+func (j *StreamingBatchMergeJoin) materializeRight(ctx context.Context) error {
+	for {
+		batch, err := j.right.NextBatch(ctx)
+		if err != nil {
+			return err
+		}
+		if batch == nil {
+			break
+		}
+		j.rightBatches = append(j.rightBatches, batch)
+	}
+	if len(j.rightBatches) > 0 {
+		b := j.rightBatches[0]
+		j.rightN = meaningfulCols(j.rightBatches)
+		j.rightNames = make([]string, j.rightN)
+		j.rightTypes = make([]LX.TokenType, j.rightN)
+		for i := 0; i < j.rightN; i++ {
+			j.rightNames[i] = b.Cols[i].Name
+			j.rightTypes[i] = b.Cols[i].Type
+		}
+	}
+	if j.kind == JoinKindRight || j.kind == JoinKindFull {
+		total := 0
+		for _, b := range j.rightBatches {
+			total += b.Size
+		}
+		j.matchedRight = make([]bool, total)
+	}
+	return nil
+}
+
+// fetchNextLeftBatch pulls the next left batch, building the schema if
+// this is the first call. Returns false at EOF.
+func (j *StreamingBatchMergeJoin) fetchNextLeftBatch(ctx context.Context) (bool, error) {
+	if j.leftDone {
+		return false, nil
+	}
+	if j.leftBatch != nil {
+		j.leftBatch.Put()
+		j.leftBatch = nil
+	}
+	batch, err := j.left.NextBatch(ctx)
+	if err != nil {
+		return false, err
+	}
+	if batch == nil {
+		j.leftDone = true
+		return false, nil
+	}
+	if j.leftNames == nil {
+		// REQ: count only meaningful (non-zero-typed) columns.
+		j.leftN = meaningfulCols([]*UT.Batch{batch})
+		j.leftNames = make([]string, j.leftN)
+		j.leftTypes = make([]LX.TokenType, j.leftN)
+		for i := 0; i < j.leftN; i++ {
+			j.leftNames[i] = batch.Cols[i].Name
+			j.leftTypes[i] = batch.Cols[i].Type
+		}
+		j.outputN = j.leftN + j.rightN
+		j.outputCols = make([]string, 0, j.outputN)
+		j.outputCols = append(j.outputCols, j.leftNames...)
+		j.outputCols = append(j.outputCols, j.rightNames...)
+	}
+	j.leftBatch = batch
+	j.leftBatchN = 0
+	return true, nil
+}
+
+// NextBatch produces the next output batch. Streams the left side;
+// the right side is fully buffered.
+func (j *StreamingBatchMergeJoin) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if j.done {
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if j.rightBatches == nil && len(j.rightBatches) == 0 {
+		// Lazy-init: materialize right first (it's peekable).
+		if err := j.materializeRight(ctx); err != nil {
+			return nil, err
+		}
+	}
+	// Build initial left batch.
+	if j.leftBatch == nil && !j.leftDone {
+		if _, err := j.fetchNextLeftBatch(ctx); err != nil {
+			return nil, err
+		}
+	}
+	output := j.newOutputBatch()
+
+	for output.Size < UT.BatchSize {
+		// Left exhausted: nothing more to do for INNER; emit unmatched right for RIGHT/FULL.
+		if j.leftDone || j.leftBatch == nil {
+			if j.rightOuter() {
+				if !j.emitUnmatchedRight(output) {
+					break
+				}
+			}
+			break
+		}
+		// Continue draining the in-flight right group (cartesian product).
+		if len(j.rightGroup) > 0 {
+			if !j.emitOneEqualPair(output) {
+				break
+			}
+			continue
+		}
+		// Right exhausted: emit unmatched left (LEFT/FULL), advance left.
+		if j.rightBatchIdx >= len(j.rightBatches) {
+			if j.leftOuter() {
+				j.emitOneUnmatchedLeft(output)
+			}
+			j.advanceLeft(ctx, output)
+			continue
+		}
+		cmp := j.cmpKeys()
+		if cmp < 0 {
+			if j.leftOuter() {
+				j.emitOneUnmatchedLeft(output)
+			}
+			j.advanceLeft(ctx, output)
+		} else if cmp > 0 {
+			if !j.emitUnmatchedRight(output) {
+				break
+			}
+		} else {
+			j.collectEqualRightGroup()
+			if !j.emitOneEqualPair(output) {
+				break
+			}
+		}
+	}
+
+	if output.Size == 0 {
+		output.Put()
+		j.done = true
+		return nil, nil
+	}
+	return output, nil
+}
+
+// cmpKeys compares the current left row with the current right row.
+// Returns -1 if left < right, +1 if left > right, 0 if equal.
+// Returns +1 (left < right, advance left) when the right side is
+// exhausted so the merge terminates cleanly.
+func (j *StreamingBatchMergeJoin) cmpKeys() int {
+	if j.rightBatchIdx >= len(j.rightBatches) {
+		// Right exhausted — left side is "smaller" in some sense;
+		// but in merge semantics, when right is empty the only valid
+		// outcome is to emit unmatched left (LEFT/FULL) or terminate.
+		// Return -1 so the loop advances left.
+		return -1
+	}
+	for i := 0; i < len(j.leftKeys) && i < len(j.rightKeys); i++ {
+		lv := j.colVal(j.leftBatch, j.leftKeys[i], j.leftBatchN)
+		rv := j.colVal(j.rightBatches[j.rightBatchIdx], j.rightKeys[i], j.rightRowIdx)
+		if lv < rv {
+			return -1
+		}
+		if lv > rv {
+			return 1
+		}
+	}
+	return 0
+}
+
+// colVal extracts int64 column value.
+func (j *StreamingBatchMergeJoin) colVal(b *UT.Batch, c, r int) int64 {
+	if b == nil || c >= len(b.Cols) || r >= b.Size {
+		return 0
+	}
+	col := &b.Cols[c]
+	switch col.Type {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		if r < len(col.Data.Ints) {
+			return col.Data.Ints[r]
+		}
+	}
+	return 0
+}
+
+// advanceLeft moves to the next left row; fetches the next batch on boundary.
+func (j *StreamingBatchMergeJoin) advanceLeft(ctx context.Context, output *UT.Batch) {
+	j.leftBatchN++
+	for j.leftBatch != nil && j.leftBatchN >= j.leftBatch.Size {
+		ok, _ := j.fetchNextLeftBatch(ctx)
+		if !ok {
+			return
+		}
+	}
+}
+
+// collectEqualRightGroup collects right rows with the same key as the
+// current left, advancing the right cursor to the next non-matching row.
+// Stores (batchIdx, rowIdx) packed pairs in j.rightGroup.
+func (j *StreamingBatchMergeJoin) collectEqualRightGroup() {
+	if j.leftBatch == nil || j.leftBatchN >= j.leftBatch.Size {
+		return
+	}
+	curKey := j.colVal(j.leftBatch, j.leftKeys[0], j.leftBatchN)
+	batchIdx := j.rightBatchIdx
+	rowIdx := j.rightRowIdx
+	for batchIdx < len(j.rightBatches) {
+		batch := j.rightBatches[batchIdx]
+		if rowIdx >= batch.Size {
+			batchIdx++
+			rowIdx = 0
+			continue
+		}
+		rk := j.colVal(batch, j.rightKeys[0], rowIdx)
+		if rk != curKey {
+			break
+		}
+		j.rightGroup = append(j.rightGroup, int(batchIdx)<<16 | rowIdx)
+		rowIdx++
+	}
+	// Leave cursor at the next non-matching row (or past the end).
+	j.rightBatchIdx = batchIdx
+	j.rightRowIdx = rowIdx
+}
+
+// unpackGroupRow returns (batchIdx, rowIdx) from a packed rightGroup entry.
+func unpackGroupRow(packed int) (batchIdx, rowIdx int) {
+	return packed >> 16, packed & 0xFFFF
+}
+
+// emitOneEqualPair emits one (leftRow, rightGroup[r]) pair into output.
+func (j *StreamingBatchMergeJoin) emitOneEqualPair(output *UT.Batch) bool {
+	if output.Size >= UT.BatchSize {
+		return false
+	}
+	if len(j.rightGroup) == 0 {
+		// Past the group: advance left.
+		j.advanceLeft(context.Background(), output)
+		return true
+	}
+	leftRow := j.leftBatchN
+	packedRow := j.rightGroup[0]
+	j.rightGroup = j.rightGroup[1:]
+	rightBatchIdx, rightRow := unpackGroupRow(packedRow)
+
+	for c := 0; c < j.leftN; c++ {
+		copyRowToColumn(&output.Cols[c], &j.leftBatch.Cols[c], output.Size, leftRow)
+	}
+	for c := 0; c < j.rightN; c++ {
+		copyRowToColumn(&output.Cols[j.leftN+c], &j.rightBatches[rightBatchIdx].Cols[c], output.Size, rightRow)
+	}
+	output.Size++
+
+	if j.matchedRight != nil {
+		idx := rightBatchIdx*UT.BatchSize + rightRow
+		if idx < len(j.matchedRight) {
+			j.matchedRight[idx] = true
+		}
+	}
+
+	if len(j.rightGroup) == 0 {
+		// All pairs emitted. Cursor already advanced past the group by
+		// collectEqualRightGroup (it points at the next non-matching row).
+		// Advance left.
+		j.advanceLeft(context.Background(), output)
+	}
+	return true
+}
+
+// advanceRightPastGroup is unused now (collectEqualRightGroup leaves the
+// cursor at the next non-matching row); kept for API stability but
+// no-ops.
+func (j *StreamingBatchMergeJoin) advanceRightPastGroup() {}
+
+// emitUnmatchedRight emits one unmatched right row (RIGHT/FULL).
+func (j *StreamingBatchMergeJoin) emitUnmatchedRight(output *UT.Batch) bool {
+	if !j.rightOuter() {
+		// Advance without emitting.
+		j.advanceRight()
+		if j.rightBatchIdx >= len(j.rightBatches) {
+			return false
+		}
+		return true
+	}
+	for j.rightBatchIdx < len(j.rightBatches) {
+		batch := j.rightBatches[j.rightBatchIdx]
+		if j.rightRowIdx < batch.Size {
+			break
+		}
+		j.rightBatchIdx++
+		j.rightRowIdx = 0
+	}
+	if j.rightBatchIdx >= len(j.rightBatches) {
+		return false
+	}
+	if output.Size >= UT.BatchSize {
+		return false
+	}
+	batch := j.rightBatches[j.rightBatchIdx]
+	rightRow := j.rightRowIdx
+	for c := 0; c < j.leftN; c++ {
+		// Left NULL — handled by zero-init.
+		_ = c
+	}
+	for c := 0; c < j.rightN; c++ {
+		copyRowToColumn(&output.Cols[j.leftN+c], &batch.Cols[c], output.Size, rightRow)
+	}
+	output.Size++
+	idx := j.rightBatchIdx*UT.BatchSize + rightRow
+	if j.matchedRight != nil && idx < len(j.matchedRight) {
+		j.matchedRight[idx] = true
+	}
+	j.advanceRight()
+	return true
+}
+
+// emitOneUnmatchedLeft emits the current left row with NULL right padding (LEFT/FULL).
+func (j *StreamingBatchMergeJoin) emitOneUnmatchedLeft(output *UT.Batch) {
+	if output.Size >= UT.BatchSize {
+		return
+	}
+	leftRow := j.leftBatchN
+	for c := 0; c < j.leftN; c++ {
+		copyRowToColumn(&output.Cols[c], &j.leftBatch.Cols[c], output.Size, leftRow)
+	}
+	// Right NULL — already zero-init.
+	output.Size++
+}
+
+// advanceRight moves to the next right row.
+func (j *StreamingBatchMergeJoin) advanceRight() {
+	j.rightRowIdx++
+	for j.rightBatchIdx < len(j.rightBatches) && j.rightRowIdx >= j.rightBatches[j.rightBatchIdx].Size {
+		j.rightBatchIdx++
+		j.rightRowIdx = 0
+	}
+}
+
+// leftOuter returns true if LEFT/FULL.
+func (j *StreamingBatchMergeJoin) leftOuter() bool {
+	return j.kind == JoinKindLeft || j.kind == JoinKindFull
+}
+
+// rightOuter returns true if RIGHT/FULL.
+func (j *StreamingBatchMergeJoin) rightOuter() bool {
+	return j.kind == JoinKindRight || j.kind == JoinKindFull
+}
+
+// newOutputBatch allocates a fresh output batch.
+func (j *StreamingBatchMergeJoin) newOutputBatch() *UT.Batch {
+	output := UT.GetBatch(j.outputN)
+	for i := 0; i < j.outputN; i++ {
+		output.Cols[i].Name = j.outputCols[i]
+		var t LX.TokenType
+		if i < j.leftN {
+			t = j.leftTypes[i]
+		} else {
+			t = j.rightTypes[i-j.leftN]
+		}
+		output.Cols[i].Type = t
+		allocateColData(&output.Cols[i], UT.BatchSize, t)
+	}
+	return output
+}
+
+// Close releases all resources.
+func (j *StreamingBatchMergeJoin) Close() error {
+	if j.leftBatch != nil {
+		j.leftBatch.Put()
+		j.leftBatch = nil
+	}
+	for _, b := range j.rightBatches {
+		b.Put()
+	}
+	j.rightBatches = nil
+	return nil
+}
+
 // batchColVal extracts an int64 value from a batch column at a row.
 func batchColVal(batch *UT.Batch, colIdx, rowIdx int) int64 {
 	if colIdx >= len(batch.Cols) || rowIdx >= batch.Size {

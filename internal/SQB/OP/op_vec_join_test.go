@@ -41,6 +41,119 @@ func makeJoinProbeBatch(keys []int64) *UT.Batch {
 	return b
 }
 
+// TestVectorizedHashJoin_BatchedEmit_MultiMatch verifies that the
+// sequential probe path correctly emits multiple matches for one probe
+// row using the batched emit function. REQ002000.
+func TestVectorizedHashJoin_BatchedEmit_MultiMatch(t *testing.T) {
+	build := &testBatchProducer{
+		batches: []*UT.Batch{makeJoinBuildBatch(
+			[]int64{1, 1, 1, 2},
+			[]int64{10, 20, 30, 40},
+		)},
+	}
+	probe := &testBatchProducer{
+		batches: []*UT.Batch{makeJoinProbeBatch([]int64{1})},
+	}
+
+	// No parallelism → exercises probePhase → emitBatchedMatches.
+	j := NewVectorizedHashJoin(build, probe, []int{0}, []int{0})
+	defer j.Close()
+
+	batch, err := j.NextBatch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if batch == nil {
+		t.Fatal("expected batch, got nil")
+	}
+	// key 1 matches 3 build rows.
+	if batch.Size != 3 {
+		t.Fatalf("expected 3 matched rows, got %d", batch.Size)
+	}
+
+	// All output rows should have build key = probe key = 1.
+	// Build column 0 (k) = 1 for all 3 rows.
+	// Build column 1 (v) = 10, 20, 30 (one per row).
+	// Probe column (pk) = 1 for all 3 rows.
+	values := make(map[int64][]int64) // build_key → [build_v, ...]
+	for i := 0; i < batch.Size; i++ {
+		k := UT.BatchValueAt(batch.Cols[0], i).(int64)
+		v := UT.BatchValueAt(batch.Cols[1], i).(int64)
+		pk := UT.BatchValueAt(batch.Cols[2], i).(int64)
+		if k != 1 {
+			t.Errorf("row %d: build key %d, want 1", i, k)
+		}
+		if pk != 1 {
+			t.Errorf("row %d: probe key %d, want 1", i, pk)
+		}
+		values[k] = append(values[k], v)
+	}
+	want := []int64{10, 20, 30}
+	got := values[1]
+	if len(got) != len(want) {
+		t.Fatalf("build values: got %d entries, want 3", len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("build values[%d] = %d, want %d (full %v)", i, got[i], want[i], got)
+		}
+	}
+
+	batch.Put()
+}
+
+// TestVectorizedHashJoin_BatchedEmit_MixedTypes verifies batched emit
+// handles int and string columns correctly. REQ002000.
+func TestVectorizedHashJoin_BatchedEmit_MixedTypes(t *testing.T) {
+	build := &testBatchProducer{
+		batches: []*UT.Batch{
+			func() *UT.Batch {
+				b := UT.GetBatch(2)
+				b.SetColumnName(0, "k")
+				b.SetColumnName(1, "name")
+				b.Cols[0].Type = LX.T_INT_KW
+				b.Cols[1].Type = LX.T_TEXT
+				for _, p := range []struct {
+					k    int64
+					name string
+				}{{1, "alice"}, {1, "bob"}, {1, "carol"}} {
+					b.AppendRow(0, LX.T_INT_KW, p.k, false)
+					b.AppendRow(1, LX.T_TEXT, p.name, false)
+					b.AdvanceSize()
+				}
+				return b
+			}(),
+		},
+	}
+	probe := &testBatchProducer{
+		batches: []*UT.Batch{makeJoinProbeBatch([]int64{1})},
+	}
+
+	j := NewVectorizedHashJoin(build, probe, []int{0}, []int{0})
+	defer j.Close()
+
+	batch, err := j.NextBatch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if batch == nil || batch.Size != 3 {
+		t.Fatalf("expected 3-row batch, got %v", batch)
+	}
+
+	// Verify name column (TEXT) was emitted correctly.
+	names := make(map[string]bool)
+	for i := 0; i < batch.Size; i++ {
+		name := batch.Cols[1].Data.Strs[i]
+		names[name] = true
+	}
+	for _, want := range []string{"alice", "bob", "carol"} {
+		if !names[want] {
+			t.Errorf("missing name %q (got %v)", want, names)
+		}
+	}
+	batch.Put()
+}
+
 func TestVectorizedHashJoin_InnerEquiJoin(t *testing.T) {
 	build := &testBatchProducer{
 		batches: []*UT.Batch{makeJoinBuildBatch(
@@ -918,6 +1031,46 @@ func BenchmarkParallelHashJoin_LargeBuild(b *testing.B) {
 				if par > 1 {
 					j.WithParallelism(par)
 				}
+				for {
+					batch, err := j.NextBatch(ctx)
+					if err != nil {
+						b.Fatalf("NextBatch: %v", err)
+					}
+					if batch == nil {
+						break
+					}
+					batch.Put()
+				}
+				j.Close()
+			}
+		})
+	}
+}
+
+// BenchmarkParallelHashJoinBuild measures parallel-build speedup across
+// worker counts. The probe side is trivial (1 match per build row) so
+// timing reflects the build phase. REQ002001.
+func BenchmarkParallelHashJoinBuild(b *testing.B) {
+	const buildN = 200000
+	buildKeys := make([]int64, buildN)
+	buildVals := make([]int64, buildN)
+	for i := range buildKeys {
+		buildKeys[i] = int64(i)
+		buildVals[i] = int64(i * 10)
+	}
+	// Tiny probe so we measure build only.
+	probeKeys := []int64{0}
+
+	for _, workers := range []int{1, 2, 4, 8} {
+		b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
+			ctx := context.Background()
+			pool := UT.NewWorkerPool(workers)
+			defer pool.Close()
+			for i := 0; i < b.N; i++ {
+				build := chunkedBuildProducer(buildKeys, buildVals)
+				probe := chunkedProbeProducer(probeKeys)
+				j := NewVectorizedHashJoin(build, probe, []int{0}, []int{0}).
+					WithPool(pool)
 				for {
 					batch, err := j.NextBatch(ctx)
 					if err != nil {

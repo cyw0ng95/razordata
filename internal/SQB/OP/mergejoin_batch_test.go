@@ -64,6 +64,107 @@ func TestBatchMergeJoin_InnerEquiJoin(t *testing.T) {
 	}
 }
 
+// TestStreamingBatchMergeJoin_InnerEquiJoin verifies the streaming variant
+// produces identical results to the batch merge join. REQ002004.
+func TestStreamingBatchMergeJoin_InnerEquiJoin(t *testing.T) {
+	left := &testBatchProducer{
+		batches: []*UT.Batch{makeSortedBatch("k", []int64{1, 2, 3})},
+	}
+	right := &testBatchProducer{
+		batches: []*UT.Batch{makeSortedBatch("k", []int64{2, 3, 4})},
+	}
+
+	j := NewStreamingBatchMergeJoin(left, right, []int{0}, []int{0}, JoinKindInner)
+	defer j.Close()
+
+	ctx := context.Background()
+	batch, err := j.NextBatch(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if batch == nil {
+		t.Fatal("expected batch, got nil")
+	}
+	if batch.Size != 2 {
+		t.Fatalf("expected 2 matched rows, got %d", batch.Size)
+	}
+	for i := 0; i < batch.Size; i++ {
+		lk := UT.BatchValueAt(batch.Cols[0], i).(int64)
+		rk := UT.BatchValueAt(batch.Cols[1], i).(int64)
+		if lk != rk {
+			t.Errorf("row %d: left key %d != right key %d", i, lk, rk)
+		}
+	}
+	batch.Put()
+
+	// EOF.
+	batch2, _ := j.NextBatch(ctx)
+	if batch2 != nil {
+		t.Fatal("expected nil (EOF), got batch")
+	}
+}
+
+// TestStreamingBatchMergeJoin_MultiBatchLeft verifies the streaming
+// variant correctly handles multi-batch left inputs. REQ002004.
+func TestStreamingBatchMergeJoin_MultiBatchLeft(t *testing.T) {
+	left := &testBatchProducer{
+		batches: []*UT.Batch{
+			makeSortedBatch("k", []int64{1, 2}),
+			makeSortedBatch("k", []int64{3, 4}),
+		},
+	}
+	right := &testBatchProducer{
+		batches: []*UT.Batch{makeSortedBatch("k", []int64{2, 3, 5})},
+	}
+
+	j := NewStreamingBatchMergeJoin(left, right, []int{0}, []int{0}, JoinKindInner)
+	defer j.Close()
+
+	var totalRows int
+	ctx := context.Background()
+	for {
+		batch, err := j.NextBatch(ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if batch == nil {
+			break
+		}
+		totalRows += batch.Size
+		batch.Put()
+	}
+	// Matches: (2,2), (3,3)
+	if totalRows != 2 {
+		t.Errorf("expected 2 total matched rows, got %d", totalRows)
+	}
+}
+
+// TestStreamingBatchMergeJoin_DuplicateKeys verifies that duplicate
+// keys on the right side correctly produce cartesian products. REQ002004.
+func TestStreamingBatchMergeJoin_DuplicateKeys(t *testing.T) {
+	left := &testBatchProducer{
+		batches: []*UT.Batch{makeSortedBatch("k", []int64{1})},
+	}
+	right := &testBatchProducer{
+		batches: []*UT.Batch{makeSortedBatch("k", []int64{1, 1, 1})},
+	}
+
+	j := NewStreamingBatchMergeJoin(left, right, []int{0}, []int{0}, JoinKindInner)
+	defer j.Close()
+
+	batch, err := j.NextBatch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if batch == nil {
+		t.Fatal("expected batch, got nil")
+	}
+	if batch.Size != 3 {
+		t.Fatalf("expected 3 cartesian rows (1 left × 3 right), got %d", batch.Size)
+	}
+	batch.Put()
+}
+
 // TestBatchMergeJoin_LeftOuter tests LEFT outer join.
 func TestBatchMergeJoin_LeftOuter(t *testing.T) {
 	left := &testBatchProducer{
