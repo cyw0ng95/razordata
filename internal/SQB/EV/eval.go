@@ -1096,6 +1096,10 @@ type InHashCache struct {
 
 var InHashCacheMap = map[*PS.InExpr]*InHashCache{}
 
+// inHashCacheMu protects InHashCacheMap from concurrent access when
+// the plan cache reuses parsed AST across goroutines. REQ002039.
+var inHashCacheMu sync.RWMutex
+
 // isAllLiteralList reports whether every item in the IN list is a
 // literal value (no column references or computed expressions). The
 // hash-set cache in EvalInHash builds the set once per *PS.InExpr
@@ -1140,33 +1144,44 @@ func EvalInHashValue(e *PS.InExpr, target Value, row *Row, params []any) (Value,
 // REQ000817: evalInHash builds a cached hash set for O(1) IN-list probing.
 // For int64-only lists, uses an int64 map to avoid Value boxing.
 func EvalInHash(e *PS.InExpr, target any, row *Row, params []any) (any, error) {
+	// REQ002039: protect map access with RWMutex. Read-lock for the
+	// lookup; write-lock only when inserting a new cache entry.
+	inHashCacheMu.RLock()
 	cached := InHashCacheMap[e]
+	inHashCacheMu.RUnlock()
 	if cached == nil {
-		cached = &InHashCache{
-			set:      make(map[any]struct{}, len(e.List)),
-			Int64Set: make(map[int64]struct{}, len(e.List)),
-		}
-		int64Only := true
-		for _, item := range e.List {
-			v, err := evalFallbackEvalValue(item, row, params)
-			if err != nil {
-				return nil, err
+		// Re-check under write lock (double-checked locking).
+		inHashCacheMu.Lock()
+		cached = InHashCacheMap[e]
+		if cached == nil {
+			cached = &InHashCache{
+				set:      make(map[any]struct{}, len(e.List)),
+				Int64Set: make(map[int64]struct{}, len(e.List)),
 			}
-			if v.Kind == KindNull {
-				cached.hadNull = true
-				continue
+			int64Only := true
+			for _, item := range e.List {
+				v, err := evalFallbackEvalValue(item, row, params)
+				if err != nil {
+					inHashCacheMu.Unlock()
+					return nil, err
+				}
+				if v.Kind == KindNull {
+					cached.hadNull = true
+					continue
+				}
+				cached.set[v.ToAny()] = struct{}{}
+				if v.Kind == KindInt {
+					cached.Int64Set[v.I64] = struct{}{}
+				} else {
+					int64Only = false
+				}
 			}
-			cached.set[v.ToAny()] = struct{}{}
-			if v.Kind == KindInt {
-				cached.Int64Set[v.I64] = struct{}{}
-			} else {
-				int64Only = false
+			if !int64Only {
+				cached.Int64Set = nil
 			}
+			InHashCacheMap[e] = cached
 		}
-		if !int64Only {
-			cached.Int64Set = nil
-		}
-		InHashCacheMap[e] = cached
+		inHashCacheMu.Unlock()
 	}
 	if cached.Int64Set != nil {
 		if t, ok := target.(int64); ok {
