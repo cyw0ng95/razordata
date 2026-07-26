@@ -510,3 +510,18 @@ func (a *RowArena) CloneRowsBatch(rows []Row) []Row {
 	}
 	return out
 }
+
+// CloneRowSingle is a single-row shortcut for hot paths that pass
+// `[]Row{r}` to CloneRowsBatch. It reuses the source row's Cols/Types
+// directly (caller guarantees they are already stable — typically
+// because batchBuf clones eagerly in Filter.refillBatch). REQ002093
+// optimisation: avoids the `make([]Row, 0, 1) + append` overhead per
+// row.
+func (a *RowArena) CloneRowSingle(r Row) Row {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	cloned := a.cloneRowLocked(r)
+	cloned.Cols = r.Cols
+	cloned.Types = r.Types
+	return cloned
+}

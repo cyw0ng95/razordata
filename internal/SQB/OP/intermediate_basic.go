@@ -828,15 +828,15 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 			r.Types = sharedTypes
 			if f.execCtx != nil {
 				if arena, ok := f.execCtx.RowArena.(*DT.RowArena); ok && arena != nil {
-					// REQ001233: batch clone row via arena instead of per-row alloc
-					cloned := arena.CloneRowsBatch([]DT.Row{r})
-					// REQ001583: CloneRowsBatch does not preserve StoreKey.
+					// REQ002093: single-row shortcut. Avoids the
+					// `make([]Row,0,1) + append + iter` overhead of
+					// CloneRowsBatch for the common per-row case.
+					cloned := arena.CloneRowSingle(r)
+					// REQ001583: CloneRowSingle does not preserve StoreKey.
 					// Copy it from the source row so ExtractPKForUpdate can
 					// use it for hidden-PK UPDATE key generation.
-					for i := range cloned {
-						cloned[i].StoreKey = r.StoreKey
-					}
-					f.batchEmit = append(f.batchEmit, cloned...)
+					cloned.StoreKey = r.StoreKey
+					f.batchEmit = append(f.batchEmit, cloned)
 					continue
 				}
 			}
