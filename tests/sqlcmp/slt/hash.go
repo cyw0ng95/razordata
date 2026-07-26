@@ -2,24 +2,14 @@ package slt
 
 import (
 	"crypto/md5"
-	"hash"
-	"sync"
 )
 
-// md5Pool is a sync.Pool of hash.Hash (md5) reused across resultHash
-// and hashValues to eliminate per-call allocation of the hasher.
-var md5Pool = sync.Pool{
-	New: func() any { return md5.New() },
-}
-
-// pooledMD5 returns the hex-encoded MD5 digest of s, using the
-// package-level md5Pool to avoid allocating a new hasher per call.
+// pooledMD5 returns the hex-encoded MD5 digest of s. REQ002061:
+// allocates md5.New() directly instead of using a sync.Pool, because
+// hash.Hash is not safe for concurrent use — pooling caused data
+// races when multiple goroutines ran SLT tests concurrently.
 func pooledMD5(s string) string {
-	h := md5Pool.Get().(hash.Hash)
-	defer func() {
-		h.Reset()
-		md5Pool.Put(h)
-	}()
+	h := md5.New()
 	h.Write([]byte(s))
 	sum := h.Sum(nil)
 	return bytehex(sum)

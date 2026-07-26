@@ -2,8 +2,8 @@ package slt
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
-	"hash"
 	"io"
 	"os"
 	"sort"
@@ -381,11 +381,7 @@ func (r *Runner) runQuery(ctx context.Context, rec *Record) {
 // Used to compare queries that share a label.
 func resultHash(rs *ResultSet, mode SortMode) string {
 	rows := rs.Rows
-	h := md5Pool.Get().(hash.Hash)
-	defer func() {
-		h.Reset()
-		md5Pool.Put(h)
-	}()
+	h := md5.New() // REQ002061: direct allocation, no pool (hash.Hash not concurrent-safe)
 	if mode == RowSort || mode == ValueSort {
 		idx := make([]int, len(rows))
 		for i := range idx {

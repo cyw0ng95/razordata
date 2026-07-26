@@ -1,6 +1,7 @@
 package slt
 
 import (
+	"crypto/md5"
 	"fmt"
 	"hash"
 	"sort"
@@ -207,11 +208,7 @@ func writeValueToBuilder(b *strings.Builder, scratch *[]byte, v Value) {
 // REQ001701: reuses one scratch []byte across all values in the call
 // instead of allocating one per value.
 func hashValues(vs []Value) string {
-	h := md5Pool.Get().(hash.Hash)
-	defer func() {
-		h.Reset()
-		md5Pool.Put(h)
-	}()
+	h := md5.New() // REQ002061: direct allocation, no pool (hash.Hash not concurrent-safe)
 	var scratch []byte
 	for _, v := range vs {
 		writeValueToBytes(h, &scratch, v)
