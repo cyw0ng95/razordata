@@ -270,6 +270,7 @@ var includedCases = []includedCase{
 	{Label: "random::groupby::slt_good_5", Path: "random/groupby/slt_good_5", Timeout: 60},
 	{Label: "random::groupby::slt_good_6", Path: "random/groupby/slt_good_6", Timeout: 60},
 	{Label: "random::groupby::slt_good_7", Path: "random/groupby/slt_good_7", Timeout: 60},
+	{Label: "random::groupby::slt_good_8", Path: "random/groupby/slt_good_8", Timeout: 60},
 	{Label: "random::groupby::slt_good_13", Path: "random/groupby/slt_good_13", Timeout: 60},
 	{Label: "random::select::slt_good_0", Path: "random/select/slt_good_0", Timeout: 60},
 	{Label: "random::select::slt_good_1", Path: "random/select/slt_good_1", Timeout: 60},

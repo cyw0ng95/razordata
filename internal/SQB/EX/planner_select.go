@@ -558,10 +558,12 @@ func (p *Planner) planSelectSubquery(s *PS.Select) DT.Operator {
 		if len(constCols) > 0 {
 			agg.SetConstCols(constCols)
 		}
-		// REQ001710: preserve SELECT list column ordering for scalar
-		// aggregates (no GROUP BY). GROUP BY queries emit group keys
-		// separately, so fullCols would duplicate them.
-		if !isStarExpr(s.Cols) && len(s.GroupBy) == 0 {
+		// REQ001710 + REQ001967: pass the full SELECT list so the
+		// aggregate emits columns in the original SELECT list order.
+		// For GROUP BY queries, non-aggregate expressions are evaluated
+		// against the first row of each group (group key columns are
+		// constant per group).
+		if !isStarExpr(s.Cols) {
 			agg.SetFullCols(s.Cols)
 		}
 		current = agg
@@ -964,6 +966,33 @@ func (p *Planner) planAggregation(s *PS.Select, current DT.Operator) DT.Operator
 	if len(groupCols) == 0 {
 		groupCols = autoGroup
 	}
+	// REQ001967: collect aggregates from HAVING clause so they are
+	// computed even when not present in the SELECT list.
+	if s.Having != nil {
+		havingAggs := collectAggregates(s.Having)
+		for _, ha := range havingAggs {
+			found := false
+			haKey := DT.AggregateLookupKey(ha)
+			for _, ea := range aggExprs {
+				if ae, ok := ea.(*PS.AliasedExpr); ok {
+					if af, ok := ae.Expr.(*PS.AggregateFunc); ok {
+						if DT.AggregateLookupKey(af) == haKey {
+							found = true
+							break
+						}
+					}
+				} else if af, ok := ea.(*PS.AggregateFunc); ok {
+					if DT.AggregateLookupKey(af) == haKey {
+						found = true
+						break
+					}
+				}
+			}
+			if !found {
+				aggExprs = append(aggExprs, ha)
+			}
+		}
+	}
 	estimatedRows := p.estimateRowCount(s.From, s.Where)
 	if estimatedRows >= HashAggregateThreshold {
 		agg := AG.NewHashAggregate(current, groupCols, aggExprs)
@@ -976,21 +1005,27 @@ func (p *Planner) planAggregation(s *PS.Select, current DT.Operator) DT.Operator
 		if isStarExpr(s.Cols) {
 			agg.SetExpandStar()
 		}
-		// REQ001711: pass constant projections so they appear in every
-		// output row alongside aggregates. See splitSelectCols.
 		if len(constCols) > 0 {
 			agg.SetConstCols(constCols)
 		}
-		// REQ001710: pass the full SELECT list so the aggregate emits
-		// columns in the original SELECT list order. Only for scalar
-		// aggregates (no GROUP BY) — GROUP BY queries emit group keys
-		// separately, and fullCols would duplicate them.
-		if !isStarExpr(s.Cols) && len(s.GroupBy) == 0 {
+		// REQ001710 + REQ001967: pass the full SELECT list so the
+		// aggregate emits columns in the original SELECT list order.
+		// For GROUP BY queries, non-aggregate expressions are evaluated
+		// against the first row of each group (group key columns are
+		// constant per group).
+		if !isStarExpr(s.Cols) {
 			agg.SetFullCols(s.Cols)
+		}
+		// REQ001967: pass HAVING expression to the aggregate so it can
+		// filter groups before emitting fullCols output. HAVING is
+		// evaluated against a row containing group keys and all
+		// aggregates (named by lookup key).
+		if s.Having != nil {
+			agg.SetHaving(s.Having)
 		}
 		current = agg
 	}
-	if s.Having != nil {
+	if s.Having != nil && estimatedRows >= HashAggregateThreshold {
 		current = OP.NewFilter(current, s.Having, nil)
 	}
 	return current
@@ -1058,7 +1093,10 @@ func (p *Planner) planOrdering(s *PS.Select, current DT.Operator) DT.Operator {
 			}
 		}
 	}
-	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) && !needsWindow {
+	// REQ001967: skip Project for aggregate/GROUP BY queries — the
+	// Aggregate already emits the full SELECT list via fullCols.
+	// Adding a Project would double-evaluate non-aggregate expressions.
+	if len(s.Cols) > 0 && !isStarExpr(s.Cols) && !hasAnyAggregate(s.Cols) && len(s.GroupBy) == 0 && !needsWindow {
 		current = OP.NewProject(current, s.Cols)
 	}
 	if needsWindow && len(s.Cols) > 0 && !isStarExpr(s.Cols) {

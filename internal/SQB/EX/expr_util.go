@@ -711,6 +711,61 @@ func hasAnyAggregate(cols []PS.Expr) bool {
 	return false
 }
 
+// collectAggregates returns all AggregateFunc nodes found in e (deduplicated by lookup key).
+func collectAggregates(e PS.Expr) []*PS.AggregateFunc {
+	var result []*PS.AggregateFunc
+	seen := make(map[string]bool)
+	var walk func(PS.Expr)
+	walk = func(expr PS.Expr) {
+		if expr == nil {
+			return
+		}
+		switch v := expr.(type) {
+		case *PS.AggregateFunc:
+			key := DT.AggregateLookupKey(v)
+			if !seen[key] {
+				seen[key] = true
+				result = append(result, v)
+			}
+		case *PS.WindowFunc:
+			return
+		case *PS.BinaryExpr:
+			walk(v.Left)
+			walk(v.Right)
+		case *PS.UnaryExpr:
+			walk(v.Operand)
+		case *PS.AliasedExpr:
+			walk(v.Expr)
+		case *PS.CastExpr:
+			walk(v.Expr)
+		case *PS.FunctionCall:
+			for _, a := range v.Args {
+				walk(a)
+			}
+		case *PS.CaseExpr:
+			walk(v.Expr)
+			for _, w := range v.WhenList {
+				walk(w.Cond)
+				walk(w.Then)
+			}
+			walk(v.Else)
+		case *PS.BetweenExpr:
+			walk(v.Expr)
+			walk(v.Low)
+			walk(v.High)
+		case *PS.InExpr:
+			walk(v.Expr)
+			for _, item := range v.List {
+				walk(item)
+			}
+		default:
+			DT.ContainsAggregate(expr)
+		}
+	}
+	walk(e)
+	return result
+}
+
 func hasAnyWindowFunc(cols []PS.Expr) bool {
 	for _, c := range cols {
 		if DT.ContainsWindowFunc(c) {

@@ -41,6 +41,16 @@ type Aggregate struct {
 	scalar bool
 	// REQ001697: reusable buffer for scalar aggregate materialization.
 	scalarRowBuf []Row
+	// REQ001967: when true, aggregate output columns are named by
+	// AggregateLookupKey instead of by alias. This allows HAVING and
+	// downstream Project operators to find aggregates by their
+	// canonical lookup key.
+	aggColsByLookupKey bool
+	// REQ001967: HAVING expression. When set, groups are filtered by
+	// this expression before the final output is produced. The HAVING
+	// expression is evaluated against a row containing group keys and
+	// all aggregates (named by lookup key).
+	having PS.Expr
 }
 
 func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
@@ -55,6 +65,16 @@ func (a *Aggregate) SetConstCols(cols []PS.Expr) { a.constCols = cols }
 // When set, the materialize function emits columns in this order
 // instead of constCols-then-aggs. REQ001710.
 func (a *Aggregate) SetFullCols(cols []PS.Expr) { a.fullCols = cols }
+
+// SetAggColsByLookupKey controls whether aggregate output columns are
+// named by AggregateLookupKey (true) or by alias/evalColName (false).
+// When true, HAVING and downstream Project operators can find
+// aggregates by their canonical lookup key. REQ001967.
+func (a *Aggregate) SetAggColsByLookupKey(v bool) { a.aggColsByLookupKey = v }
+
+// SetHaving attaches a HAVING expression that filters groups before
+// the final output is emitted. REQ001967.
+func (a *Aggregate) SetHaving(e PS.Expr) { a.having = e }
 
 // ConstCols returns the constant projections attached via SetConstCols.
 func (a *Aggregate) ConstCols() []PS.Expr { return a.constCols }
@@ -293,6 +313,44 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 		return keysLessCmpValue(a.key, b.key)
 	})
 	for _, g := range groups {
+		// REQ001967: build a HAVING row with group keys and all aggregates
+		// (named by lookup key). This is used for HAVING evaluation.
+		// Group keys are added with both qualified and unqualified names
+		// so HAVING can reference them either way (standard SQL behavior).
+		var havingRow Row
+		if a.having != nil {
+			havingRow = Row{
+				Cols: make([]string, 0, len(a.groupCols)*2+len(a.aggs)),
+				Data: make([]Value, 0, len(a.groupCols)*2+len(a.aggs)),
+			}
+			for i, gc := range a.groupCols {
+				name := groupColName(gc)
+				havingRow.Cols = append(havingRow.Cols, name)
+				havingRow.Data = append(havingRow.Data, g.key[i])
+				// Add unqualified name alias for QualifiedName group keys
+				// so HAVING can use unqualified references.
+				if qn, ok := gc.(*PS.QualifiedName); ok {
+					havingRow.Cols = append(havingRow.Cols, qn.Name)
+					havingRow.Data = append(havingRow.Data, g.key[i])
+				}
+			}
+			for _, agg := range a.aggs {
+				val, err := EvalAggregateOver(agg, g.rows, a.params)
+				if err != nil {
+					return err
+				}
+				havingRow.Cols = append(havingRow.Cols, aggregateLookupKey(agg))
+				havingRow.Data = append(havingRow.Data, DT.ValueFromAny(val))
+			}
+			// Evaluate HAVING
+			hResult, err := EV.EvalValue(a.having, &havingRow, a.params)
+			if err != nil {
+				return err
+			}
+			if !DT.IsValueTruthy(hResult) {
+				continue
+			}
+		}
 		var out Row
 		if a.expandStar && len(g.rows) > 0 {
 			firstRow := g.rows[0]
@@ -315,6 +373,38 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 					}
 				}
 			}
+		} else if a.fullCols != nil && len(a.groupCols) > 0 {
+			// REQ001967: GROUP BY with fullCols — emit in SELECT list order.
+			// Non-aggregate expressions are evaluated against the first
+			// row of the group (group key columns are constant per group).
+			out = Row{
+				Cols: make([]string, 0, len(a.fullCols)),
+				Data: make([]Value, 0, len(a.fullCols)),
+			}
+			var evalRow *Row
+			if len(g.rows) > 0 {
+				evalRow = &g.rows[0]
+			} else {
+				evalRow = &Row{}
+			}
+			for _, e := range a.fullCols {
+				var v Value
+				if DT.ContainsAggregate(e) {
+					val, err := EvalAggregateOver(e, g.rows, a.params)
+					if err != nil {
+						return err
+					}
+					v = DT.ValueFromAny(val)
+				} else {
+					var err error
+					v, err = EV.EvalValue(e, evalRow, a.params)
+					if err != nil {
+						return err
+					}
+				}
+				out.Cols = append(out.Cols, evalColName(e))
+				out.Data = append(out.Data, v)
+			}
 		} else {
 			out = Row{Cols: make([]string, 0, len(a.groupCols)+len(a.fullCols)), Data: make([]Value, 0, len(a.groupCols)+len(a.fullCols))}
 			for i, gc := range a.groupCols {
@@ -323,28 +413,36 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 			}
 		}
 		// REQ001710: evaluate non-group-by items in SELECT list order.
-		emitOrder := a.fullCols
-		if emitOrder == nil {
-			emitOrder = append(append([]PS.Expr(nil), a.constCols...), a.aggs...)
-		}
-		for _, e := range emitOrder {
-			var v Value
-			if DT.ContainsAggregate(e) {
-				val, err := EvalAggregateOver(e, g.rows, a.params)
-				if err != nil {
-					return err
-				}
-				v = DT.ValueFromAny(val)
-			} else {
-				var err error
-				v, err = EV.EvalValue(e, &Row{}, a.params)
-				if err != nil {
-					return err
-				}
+		// Skip if we already emitted fullCols for GROUP BY above.
+		if !(a.fullCols != nil && len(a.groupCols) > 0 && !a.expandStar) {
+			emitOrder := a.fullCols
+			if emitOrder == nil {
+				emitOrder = append(append([]PS.Expr(nil), a.constCols...), a.aggs...)
 			}
-			name := evalColName(e)
-			out.Cols = append(out.Cols, name)
-			out.Data = append(out.Data, v)
+			for _, e := range emitOrder {
+				var v Value
+				if DT.ContainsAggregate(e) {
+					val, err := EvalAggregateOver(e, g.rows, a.params)
+					if err != nil {
+						return err
+					}
+					v = DT.ValueFromAny(val)
+				} else {
+					var err error
+					v, err = EV.EvalValue(e, &Row{}, a.params)
+					if err != nil {
+						return err
+					}
+				}
+				var name string
+				if a.aggColsByLookupKey && DT.ContainsAggregate(e) {
+					name = aggregateLookupKey(e)
+				} else {
+					name = evalColName(e)
+				}
+				out.Cols = append(out.Cols, name)
+				out.Data = append(out.Data, v)
+			}
 		}
 		a.buf = append(a.buf, out)
 	}
@@ -539,6 +637,24 @@ func evalColName(e PS.Expr) string {
 		}
 	case *PS.AggregateFunc:
 		return DT.AggregateLookupKey(v)
+	}
+	return ""
+}
+
+// aggregateLookupKey returns the canonical AggregateLookupKey for the
+// first aggregate function found in e. Used when aggColsByLookupKey is
+// true to name output columns by their canonical key, enabling HAVING
+// and downstream Project operators to find them. REQ001967.
+func aggregateLookupKey(e PS.Expr) string {
+	switch v := e.(type) {
+	case *PS.AggregateFunc:
+		return DT.AggregateLookupKey(v)
+	case *PS.AliasedExpr:
+		return aggregateLookupKey(v.Expr)
+	case *PS.UnaryExpr:
+		return aggregateLookupKey(v.Operand)
+	case *PS.CastExpr:
+		return aggregateLookupKey(v.Expr)
 	}
 	return ""
 }

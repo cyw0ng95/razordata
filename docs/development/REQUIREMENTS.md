@@ -1,7 +1,6 @@
 ## TBD
 | ID | Subsystem | Requirement | Priority | Effort | Deps | Touches |
 | --- | --- | --- | --- | --- | --- | --- |
-| REQ001967 | tests/sqlcmp/slt | **Pass random/groupby/slt_good_8 in pre-commit gate.** 3 failures / 10,012 records. Still has failures after REQ001979 fix. When resolved, add `{Label: "random::groupby::slt_good_8", Path: "random/groupby/slt_good_8", Timeout: 60}` to `includedCases`. | high | small | REQ001979 | tests/sqlcmp/slt/slt_included_list.go |
 | REQ001968 | tests/sqlcmp/slt | **Pass random/groupby/slt_good_9 in pre-commit gate.** 6 failures / 10,012 records. Still has failures after REQ001979 fix. When resolved, add to `includedCases`. | high | small | REQ001979 | tests/sqlcmp/slt/slt_included_list.go |
 | REQ001969 | tests/sqlcmp/slt | **Pass random/groupby/slt_good_10 in pre-commit gate.** 7 failures / 10,012 records. Still has failures after REQ001979 fix. When resolved, add to `includedCases`. | high | small | REQ001979 | tests/sqlcmp/slt/slt_included_list.go |
 | REQ001970 | tests/sqlcmp/slt | **Pass random/groupby/slt_good_11 in pre-commit gate.** 26 failures / 10,012 records. Still has failures after REQ001979 fix. When resolved, add to `includedCases`. | high | small | REQ001979 | tests/sqlcmp/slt/slt_included_list.go |
