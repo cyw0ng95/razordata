@@ -122,6 +122,7 @@ func (a *Aggregate) Next(ctx context.Context) (Row, error) {
 func (a *Aggregate) Close() error {
 	a.buf = nil
 	a.pos = 0
+	a.scalarRowBuf = nil
 	return a.child.Close()
 }
 
@@ -130,13 +131,437 @@ type groupBucket struct {
 	rows []Row
 }
 
+// scalarAggAccum holds streaming accumulator state for one aggregate
+// function during scalar aggregate materialization. Avoids allocating
+// []Row via batch.ToRows by accumulating directly from batch columns.
+// REQ002083.
+type scalarAggAccum struct {
+	aggKind string // "COUNT", "SUM", "AVG", "MIN", "MAX"
+	colIdx  int    // column index in batch, -1 for StarExpr (COUNT(*))
+	isStar  bool   // true for COUNT(*)
+
+	// Running state
+	count    int64   // total rows (COUNT(*)) or non-null rows (COUNT/SUM/AVG)
+	sumI     int64   // integer sum (SUM/AVG)
+	sumF     float64 // float sum (SUM/AVG)
+	seenI    bool    // have seen any int value
+	seenF    bool    // have seen any float value
+	hasValue bool    // have seen any non-null value (MIN/MAX)
+	best     Value   // current MIN or MAX
+}
+
+// computeResult returns the final aggregate result from the accumulator.
+// REQ002083.
+func (acc *scalarAggAccum) computeResult() any {
+	switch acc.aggKind {
+	case "COUNT":
+		return acc.count
+	case "SUM":
+		if acc.seenF {
+			return acc.sumF + float64(acc.sumI)
+		}
+		if acc.seenI {
+			return acc.sumI
+		}
+		return nil
+	case "AVG":
+		if acc.count == 0 {
+			return nil
+		}
+		return (acc.sumF + float64(acc.sumI)) / float64(acc.count)
+	case "MIN", "MAX":
+		if !acc.hasValue {
+			return nil
+		}
+		return acc.best.ToAny()
+	}
+	return nil
+}
+
+// canStreamScalarAgg checks if an AggregateFunc can be accumulated
+// directly from batch columns without ToRows(). Returns the aggregate
+// kind and true if streamable, or ("", false) otherwise. REQ002083.
+func canStreamScalarAgg(af *PS.AggregateFunc) (string, bool) {
+	if af.Distinct {
+		return "", false // DISTINCT needs dedup, fall back
+	}
+	switch af.Name {
+	case "COUNT", "SUM", "AVG", "MIN", "MAX":
+		switch af.Arg.(type) {
+		case *PS.StarExpr:
+			if af.Name != "COUNT" {
+				return "", false // SUM(*) etc. are invalid
+			}
+		case *PS.Ident, *PS.QualifiedName:
+			// Simple column reference — streamable
+		default:
+			return "", false // Complex expression — fall back
+		}
+		return af.Name, true
+	default:
+		return "", false // GROUP_CONCAT, STRING_AGG, unknown — fall back
+	}
+}
+
+// resolveAccumColIdx resolves an aggregate argument expression to a
+// column index in the batch. Returns -1 if the column cannot be found.
+// REQ002083.
+func resolveAccumColIdx(arg PS.Expr, colMap map[string]int) int {
+	switch a := arg.(type) {
+	case *PS.Ident:
+		if idx, ok := colMap[a.Name]; ok {
+			return idx
+		}
+	case *PS.QualifiedName:
+		// Try "table.col" first, then bare "col"
+		qualified := a.Table + "." + a.Name
+		if idx, ok := colMap[qualified]; ok {
+			return idx
+		}
+		if idx, ok := colMap[a.Name]; ok {
+			return idx
+		}
+	}
+	return -1
+}
+
+// collectScalarAggFuncs walks an expression tree and collects all
+// unique AggregateFunc nodes, deduplicating by AggregateLookupKey.
+// Returns nil if any aggregate is not streamable. REQ002083.
+func collectScalarAggFuncs(expr PS.Expr, seen map[string]bool, out *[]*PS.AggregateFunc) bool {
+	if expr == nil {
+		return true
+	}
+	switch v := expr.(type) {
+	case *PS.AggregateFunc:
+		key := DT.AggregateLookupKey(v)
+		if !seen[key] {
+			seen[key] = true
+			if _, ok := canStreamScalarAgg(v); !ok {
+				return false
+			}
+			*out = append(*out, v)
+		}
+	case *PS.UnaryExpr:
+		return collectScalarAggFuncs(v.Operand, seen, out)
+	case *PS.BinaryExpr:
+		if !collectScalarAggFuncs(v.Left, seen, out) {
+			return false
+		}
+		return collectScalarAggFuncs(v.Right, seen, out)
+	case *PS.AliasedExpr:
+		return collectScalarAggFuncs(v.Expr, seen, out)
+	case *PS.CastExpr:
+		return collectScalarAggFuncs(v.Expr, seen, out)
+	case *PS.FunctionCall:
+		for _, arg := range v.Args {
+			if !collectScalarAggFuncs(arg, seen, out) {
+				return false
+			}
+		}
+	case *PS.CaseExpr:
+		if !collectScalarAggFuncs(v.Expr, seen, out) {
+			return false
+		}
+		for _, w := range v.WhenList {
+			if !collectScalarAggFuncs(w.Cond, seen, out) {
+				return false
+			}
+			if !collectScalarAggFuncs(w.Then, seen, out) {
+				return false
+			}
+		}
+		return collectScalarAggFuncs(v.Else, seen, out)
+	case *PS.BetweenExpr:
+		if !collectScalarAggFuncs(v.Expr, seen, out) {
+			return false
+		}
+		if !collectScalarAggFuncs(v.Low, seen, out) {
+			return false
+		}
+		return collectScalarAggFuncs(v.High, seen, out)
+	case *PS.InExpr:
+		if !collectScalarAggFuncs(v.Expr, seen, out) {
+			return false
+		}
+		for _, item := range v.List {
+			if !collectScalarAggFuncs(item, seen, out) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// tryStreamingScalarAggregate attempts to accumulate scalar aggregate
+// state directly from batch columns, avoiding the batch.ToRows()
+// allocation. Returns (true, outputRow, nil) on success, or
+// (false, Row{}, nil) if streaming is not possible (caller should
+// fall back to the ToRows path). Returns (false, Row{}, err) on
+// error. REQ002083.
+func (a *Aggregate) tryStreamingScalarAggregate(ctx context.Context) (bool, Row, error) {
+	// Check if child supports batch mode
+	var bp UT.BatchProducer
+	if b, ok := a.child.(UT.BatchProducer); ok {
+		useBatch := true
+		if checker, ok2 := b.(UT.BatchSupportChecker); ok2 {
+			useBatch = checker.BatchSupported()
+		}
+		if !useBatch {
+			return false, Row{}, nil
+		}
+		bp = b
+	} else {
+		return false, Row{}, nil
+	}
+
+	// Determine emit order
+	emitOrder := a.fullCols
+	if emitOrder == nil {
+		emitOrder = append(append([]PS.Expr(nil), a.constCols...), a.aggs...)
+	}
+
+	// Collect unique streamable AggregateFunc nodes from emit expressions.
+	// If any aggregate is not streamable (complex arg, DISTINCT, etc.),
+	// fall back to the ToRows path.
+	seenKeys := make(map[string]bool)
+	var aggFuncs []*PS.AggregateFunc
+	for _, e := range emitOrder {
+		if DT.ContainsAggregate(e) {
+			if !collectScalarAggFuncs(e, seenKeys, &aggFuncs) {
+				return false, Row{}, nil
+			}
+		}
+	}
+
+	// Build accumulators for each unique aggregate function.
+	type accumEntry struct {
+		af   *PS.AggregateFunc
+		key  string
+		kind string
+		acc  scalarAggAccum
+	}
+	entries := make([]accumEntry, len(aggFuncs))
+	for i, af := range aggFuncs {
+		kind, _ := canStreamScalarAgg(af)
+		key := DT.AggregateLookupKey(af)
+		isStar := false
+		if _, ok := af.Arg.(*PS.StarExpr); ok {
+			isStar = true
+		}
+		entries[i] = accumEntry{
+			af:   af,
+			key:  key,
+			kind: kind,
+			acc: scalarAggAccum{
+				aggKind: kind,
+				colIdx:  -1,
+				isStar:  isStar,
+			},
+		}
+	}
+
+	// Drain batches and accumulate.
+	colMap := make(map[string]int)
+	resolved := false
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, Row{}, err
+		}
+		batch, err := bp.NextBatch(ctx)
+		if err != nil {
+			return false, Row{}, err
+		}
+		if batch == nil {
+			break
+		}
+
+		// Resolve column indices from the first batch.
+		if !resolved {
+			names := batch.ColNames()
+			for i, name := range names {
+				colMap[name] = i
+			}
+			for i := range entries {
+				if entries[i].acc.isStar {
+					continue
+				}
+				idx := resolveAccumColIdx(entries[i].af.Arg, colMap)
+				if idx < 0 {
+					// Can't resolve column — fall back to ToRows path.
+					// Put the batch back by NOT draining from the child;
+					// instead, seed scalarRowBuf with rows from this
+					// batch and remaining batches. The caller's fallback
+					// path will then use the pre-populated scalarRowBuf
+					// instead of re-draining from the child.
+					rows := batch.ToRows()
+					a.scalarRowBuf = append(a.scalarRowBuf[:0], rows...)
+					if batch.Pooled {
+						batch.Put()
+					}
+					// Continue draining remaining batches into
+					// scalarRowBuf so the fallback path has all data.
+					for {
+						if err := ctx.Err(); err != nil {
+							return false, Row{}, err
+						}
+						batch2, err := bp.NextBatch(ctx)
+						if err != nil {
+							return false, Row{}, err
+						}
+						if batch2 == nil {
+							break
+						}
+						rows2 := batch2.ToRows()
+						a.scalarRowBuf = append(a.scalarRowBuf, rows2...)
+						if batch2.Pooled {
+							batch2.Put()
+						}
+					}
+					return false, Row{}, nil
+				}
+				entries[i].acc.colIdx = idx
+			}
+			resolved = true
+		}
+
+		// Accumulate from batch columns.
+		n := batch.LogicalSize()
+		for row := 0; row < n; row++ {
+			phys := row
+			if batch.Sel != nil {
+				phys = int(batch.Sel[row])
+			}
+			for j := range entries {
+				acc := &entries[j].acc
+				if acc.isStar {
+					acc.count++
+					continue
+				}
+				if acc.colIdx < 0 || acc.colIdx >= len(batch.Cols) {
+					continue
+				}
+				v := UT.ToValue(batch.Cols[acc.colIdx], phys)
+				if v.Kind == KindNull {
+					continue
+				}
+				switch acc.aggKind {
+				case "COUNT":
+					acc.count++
+				case "SUM", "AVG":
+					acc.count++
+					if v.Kind == KindInt {
+						acc.sumI += v.I64
+						acc.seenI = true
+					} else if v.Kind == KindFloat {
+						acc.sumF += v.F64
+						acc.seenF = true
+					}
+				case "MIN":
+					if !acc.hasValue || PL.CompareValue(v, acc.best) < 0 {
+						acc.best = v
+						acc.hasValue = true
+					}
+				case "MAX":
+					if !acc.hasValue || PL.CompareValue(v, acc.best) > 0 {
+						acc.best = v
+						acc.hasValue = true
+					}
+				}
+			}
+		}
+
+		if batch.Pooled {
+			batch.Put()
+		}
+	}
+
+	// Build virtual row from accumulated results. The virtual row
+	// is used by EvalValue to resolve AggregateFunc nodes in
+	// expressions like -SUM(x).
+	vrow := Row{
+		Cols: make([]string, 0, len(entries)),
+		Data: make([]Value, 0, len(entries)),
+	}
+	for i := range entries {
+		name := aggregateColName(entries[i].af)
+		if name == "" {
+			continue
+		}
+		// Deduplicate (shouldn't happen since we deduped by key).
+		dup := false
+		for _, c := range vrow.Cols {
+			if c == name {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			continue
+		}
+		val := entries[i].acc.computeResult()
+		vrow.Cols = append(vrow.Cols, name)
+		vrow.Data = append(vrow.Data, DT.ValueFromAny(val))
+	}
+
+	// Build output row by evaluating each emit expression.
+	total := len(a.fullCols)
+	if total == 0 {
+		total = len(a.constCols) + len(a.aggs)
+	}
+	out := Row{Cols: make([]string, 0, total), Data: make([]Value, 0, total)}
+	for _, e := range emitOrder {
+		var v Value
+		if DT.ContainsAggregate(e) {
+			// Evaluate against the virtual row containing accumulated
+			// aggregate results. This handles wrappers like -SUM(x),
+			// CAST(SUM(x) AS TEXT), etc.
+			val, err := EV.EvalValue(e, &vrow, a.params)
+			if err != nil {
+				return true, Row{}, err
+			}
+			v = val
+		} else {
+			var err error
+			v, err = EV.EvalValue(e, &Row{}, a.params)
+			if err != nil {
+				return true, Row{}, err
+			}
+		}
+		name := evalColName(e)
+		out.Cols = append(out.Cols, name)
+		out.Data = append(out.Data, v)
+	}
+
+	return true, out, nil
+}
+
 func (a *Aggregate) materialize(ctx context.Context) error {
 	// REQ001636: scalar aggregate fast path — no GROUP BY.
 	// Skip group key computation, groupIndex map, and sort.
 	// Accumulate aggregate state directly from input rows.
 	if a.scalar {
-		// REQ001697: reuse scalarRowBuf across materialize calls.
-		a.scalarRowBuf = a.scalarRowBuf[:0]
+		// REQ002083: try streaming scalar aggregate accumulation
+		// when all aggregates have simple column arguments. This
+		// avoids the batch.ToRows() allocation that would otherwise
+		// materialize every row in the input.
+		if ok, out, err := a.tryStreamingScalarAggregate(ctx); ok {
+			if err != nil {
+				return err
+			}
+			a.buf = []Row{out}
+			return nil
+		}
+		// Fallback: existing ToRows/row-based path for complex
+		// aggregate arguments, DISTINCT, or non-batch children.
+		// When tryStreamingScalarAggregate returns false, it may
+		// have already drained all batches into scalarRowBuf
+		// (column resolution failure mid-stream). In that case,
+		// skip the drain loop. Otherwise, clear and drain fresh.
+		if len(a.scalarRowBuf) == 0 {
+			a.scalarRowBuf = a.scalarRowBuf[:0]
+		}
 		// REQ001989: if child implements BatchProducer and batch
 		// mode is supported, drain via NextBatch + ToRows.
 		useBatch := false
