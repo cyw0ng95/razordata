@@ -122,10 +122,21 @@ func EvalBatch(expr PS.Expr, batch *UT.Batch, params []any) []uint16 {
 	}
 }
 
+// isComparisonOp reports whether op is one of EQ/NE/LT/LE/GT/GE.
+func isComparisonOp(op LX.TokenType) bool {
+	switch op {
+	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
+		return true
+	}
+	return false
+}
+
 // evalBinaryBatch handles binary expressions (comparisons, arithmetic).
 // Fast paths:
 //   - column op column: vectorized column-to-column comparison
 //   - column op literal: vectorized column-to-literal comparison
+//   - expression op column/literal/expression: evaluate both sides as
+//     columns via EvalBatchExpr, then vectorized compare
 //   - otherwise: row-at-a-time fallback
 func evalBinaryBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
 	// REQ001010: AND/OR batch evaluation
@@ -136,31 +147,53 @@ func evalBinaryBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
 		return evalOrBatch(e, batch, params)
 	}
 
+	// REQ002073: comparison expressions with non-column operands (e.g.
+	// `a+b > 150`, `a*2 < 10`, `LENGTH(a) > 5`) previously fell back to
+	// row-at-a-time evaluation. Evaluate both sides as columns and then
+	// compare the resulting columns.
+	if !isComparisonOp(e.Op) {
+		return evalRowFallback(e, batch, params)
+	}
+
 	leftCol, leftIsCol := ExtractColumnRef(e.Left, batch)
 	rightCol, rightIsCol := ExtractColumnRef(e.Right, batch)
+	leftLit, leftIsLit := evalLiteral(e.Left, params)
+	rightLit, rightIsLit := evalLiteral(e.Right, params)
 
-	// Both columns: column-column vectorized comparison
+	// Fast path: both sides are simple columns.
 	if leftIsCol && rightIsCol {
 		return compareColumns(leftCol, rightCol, e.Op, batch)
 	}
 
-	// UT.Column-literal: column-literal vectorized comparison
-	if leftIsCol {
-		litVal, litOk := evalLiteral(e.Right, params)
-		if litOk {
-			return compareColLiteral(leftCol, litVal, e.Op, batch)
-		}
+	// Fast path: one side is a column, the other a literal.
+	if leftIsCol && rightIsLit {
+		return compareColLiteral(leftCol, rightLit, e.Op, batch)
+	}
+	if rightIsCol && leftIsLit {
+		return compareColLiteral(rightCol, leftLit, SwapOp(e.Op), batch)
 	}
 
-	if rightIsCol {
-		litVal, litOk := evalLiteral(e.Left, params)
-		if litOk {
-			return compareColLiteral(rightCol, litVal, SwapOp(e.Op), batch)
-		}
+	// At least one side is a non-trivial expression. Materialize both
+	// sides as columns and compare them.
+	lc := evalBinarySide(e.Left, leftIsCol, leftCol, leftIsLit, leftLit, batch, params)
+	rc := evalBinarySide(e.Right, rightIsCol, rightCol, rightIsLit, rightLit, batch, params)
+	if lc.Type == LX.T_NULL || rc.Type == LX.T_NULL {
+		return evalRowFallback(e, batch, params)
 	}
+	return compareColumns(lc, rc, e.Op, batch)
+}
 
-	// Fallback
-	return evalRowFallback(e, batch, params)
+// evalBinarySide materializes one side of a binary comparison as a
+// column. Simple columns and literals are returned directly; everything
+// else goes through EvalBatchExpr.
+func evalBinarySide(expr PS.Expr, isCol bool, col UT.Column, isLit bool, lit any, batch *UT.Batch, params []any) UT.Column {
+	if isCol {
+		return col
+	}
+	if isLit {
+		return evalAnyLiteral(lit, batch)
+	}
+	return EvalBatchExpr(expr, batch, params)
 }
 
 // evalAndBatch evaluates left AND right as batch selection vectors.

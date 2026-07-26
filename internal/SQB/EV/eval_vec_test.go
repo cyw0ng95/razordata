@@ -571,3 +571,78 @@ func TestIncrementFallbackHits_BatchToRowDirect(t *testing.T) {
 		t.Fatalf("expected 1 fallback hit, got %d", hits)
 	}
 }
+
+// TestEvalBatch_ArithmeticComparison verifies REQ002073: WHERE clauses
+// with arithmetic expressions on either side of a comparison are evaluated
+// in batch mode instead of falling back to row-at-a-time.
+func TestEvalBatch_ArithmeticComparison(t *testing.T) {
+	ReadAndResetFallbackHits()
+
+	n := 5
+	b := UT.GetBatch(2)
+	valsA := []int64{10, 20, 30, 40, 50}
+	valsB := []int64{5, 15, 25, 35, 45}
+	for i := 0; i < n; i++ {
+		b.AppendRow(0, LX.T_INT_KW, valsA[i], false)
+		b.AppendRow(1, LX.T_INT_KW, valsB[i], false)
+		b.AdvanceSize()
+	}
+	b.Cols[0].Name = "a"
+	b.Cols[1].Name = "b"
+	b.SetColMap(map[string]int{"a": 0, "b": 1})
+
+	// a + b > 50
+	expr := &PS.BinaryExpr{
+		Op: LX.T_GT,
+		Left: &PS.BinaryExpr{
+			Op:    LX.T_PLUS,
+			Left:  &PS.Ident{Name: "a"},
+			Right: &PS.Ident{Name: "b"},
+		},
+		Right: &PS.NumberLiteral{Val: 50},
+	}
+	sel := EvalBatch(expr, b, nil)
+	// 10+5=15, 20+15=35, 30+25=55, 40+35=75, 50+45=95 -> rows 2,3,4 match
+	want := []uint16{2, 3, 4}
+	if !slicesEqual(sel, want) {
+		t.Fatalf("a+b>50: got %v, want %v", sel, want)
+	}
+
+	// a*2 < b+30
+	expr2 := &PS.BinaryExpr{
+		Op: LX.T_LT,
+		Left: &PS.BinaryExpr{
+			Op:    LX.T_STAR,
+			Left:  &PS.Ident{Name: "a"},
+			Right: &PS.NumberLiteral{Val: 2},
+		},
+		Right: &PS.BinaryExpr{
+			Op:    LX.T_PLUS,
+			Left:  &PS.Ident{Name: "b"},
+			Right: &PS.NumberLiteral{Val: 30},
+		},
+	}
+	sel2 := EvalBatch(expr2, b, nil)
+	// a*2: 20,40,60,80,100; b+30: 35,45,55,65,75 -> rows 0,1 match
+	want2 := []uint16{0, 1}
+	if !slicesEqual(sel2, want2) {
+		t.Fatalf("a*2 < b+30: got %v, want %v", sel2, want2)
+	}
+
+	hits := ReadAndResetFallbackHits()
+	if hits != 0 {
+		t.Fatalf("expected 0 fallback hits for arithmetic comparisons, got %d", hits)
+	}
+}
+
+func slicesEqual(a, b []uint16) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
