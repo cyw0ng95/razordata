@@ -297,7 +297,10 @@ func (j *MergeJoin) initSharedSchema(first pl.Row, firstOrigCols []string) {
 		return
 	}
 	// Combine left + right column lists.
-	cols := make([]string, 0, len(firstOrigCols)+len(firstOrigCols))
+	// REQ002045: fix capacity — was len(firstOrigCols)+len(firstOrigCols),
+	// should be len(first.Cols)+len(firstOrigCols) to account for the right
+	// side having more columns than the left.
+	cols := make([]string, 0, len(first.Cols)+len(firstOrigCols))
 	types := make([]LX.TokenType, 0, cap(cols))
 	if j.leftRow != nil {
 		cols = append(cols, j.leftRow.Cols...)
