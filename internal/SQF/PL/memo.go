@@ -553,7 +553,13 @@ func (e *enc) writeStmt(s PS.Stmt) {
 		for _, j := range v.Joins {
 			e.writeString(j.Kind)
 			e.writeString(j.Right)
+			e.writeString(j.RightAlias)
 			e.writeExpr(j.On)
+			e.writeUvarint(uint64(len(j.Using)))
+			for _, u := range j.Using {
+				e.writeString(u)
+			}
+			e.writeBool(j.Natural)
 		}
 		e.writeUvarint(uint64(len(v.GroupBy)))
 		for _, g := range v.GroupBy {
@@ -652,7 +658,13 @@ func (e *enc) writeStmtNormalized(s PS.Stmt, params *[]any) {
 		for _, j := range v.Joins {
 			e.writeString(j.Kind)
 			e.writeString(j.Right)
+			e.writeString(j.RightAlias)
 			e.writeExprNormalized(j.On, params)
+			e.writeUvarint(uint64(len(j.Using)))
+			for _, u := range j.Using {
+				e.writeString(u)
+			}
+			e.writeBool(j.Natural)
 		}
 		e.writeUvarint(uint64(len(v.GroupBy)))
 		for _, g := range v.GroupBy {

@@ -1329,15 +1329,14 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 				leftTbl = baseTable
 			}
 			joinedTables[baseTable] = true
-			// REQ001656: account for the base table's join clause
-			// occurrence so joins within the group use the next
-			// occurrence. Without this, when the same physical table
-			// appears multiple times with different aliases (e.g.
-			// FROM tab0, tab0 AS cor0, tab0 cor1), all occurrences
-			// use the first join clause, causing duplicate aliases
-			// and wrong row counts (3 rows instead of 27).
-			if _, ok := joinClauseIdx[baseTable]; ok {
-				tableOccurrence[baseTable] = baseOccurrence[baseTable]
+			// REQ001656: initialize tableOccurrence from baseOccurrence
+			// for ALL tables, not just the base table. When the same
+			// physical table appears in multiple groups (e.g. self-join
+			// split across bushy groups), each group's non-base tables
+			// must start at the correct occurrence offset, otherwise
+			// they reuse earlier join clauses and get the wrong alias.
+			for tbl, cnt := range baseOccurrence {
+				tableOccurrence[tbl] = cnt
 			}
 		}
 		for ti, tbl := range group {
