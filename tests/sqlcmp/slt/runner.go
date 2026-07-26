@@ -475,6 +475,24 @@ func sortRows(rows [][]Value, valueOnly bool) {
 // on the rendered form" rule.
 func valueLess(a, b Value) int {
 	if a.Kind != b.Kind {
+		if (a.Kind == TypeInteger || a.Kind == TypeReal) && (b.Kind == TypeInteger || b.Kind == TypeReal) {
+			af := float64(a.Int)
+			if a.Kind == TypeReal {
+				af = a.Real
+			}
+			bf := float64(b.Int)
+			if b.Kind == TypeReal {
+				bf = b.Real
+			}
+			switch {
+			case af < bf:
+				return -1
+			case af > bf:
+				return 1
+			default:
+				return 0
+			}
+		}
 		order := func(k ValueKind) int {
 			switch k {
 			case TypeNull:
