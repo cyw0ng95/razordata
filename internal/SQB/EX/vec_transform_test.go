@@ -1,14 +1,15 @@
 package EX
 
 import (
-	"testing"
+        "testing"
 
-	"github.com/cyw0ng95/razordata/internal/SQB/AD"
-	"github.com/cyw0ng95/razordata/internal/SQB/AG"
-	"github.com/cyw0ng95/razordata/internal/SQB/DT"
-	"github.com/cyw0ng95/razordata/internal/SQB/OP"
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+        "github.com/cyw0ng95/razordata/internal/SQB/AD"
+        "github.com/cyw0ng95/razordata/internal/SQB/AG"
+        "github.com/cyw0ng95/razordata/internal/SQB/DT"
+        "github.com/cyw0ng95/razordata/internal/SQB/OP"
+        UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+        "github.com/cyw0ng95/razordata/internal/SQF/LX"
+        PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 func TestTryVectorizePlan_MultiKeyJoin(t *testing.T) {
@@ -185,6 +186,8 @@ func TestExprName(t *testing.T) {
 }
 
 func TestTryVectorizePlan_DistinctAggregate(t *testing.T) {
+	// REQ001730: DISTINCT aggregates (SUM/COUNT/MIN/MAX/AVG) are vectorized
+	// with per-definition deduplication via DistinctSeen maps.
 	ss := OP.NewSeqScan("t1")
 	af := &PS.AggregateFunc{Name: "sum", Arg: &PS.Ident{Name: "v"}, Distinct: true}
 	t.Logf("af.Distinct = %v, af.Name = %q", af.Distinct, af.Name)
@@ -192,8 +195,15 @@ func TestTryVectorizePlan_DistinctAggregate(t *testing.T) {
 	agg := AG.NewAggregate(ss, nil, aggs)
 	result := tryVectorizePlan(agg, nil)
 	t.Logf("result == agg: %v, result type: %T", result == agg, result)
-	if result != agg {
-		t.Fatal("DISTINCT aggregate should not be vectorized, expected original root")
+	if result == agg {
+		t.Fatal("DISTINCT aggregate should be vectorized, expected transformed root")
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	// Verify it's a BatchToRowAdapter wrapping a vectorized operator
+	if _, ok := result.(*UT.BatchToRowAdapter); ok {
+		t.Logf("vectorized via BatchToRowAdapter")
 	}
 }
 

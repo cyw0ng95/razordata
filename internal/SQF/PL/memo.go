@@ -272,6 +272,28 @@ func (e *enc) writeExpr(x PS.Expr) {
 		e.buf = append(e.buf, tagAgg)
 		e.writeString(v.Name)
 		e.writeExpr(v.Arg)
+		// REQ001730: include Distinct flag so SUM(x) and SUM(DISTINCT x)
+		// have different memo keys. Without this, the plan cache returns
+		// a non-DISTINCT plan for a DISTINCT query (or vice versa) when
+		// the non-DISTINCT version was cached first, causing incorrect
+		// results (e.g. SUM(DISTINCT 28) returns 84 with 3 input rows).
+		if v.Distinct {
+			e.buf = append(e.buf, 1)
+		} else {
+			e.buf = append(e.buf, 0)
+		}
+		if v.Separator != nil {
+			e.buf = append(e.buf, 1)
+			e.writeExpr(v.Separator)
+		} else {
+			e.buf = append(e.buf, 0)
+		}
+		if v.Filter != nil {
+			e.buf = append(e.buf, 1)
+			e.writeExpr(v.Filter)
+		} else {
+			e.buf = append(e.buf, 0)
+		}
 	case *PS.CastExpr:
 		e.buf = append(e.buf, tagCast)
 		e.writeExpr(v.Expr)
@@ -421,6 +443,24 @@ func (e *enc) writeExprNormalized(x PS.Expr, params *[]any) {
 		e.buf = append(e.buf, tagAgg)
 		e.writeString(v.Name)
 		e.writeExprNormalized(v.Arg, params)
+		// REQ001730: include Distinct flag in normalized memo key too.
+		if v.Distinct {
+			e.buf = append(e.buf, 1)
+		} else {
+			e.buf = append(e.buf, 0)
+		}
+		if v.Separator != nil {
+			e.buf = append(e.buf, 1)
+			e.writeExprNormalized(v.Separator, params)
+		} else {
+			e.buf = append(e.buf, 0)
+		}
+		if v.Filter != nil {
+			e.buf = append(e.buf, 1)
+			e.writeExprNormalized(v.Filter, params)
+		} else {
+			e.buf = append(e.buf, 0)
+		}
 	case *PS.CastExpr:
 		e.buf = append(e.buf, tagCast)
 		e.writeExprNormalized(v.Expr, params)

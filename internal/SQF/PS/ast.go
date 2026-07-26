@@ -159,21 +159,23 @@ func (a *AggregateFunc) LookupKey() string {
 // logic but without fmt.Sprintf: StarExpr → "NAME(*)", Ident →
 // "NAME(arg)", everything else → "NAME(reflectType:ptr)" using
 // reflect.Type.String and strconv on the pointer. REQ001975.
+// REQ001730: includes the Distinct flag so SUM(x) and SUM(DISTINCT x)
+// produce different keys, preventing virtual-row collisions and
+// wrong results when both appear in the same SELECT list.
 func computeAggregateLookupKey(a *AggregateFunc) string {
+	prefix := a.Name
+	if a.Distinct {
+		prefix = "DISTINCT " + prefix
+	}
 	if _, ok := a.Arg.(*StarExpr); ok {
-		return a.Name + "(*)"
+		return prefix + "(*)"
 	}
 	if ident, ok := a.Arg.(*Ident); ok {
-		return a.Name + "(" + ident.Name + ")"
+		return prefix + "(" + ident.Name + ")"
 	}
-	// For complex args (literals, unary, binary, etc.), use the
-	// pointer address of the arg node as a disambiguator. Both
-	// buildAggregateVirtualRow and evalAggregate walk the same
-	// expression tree, so pointer addresses are stable within a
-	// single query evaluation.
 	tName := reflect.TypeOf(a.Arg).String()
 	ptr := strconv.FormatUint(uint64(reflect.ValueOf(a.Arg).Pointer()), 16)
-	return a.Name + "(" + tName + ":" + ptr + ")"
+	return prefix + "(" + tName + ":" + ptr + ")"
 }
 
 type WindowSpec struct {
