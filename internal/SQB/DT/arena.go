@@ -40,11 +40,14 @@ func (a *RowArena) Init(estimatedRows, colsPerRow int) {
 	if needed < arenaSlabSize {
 		needed = arenaSlabSize
 	}
-	// REQ002011: release the old slab to the pool before replacing it.
-	// Without this, Init silently leaks ~200 MB per SLT file because
-	// the old slab is dropped for GC instead of being returned to the
-	// arenaSlabPool for reuse.
-	if a.slab != nil {
+	// REQ002011: release the old slab to the pool before replacing it,
+	// but ONLY if no rows were allocated from it (offset == 0). If
+	// offset > 0, outstanding Row.Data sub-slices still reference the
+	// old slab — zeroing it via putSlab would corrupt live data.
+	// In practice, Init is called after Reset (which already returns
+	// the slab), so a.slab is typically nil here. This guard handles
+	// the rare case of Init called without a preceding Reset.
+	if a.slab != nil && a.offset == 0 {
 		putSlab(a.slab)
 	}
 	// REQ001496: reuse pooled slab if capacity suffices.
@@ -165,10 +168,10 @@ func (a *RowArena) growLocked(needed int) {
 	if needed > cap {
 		cap = needed
 	}
-	// REQ002011: release the old slab to the pool before replacing it.
-	if a.slab != nil {
-		putSlab(a.slab)
-	}
+	// REQ001639: old slabs stay alive via outstanding Row.Data
+	// sub-slices through normal GC reachability. Do NOT call putSlab
+	// here — zeroing the old slab in-place would corrupt data that
+	// callers still hold references to.
 	// REQ001496: reuse pooled slab if available.
 	if cap <= arenaSlabSize && a.pooledSlab != nil {
 		a.slab = a.pooledSlab[:cap:cap]
