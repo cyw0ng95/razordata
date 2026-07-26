@@ -2,7 +2,6 @@ package SY
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
@@ -13,20 +12,10 @@ func TestQueryStreaming(t *testing.T) {
 	executor.UnregisterAll()
 	t.Cleanup(executor.UnregisterAll)
 
+	initSharedEngine(t)
+	resetSharedEngine(t)
+	eng := sharedEng
 	ctx := context.Background()
-	dir := filepath.Join(t.TempDir(), "stream1.db.razor")
-	eng, err := Open(ctx, dir, AP.Options{
-		PageSize:     4096,
-		MemTableSize: 1024 * 1024,
-		BufferPoolMB: 64,
-		WALSizeMB:    16,
-		MaxLevel:     3,
-		LogLevel:     8,
-	})
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	defer eng.Close(ctx)
 
 	sess, err := eng.Begin(ctx)
 	if err != nil {

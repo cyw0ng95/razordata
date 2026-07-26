@@ -2,7 +2,6 @@ package SY
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
@@ -211,28 +210,16 @@ func TestCRUD_LimitOffset(t *testing.T) {
 	_ = rows
 }
 
-// createOrderByTestEngine builds an engine with a `t(id, v)` table
-// suitable for ORDER BY / aggregate tests. Returns the engine and a
-// context ready to use.
+// createOrderByTestEngine returns the shared engine reset to a clean
+// state, with a `t(id, v)` table already created. REQ002036: reuses
+// the shared engine across tests instead of creating a fresh one per test.
 func createOrderByTestEngine(t *testing.T) (AP.Engine, context.Context) {
 	t.Helper()
-	resetExecutorRegistry()
-	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
-		PageSize:     4096,
-		MemTableSize: 1024 * 1024,
-		BufferPoolMB: 64,
-		WALSizeMB:    16,
-		MaxLevel:     3,
-		LogLevel:     8,
-	})
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	s, _ := eng.Begin(context.Background())
+	initSharedEngine(t)
+	resetSharedEngine(t)
+	s, _ := sharedEng.Begin(context.Background())
 	if _, err := s.Exec(context.Background(), "CREATE TABLE t (id INTEGER, v INTEGER, PRIMARY KEY (id))"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _ = eng.Close(context.Background()) })
-	return eng, context.Background()
+	return sharedEng, context.Background()
 }

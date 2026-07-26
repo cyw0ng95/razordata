@@ -2,6 +2,7 @@ package SY
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -11,36 +12,65 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
-// testEngine opens a fresh Engine rooted in a per-test temp dir. It
-// also registers a `users(id INTEGER PK, name TEXT)` table so the
-// common test bodies can skip boilerplate. The test also wipes the
-// EX package's in-memory table registry (carried over from iter-08)
-// so tests do not collide on the `users` name.
+// REQ002036: shared engine for SYS/SY tests that don't need Close/reopen.
+// Eliminates per-test Open/Close allocs (page cache, WAL, memtable, etc.)
+// that caused 68% GC overhead and ~512ms test time.
+// The engine is initialized lazily on first use and reset between tests.
+var (
+	sharedEngOnce sync.Once
+	sharedEng     *Engine
+	sharedEngDir  string
+)
+
+func initSharedEngine(t testing.TB) {
+	t.Helper()
+	sharedEngOnce.Do(func() {
+		var err error
+		sharedEngDir, err = os.MkdirTemp("", "razor-sy-test-")
+		if err != nil {
+			t.Fatalf("os.MkdirTemp: %v", err)
+		}
+		sharedEng, err = Open(context.Background(), filepath.Join(sharedEngDir, "db"), AP.Options{
+			PageSize:     4096,
+			MemTableSize: 1024 * 1024,
+			BufferPoolMB: 64,
+			WALSizeMB:    16,
+			MaxLevel:     3,
+			LogLevel:     8, // above Error to silence info output
+			LogFormat:    "text",
+		})
+		if err != nil {
+			t.Fatalf("Open shared engine: %v", err)
+		}
+	})
+}
+
+// resetSharedEngine resets the shared engine to a clean state using
+// Engine.Reset (which drops all tables, clears plan cache, resets
+// row arena, and resets the LSM engine state).
+func resetSharedEngine(t testing.TB) {
+	t.Helper()
+	if err := sharedEng.Reset(context.Background()); err != nil {
+		t.Fatalf("sharedEng.Reset: %v", err)
+	}
+}
+
+// testEngine returns the shared engine reset to a clean state, with a
+// `users(id INTEGER PK, name TEXT)` table already created.
+// REQ002036: reuses one engine across all tests instead of creating a
+// fresh one per test (saves ~345 MB allocs + GC overhead).
 func testEngine(t *testing.T) (AP.Engine, context.Context) {
 	t.Helper()
-	resetExecutorRegistry()
-	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
-		PageSize:     4096,
-		MemTableSize: 1024 * 1024,
-		BufferPoolMB: 64,
-		WALSizeMB:    16,
-		MaxLevel:     3,
-		LogLevel:     8, // above Error to silence info output
-		LogFormat:    "text",
-	})
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	s, err := eng.Begin(context.Background())
+	initSharedEngine(t)
+	resetSharedEngine(t)
+	s, err := sharedEng.Begin(context.Background())
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, err := s.Exec(context.Background(), "CREATE TABLE users (id INTEGER, name TEXT, PRIMARY KEY (id))"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _ = eng.Close(context.Background()) })
-	return eng, context.Background()
+	return sharedEng, context.Background()
 }
 
 // resetExecutorRegistry clears the iter-08 in-memory `tables` and

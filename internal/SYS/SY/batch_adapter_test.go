@@ -2,13 +2,11 @@ package SY
 
 import (
 	"context"
-	"path/filepath"
 	"reflect"
 	"strconv"
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
 // TestExecutorStoreAdapter_BatchInterfaceAssertion verifies that the
@@ -19,21 +17,9 @@ import (
 // REQ001556 DeleteRowBatch) type-asserts to the batched methods
 // instead of falling back to per-row Insert/Delete at runtime.
 func TestExecutorStoreAdapter_BatchInterfaceAssertion(t *testing.T) {
-	resetExecutorRegistry()
-	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
-		PageSize:     4096,
-		MemTableSize: 1024 * 1024,
-		BufferPoolMB: 64,
-		WALSizeMB:    16,
-		MaxLevel:     3,
-		LogLevel:     8,
-		LogFormat:    "text",
-	})
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	initSharedEngine(t)
+	resetSharedEngine(t)
+	eng := sharedEng
 
 	if eng.exeAdapter == nil {
 		t.Fatal("eng.exeAdapter is nil; cannot verify batch interface wiring")
@@ -67,28 +53,15 @@ func TestExecutorStoreAdapter_BatchInterfaceAssertion(t *testing.T) {
 // the executor's batched writes, demonstrating that the adapter
 // wiring reaches production code paths.
 func TestExecutorStoreAdapter_BatchPathActivate(t *testing.T) {
-	resetExecutorRegistry()
-	dir := filepath.Join(t.TempDir(), "db")
-	eng, err := Open(context.Background(), dir, AP.Options{
-		PageSize:     4096,
-		MemTableSize: 1024 * 1024,
-		BufferPoolMB: 64,
-		WALSizeMB:    16,
-		MaxLevel:     3,
-		LogLevel:     8,
-		LogFormat:    "text",
-	})
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	initSharedEngine(t)
+	resetSharedEngine(t)
+	eng := sharedEng
 
 	ctx := context.Background()
 	s, err := eng.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	t.Cleanup(func() { _ = s.Rollback(ctx) })
 
 	if _, err := s.Exec(ctx, "CREATE TABLE t (id INTEGER, v INTEGER, PRIMARY KEY (id))"); err != nil {
 		t.Fatalf("create table: %v", err)

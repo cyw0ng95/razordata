@@ -11,7 +11,7 @@ import (
 
 // TestEngine_DoubleClose — R08 Close is idempotent.
 func TestEngine_DoubleClose(t *testing.T) {
-	eng, _ := testEngine(t)
+	eng := openForCloseTest(t)
 	if err := eng.Close(context.Background()); err != nil {
 		t.Errorf("first Close: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestEngine_DoubleClose(t *testing.T) {
 // TestEngine_BeginAfterClose — Begin on a closed engine returns
 // AP.ErrClosed.
 func TestEngine_BeginAfterClose(t *testing.T) {
-	eng, _ := testEngine(t)
+	eng := openForCloseTest(t)
 	_ = eng.Close(context.Background())
 	if _, err := eng.Begin(context.Background()); !AP.IsKind(err, AP.KindClosed) {
 		t.Errorf("Begin after Close: got %v, want ErrClosed", err)
