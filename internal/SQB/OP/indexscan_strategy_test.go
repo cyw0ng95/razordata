@@ -13,26 +13,24 @@ import (
 // exercised without a store; the Store/Index/BTree branches use
 // the in-memory store registered via the `DT.Tables` map (the only
 // public Store surface available in unit tests).
+//
+// REQ002038: Converted to use BatchIndexScan instead of row-based Next().
 func TestIndexScan_StrategySelection(t *testing.T) {
 	t.Run("in-memory", func(t *testing.T) {
 		// NewIndexScan constructs an IndexScan with no store,
-		// no index mode, no btree. SelectStrategy should
-		// return an InMemoryScan wrapping the table's
-		// in-memory rows.
+		// no index mode, no btree. BatchIndexScan should
+		// wrap it and drain rows in batches.
 		scan := NewIndexScan("__test_no_such_table__", "idx", nil, nil)
-		strat, err := SelectStrategy(scan)
+		batch := NewBatchIndexScan(scan)
+		defer batch.Close()
+
+		ctx := context.Background()
+		b, err := batch.NextBatch(ctx)
 		if err != nil {
-			t.Fatalf("SelectStrategy: %v", err)
+			t.Fatalf("NextBatch: %v", err)
 		}
-		if _, ok := strat.(*InMemoryScan); !ok {
-			t.Errorf("expected *InMemoryScan, got %T", strat)
-		}
-		row, err := strat.Next(context.Background())
-		if err != ErrNoRows {
-			t.Errorf("expected ErrNoRows for empty table, got row=%v err=%v", row, err)
-		}
-		if err := strat.Close(); err != nil {
-			t.Errorf("Close: %v", err)
+		if b != nil {
+			t.Errorf("expected nil batch for empty table, got batch with %d rows", b.Size)
 		}
 	})
 }
@@ -49,25 +47,49 @@ func TestScanStrategy_InterfaceConformance(t *testing.T) {
 
 // TestScanStrategy_InMemoryDispatch drives InMemoryScan over a
 // small slice and checks the rows come out in order.
+//
+// REQ002038: Converted to use BatchIndexScan instead of row-based Next().
 func TestScanStrategy_InMemoryDispatch(t *testing.T) {
 	rows := []Row{
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(1)}},
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(2)}},
 		{Cols: []string{"a"}, Types: []LX.TokenType{LX.T_INT_KW}, Data: []Value{DT.NewIntValue(3)}},
 	}
-	s := NewInMemoryScan(rows)
+	// Create an IndexScan with in-memory rows and wrap with BatchIndexScan.
+	scan := &IndexScan{rows: rows, table: "t", pos: 0}
+	batch := NewBatchIndexScan(scan)
+	defer batch.Close()
+
 	ctx := context.Background()
-	for i := 1; i <= 3; i++ {
-		row, err := s.Next(ctx)
-		if err != nil {
-			t.Fatalf("Next #%d: %v", i, err)
-		}
-		if row.Data[0].I64 != int64(i) {
-			t.Errorf("row %d: got %d, want %d", i, row.Data[0].I64, i)
+
+	// Collect all rows from batches.
+	b, err := batch.NextBatch(ctx)
+	if err != nil {
+		t.Fatalf("NextBatch: %v", err)
+	}
+	if b == nil {
+		t.Fatal("expected batch, got nil")
+	}
+	if b.Size != 3 {
+		t.Fatalf("expected 3 rows, got %d", b.Size)
+	}
+
+	// Verify rows come out in order (values 1, 2, 3).
+	for i := 0; i < b.Size; i++ {
+		val := b.Cols[0].Data.Ints[i]
+		expected := int64(i + 1)
+		if val != expected {
+			t.Errorf("row %d: got %d, want %d", i, val, expected)
 		}
 	}
-	if _, err := s.Next(ctx); err != ErrNoRows {
-		t.Errorf("expected ErrNoRows, got %v", err)
+
+	// EOF: next batch should be nil.
+	b2, err := batch.NextBatch(ctx)
+	if err != nil {
+		t.Fatalf("NextBatch (EOF): %v", err)
+	}
+	if b2 != nil {
+		t.Errorf("expected nil batch at EOF, got batch with %d rows", b2.Size)
 	}
 }
 

@@ -2,10 +2,10 @@ package OP
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
@@ -41,25 +41,29 @@ func TestReq001113_3TableCommaJoin_EquiPredicate(t *testing.T) {
 	// Cross join t6 × (t4 ⋈ t9) — no predicate
 	nljOuter := NewNestedLoopJoin(t6, nljInner, "t6", "", func(_, _ *pl.Row) (bool, error) { return true, nil }, JoinKindInner)
 
-	var rows []pl.Row
+	// Wrap with batch adapter
+	batchOp := UT.NewRowOperatorAdapter(nljOuter)
+	defer nljOuter.Close()
+
 	ctx := context.Background()
+	var totalRows int
 	for {
-		row, err := nljOuter.Next(ctx)
-		if errors.Is(err, pl.ErrNoRows) {
+		batch, err := batchOp.NextBatch(ctx)
+		if err != nil {
+			t.Fatalf("NextBatch: %v", err)
+		}
+		if batch == nil {
 			break
 		}
-		if err != nil {
-			t.Fatalf("Next: %v", err)
-		}
-		rows = append(rows, row)
+		totalRows += batch.Size
+		batch.Put()
 	}
 
 	// t6 has 2 rows, t4⋈t9 has 2 rows → 4 crossed rows
-	fmt.Printf("Got %d rows (expect 4)\n", len(rows))
-	if len(rows) == 0 {
+	fmt.Printf("Got %d rows (expect 4)\n", totalRows)
+	if totalRows == 0 {
 		t.Errorf("got 0 rows, expected > 0")
 	}
-	_ = nljOuter.Close()
 }
 
 func TestReq001113_3TableCommaJoin_HashJoin(t *testing.T) {
@@ -101,8 +105,8 @@ func TestReq001113_NLJ_CloseAndReuse(t *testing.T) {
 	nlj := NewNestedLoopJoin(left, right, "t1", "t2", on, JoinKindInner)
 
 	// First run
-	rows1 := collectNLJ(t, nlj)
-	if len(rows1) == 0 {
+	count1 := collectNLJ(t, nlj)
+	if count1 == 0 {
 		t.Fatal("first run got 0 rows")
 	}
 	if err := nlj.Close(); err != nil {
@@ -122,12 +126,12 @@ func TestReq001113_NLJ_CloseAndReuse(t *testing.T) {
 	nlj.right = right2
 
 	// Second run (reuse after Close + fresh children)
-	rows2 := collectNLJ(t, nlj)
-	if len(rows2) == 0 {
+	count2 := collectNLJ(t, nlj)
+	if count2 == 0 {
 		t.Fatal("second run got 0 rows after Close + fresh children — sharedBuilt leak")
 	}
-	if len(rows1) != len(rows2) {
-		t.Errorf("rows1=%d rows2=%d — mismatch after Close+reuse", len(rows1), len(rows2))
+	if count1 != count2 {
+		t.Errorf("count1=%d count2=%d — mismatch after Close+reuse", count1, count2)
 	}
 	_ = nlj.Close()
 }
@@ -150,7 +154,7 @@ func rowWithCols(tbl string, cols []string, vals []int64) pl.Row {
 	}
 	types := make([]LX.TokenType, len(vals))
 	for i := range types {
-		types[i] = LX.T_INT
+		types[i] = LX.T_INT_KW
 	}
 	data := make([]pl.Value, len(vals))
 	for i, v := range vals {
@@ -174,21 +178,23 @@ func colVal(t *testing.T, row *pl.Row, col string) int64 {
 	return 0
 }
 
-func collectNLJ(t *testing.T, nlj *NestedLoopJoin) []pl.Row {
+func collectNLJ(t *testing.T, nlj *NestedLoopJoin) int {
 	t.Helper()
-	var out []pl.Row
+	batchOp := UT.NewRowOperatorAdapter(nlj)
 	ctx := context.Background()
+	var total int
 	for {
-		row, err := nlj.Next(ctx)
-		if errors.Is(err, pl.ErrNoRows) {
+		batch, err := batchOp.NextBatch(ctx)
+		if err != nil {
+			t.Fatalf("NextBatch: %v", err)
+		}
+		if batch == nil {
 			break
 		}
-if err != nil {
-		t.Fatalf("Next: %v", err)
-		}
-		out = append(out, row)
+		total += batch.Size
+		batch.Put()
 	}
-	return out
+	return total
 }
 
 // TestNestedLoopJoin_SemiJoin verifies that JoinKindSemi returns each
@@ -214,17 +220,21 @@ func TestNestedLoopJoin_SemiJoin(t *testing.T) {
 		return ok, nil
 	}
 	nlj := NewNestedLoopJoin(left, right, "l", "r", on, JoinKindSemi)
+	batchOp := UT.NewRowOperatorAdapter(nlj)
+	defer nlj.Close()
+
 	ctx := context.Background()
 	var count int
 	for {
-		_, err := nlj.Next(ctx)
+		batch, err := batchOp.NextBatch(ctx)
 		if err != nil {
-			if err == pl.ErrNoRows {
-				break
-			}
-			t.Fatalf("Next: %v", err)
+			t.Fatalf("NextBatch: %v", err)
 		}
-		count++
+		if batch == nil {
+			break
+		}
+		count += batch.Size
+		batch.Put()
 	}
 	// Expected: 3 rows (keys 1, 2, 3 each once) — key=1 appears only once
 	// despite having two matches on the right side.
@@ -250,17 +260,24 @@ func TestNestedLoopJoin_SemiJoin_NoMatch(t *testing.T) {
 		return colVal(t, outer, "l.k") == colVal(t, inner, "r.k"), nil
 	}
 	nlj := NewNestedLoopJoin(left, right, "l", "r", on, JoinKindSemi)
+	batchOp := UT.NewRowOperatorAdapter(nlj)
+	defer nlj.Close()
+
 	ctx := context.Background()
 	var keys []int64
 	for {
-		row, err := nlj.Next(ctx)
+		batch, err := batchOp.NextBatch(ctx)
 		if err != nil {
-			if err == pl.ErrNoRows {
-				break
-			}
-			t.Fatalf("Next: %v", err)
+			t.Fatalf("NextBatch: %v", err)
 		}
-		keys = append(keys, colVal(t, &row, "l.k"))
+		if batch == nil {
+			break
+		}
+		// l.k is the first column (cols 0)
+		for i := 0; i < batch.Size; i++ {
+			keys = append(keys, batch.Cols[0].Data.Ints[i])
+		}
+		batch.Put()
 	}
 	// Expected: 2 rows (keys 1, 2) — key=5 has no match
 	if len(keys) != 2 || keys[0] != 1 || keys[1] != 2 {

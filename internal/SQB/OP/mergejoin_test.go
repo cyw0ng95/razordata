@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
 // TestMergeJoin_Basic verifies REQ001102: an inner sort-merge join
@@ -24,18 +26,25 @@ func TestMergeJoin_Basic(t *testing.T) {
 	mj := NewMergeJoin(left, right, "l", "r", []string{"k"}, []string{"k"})
 	defer mj.Close()
 	ctx := context.Background()
-	var rows []pl.Row
+
+	// Wrap with batch adapter to use NextBatch
+	batchOp := UT.NewRowOperatorAdapter(mj)
+	var totalRows int
 	for {
-		r, err := mj.Next(ctx)
+		batch, err := batchOp.NextBatch(ctx)
 		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if batch == nil {
 			break
 		}
-		rows = append(rows, r)
+		totalRows += batch.Size
+		batch.Put()
 	}
 	// Matches: (2,2), (2,3), (3,3) — left.k=2 right=[2,3]; left.k=3 right=[3,4]
 	// Expected pairs: (2,2), (3,3).
-	if len(rows) != 2 {
-		t.Fatalf("expected 2 matched rows, got %d", len(rows))
+	if totalRows != 2 {
+		t.Fatalf("expected 2 matched rows, got %d", totalRows)
 	}
 }
 
@@ -52,13 +61,19 @@ func TestMergeJoin_LeftOuter(t *testing.T) {
 	mj := NewMergeJoin(left, right, "l", "r", []string{"k"}, []string{"k"}).WithKind(JoinKindLeft)
 	defer mj.Close()
 	ctx := context.Background()
+
+	batchOp := UT.NewRowOperatorAdapter(mj)
 	count := 0
 	for {
-		_, err := mj.Next(ctx)
+		batch, err := batchOp.NextBatch(ctx)
 		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if batch == nil {
 			break
 		}
-		count++
+		count += batch.Size
+		batch.Put()
 	}
 	// left:1 unmatched, 2 matches 2, 3 unmatched.
 	if count != 3 {
@@ -78,13 +93,19 @@ func TestMergeJoin_RightOuter(t *testing.T) {
 	mj := NewMergeJoin(left, right, "l", "r", []string{"k"}, []string{"k"}).WithKind(JoinKindRight)
 	defer mj.Close()
 	ctx := context.Background()
+
+	batchOp := UT.NewRowOperatorAdapter(mj)
 	count := 0
 	for {
-		_, err := mj.Next(ctx)
+		batch, err := batchOp.NextBatch(ctx)
 		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if batch == nil {
 			break
 		}
-		count++
+		count += batch.Size
+		batch.Put()
 	}
 	// right:2 matches 2, 3 unmatched.
 	if count != 2 {
@@ -104,13 +125,19 @@ func TestMergeJoin_FullOuter(t *testing.T) {
 	mj := NewMergeJoin(left, right, "l", "r", []string{"k"}, []string{"k"}).WithKind(JoinKindFull)
 	defer mj.Close()
 	ctx := context.Background()
+
+	batchOp := UT.NewRowOperatorAdapter(mj)
 	count := 0
 	for {
-		_, err := mj.Next(ctx)
+		batch, err := batchOp.NextBatch(ctx)
 		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if batch == nil {
 			break
 		}
-		count++
+		count += batch.Size
+		batch.Put()
 	}
 	// FULL OUTER: 1 unmatched, 2 matched, 3 unmatched.
 	if count != 3 {
@@ -132,13 +159,19 @@ func TestMergeJoin_MultiKey(t *testing.T) {
 	mj := NewMergeJoin(left, right, "l", "r", []string{"a", "b"}, []string{"a", "b"})
 	defer mj.Close()
 	ctx := context.Background()
+
+	batchOp := UT.NewRowOperatorAdapter(mj)
 	count := 0
 	for {
-		_, err := mj.Next(ctx)
+		batch, err := batchOp.NextBatch(ctx)
 		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if batch == nil {
 			break
 		}
-		count++
+		count += batch.Size
+		batch.Put()
 	}
 	// Matches: (1,1)-(1,1), (2,1)-(2,1) = 2 pairs.
 	if count != 2 {
@@ -204,6 +237,47 @@ func (s *sortedRowsOp) Next(ctx context.Context) (pl.Row, error) {
 	r := s.rows[s.pos]
 	s.pos++
 	return r, nil
+}
+
+// NextBatch returns a single-row batch from the internal row slice.
+// This allows sortedRowsOp to satisfy BatchProducer for tests that
+// want to verify batch-based consumption paths.
+func (s *sortedRowsOp) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if s.done || s.pos >= len(s.rows) {
+		s.done = true
+		return nil, nil
+	}
+	r := s.rows[s.pos]
+	s.pos++
+
+	n := len(r.Cols)
+	b := UT.GetBatch(n)
+	for i, name := range r.Cols {
+		b.SetColumnName(i, name)
+	}
+	for i, v := range r.Data {
+		isNull := v.Kind == pl.KindNull
+		var raw any
+		if !isNull {
+			switch v.Kind {
+			case pl.KindInt:
+				raw = v.I64
+			case pl.KindFloat:
+				raw = v.F64
+			case pl.KindText:
+				raw = v.S
+			case pl.KindBool:
+				raw = v.Bo
+			}
+		}
+		typ := LX.T_INT_KW
+		if i < len(r.Types) {
+			typ = r.Types[i]
+		}
+		b.AppendRow(i, typ, raw, isNull)
+	}
+	b.AdvanceSize()
+	return b, nil
 }
 
 func (s *sortedRowsOp) Close() error {
