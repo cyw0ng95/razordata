@@ -78,12 +78,14 @@ The `TBD` backlog is the source of truth — bare prose mentions are not accepta
 
 ## Pre-commit Gate
 
-**Must run `./before-commit-cases.sh` before every commit.** This script runs:
+**Must run `./before-commit-cases.sh` before every commit that touches code.** This script runs:
 
 - `go test ./internal/...` — core engine tests
 - SLT select1, select2, select3, select4 — corpus regression suite
 
 All must pass. Commit only when the script exits 0.
+
+**Doc-only changes** (e.g. `docs/`, `README.md`, `AGENTS.md` only) do not need to run the pre-commit gate. If the commit contains any `.go` files or other code changes, the gate is required.
 
 ## CI / Linting
 
