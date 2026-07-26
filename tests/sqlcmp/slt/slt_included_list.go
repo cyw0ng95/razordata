@@ -24,6 +24,7 @@ var includedCases = []includedCase{
 	{Label: "evidence::slt_lang_droptable", Path: "evidence/slt_lang_droptable", Timeout: 30},
 	{Label: "evidence::slt_lang_droptrigger", Path: "evidence/slt_lang_droptrigger", Timeout: 30},
 	{Label: "evidence::slt_lang_dropview", Path: "evidence/slt_lang_dropview", Timeout: 30},
+	{Label: "evidence::slt_lang_update", Path: "evidence/slt_lang_update", Timeout: 30},
 	{Label: "index::random::1000::slt_good_2", Path: "index/random/1000/slt_good_2", Timeout: 60},
 	{Label: "index::random::1000::slt_good_3", Path: "index/random/1000/slt_good_3", Timeout: 60},
 	{Label: "index::random::1000::slt_good_4", Path: "index/random/1000/slt_good_4", Timeout: 60},
@@ -279,5 +280,4 @@ var includedCases = []includedCase{
 	{Label: "select2", Path: "select2", Timeout: 120},
 	{Label: "select3", Path: "select3", Timeout: 600},
 	{Label: "select4", Path: "select4", Timeout: 1800},
-	{Label: "evidence::slt_lang_update", Path: "evidence/slt_lang_update", Timeout: 30},
 }
