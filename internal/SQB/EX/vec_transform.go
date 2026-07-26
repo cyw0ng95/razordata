@@ -453,10 +453,9 @@ func resolveAggDef(expr PS.Expr, child DT.Operator) (AG.AggDef, bool) {
 	default:
 		return AG.AggDef{}, false
 	}
-	// DISTINCT not supported for numeric aggregates, but allowed for GROUP_CONCAT/STRING_AGG
-	if af.Distinct && !isStringAgg {
-		return AG.AggDef{}, false
-	}
+	// REQ001730: DISTINCT is supported on all aggregate kinds.
+	// The AG package deduplicates per-def for SUM/COUNT/MIN/MAX/AVG,
+	// reusing the existing GROUP_CONCAT/STRING_AGG dedup pattern.
 	// REQ001993: extract separator for GROUP_CONCAT/STRING_AGG
 	sep := ","
 	if isStringAgg && af.Separator != nil {
@@ -466,7 +465,7 @@ func resolveAggDef(expr PS.Expr, child DT.Operator) (AG.AggDef, bool) {
 			sep = fmt.Sprintf("%v", sv.ToAny())
 		}
 	}
-	def := AG.AggDef{Kind: kind, Separator: sep, Distinct: af.Distinct && isStringAgg}
+	def := AG.AggDef{Kind: kind, Separator: sep, Distinct: af.Distinct}
 	switch arg := af.Arg.(type) {
 	case *PS.StarExpr:
 		// COUNT(*) uses Col: -1 (no column needed)

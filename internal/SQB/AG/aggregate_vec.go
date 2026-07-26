@@ -649,15 +649,19 @@ type AggDef struct {
 
 // aggPayload holds the accumulator state for one hash table slot.
 type aggPayload struct {
-	Count      int64
-	Sum        int64
-	Min        int64
-	Max        int64
-	HasValue   bool
-	StrParts   []string        // REQ001993: GROUP_CONCAT/STRING_AGG accumulator
-	StrSep     string          // REQ001993: separator for string concat
-	StrSeen    map[any]bool    // REQ001993: DISTINCT dedup for GROUP_CONCAT
-	StrDistinct bool           // REQ001993: whether DISTINCT is enabled
+	Count       int64
+	Sum         int64
+	Min         int64
+	Max         int64
+	HasValue    bool
+	StrParts    []string           // REQ001993: GROUP_CONCAT/STRING_AGG accumulator
+	StrSep      string             // REQ001993: separator for string concat
+	StrSeen     map[any]bool       // REQ001993: DISTINCT dedup for GROUP_CONCAT
+	StrDistinct bool               // REQ001993: whether DISTINCT is enabled
+	// REQ001730: per-DISTINCT-agg dedup sets for numeric aggregates
+	// (SUM/COUNT/MIN/MAX/AVG). Lazily allocated when an aggregate with
+	// Distinct=true processes its first row.
+	DistinctSeen []map[int64]struct{}
 }
 
 // VectorizedHashAggregate is a vectorized hash aggregate that
@@ -858,10 +862,12 @@ func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot in
 			a.noGroupPayload = &aggPayload{}
 		}
 		p := a.noGroupPayload
-		p.Count++
 		for di, def := range a.aggDefs {
 			_ = di
-			if def.Kind == AggCount {
+			// REQ001730: COUNT(*) increments unconditionally.
+			// COUNT(col) and COUNT(DISTINCT col) need per-value logic.
+			if def.Kind == AggCount && def.Col == -1 {
+				p.Count++
 				continue
 			}
 			if def.Col < 0 || def.Col >= len(batch.Cols) {
@@ -898,7 +904,24 @@ func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot in
 				continue
 			}
 			val := col.Data.Ints[src]
+			// REQ001730: DISTINCT dedup for numeric aggregates.
+			if def.Distinct {
+				if di >= len(p.DistinctSeen) {
+					p.DistinctSeen = append(p.DistinctSeen, nil)
+				}
+				if p.DistinctSeen[di] == nil {
+					p.DistinctSeen[di] = make(map[int64]struct{})
+				}
+				if _, ok := p.DistinctSeen[di][val]; ok {
+					continue
+				}
+				p.DistinctSeen[di][val] = struct{}{}
+			}
 			switch def.Kind {
+			case AggCount:
+				// REQ001730: COUNT(col) counts non-null rows;
+				// nulls already skipped above.
+				p.Count++
 			case AggSum:
 				p.Sum += val
 			case AggMin:
@@ -913,6 +936,7 @@ func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot in
 				}
 			case AggAvg:
 				p.Sum += val
+				p.Count++
 			}
 		}
 		return
@@ -934,7 +958,7 @@ func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot in
 
 	for di, def := range a.aggDefs {
 		_ = di
-		if def.Kind == AggCount {
+		if def.Kind == AggCount && def.Col == -1 {
 			continue
 		}
 		if def.Col < 0 || def.Col >= len(batch.Cols) {
@@ -971,7 +995,22 @@ func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot in
 			continue
 		}
 		val := col.Data.Ints[src]
+		// REQ001730: DISTINCT dedup for numeric aggregates.
+		if def.Distinct {
+			if di >= len(p.DistinctSeen) {
+				p.DistinctSeen = append(p.DistinctSeen, nil)
+			}
+			if p.DistinctSeen[di] == nil {
+				p.DistinctSeen[di] = make(map[int64]struct{})
+			}
+			if _, ok := p.DistinctSeen[di][val]; ok {
+				continue
+			}
+			p.DistinctSeen[di][val] = struct{}{}
+		}
 		switch def.Kind {
+		case AggCount:
+			p.Count++
 		case AggSum:
 			p.Sum += val
 		case AggMin:
