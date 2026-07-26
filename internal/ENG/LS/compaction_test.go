@@ -514,12 +514,25 @@ func TestAutoCompact_Incremental_Triggered(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	// Build a version with L0 files far exceeding budget (4MB default).
+	// Build a real SST file so the compaction goroutine can open it.
+	// Metadata Size is set large enough to exceed the L0 budget (4MB).
+	w := newSSTWriter()
+	w.Add([]byte("key1"), []byte("value1"))
+	w.Add([]byte("key2"), []byte("value2"))
+	sstData, err := w.Finish()
+	if err != nil {
+		t.Fatalf("finish SST writer: %v", err)
+	}
+
+	input := SSTFileMeta{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 10 * 1024 * 1024, BloomBits: 10}
+	sstPath := filepath.Join(dir, fileName(&input))
+	if err := os.WriteFile(sstPath, sstData, 0644); err != nil {
+		t.Fatalf("write SST file: %v", err)
+	}
+
 	v := manifest.Current()
 	v.levels = make([][]SSTFileMeta, 3)
-	v.levels[0] = []SSTFileMeta{
-		{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 10 * 1024 * 1024},
-	}
+	v.levels[0] = []SSTFileMeta{input}
 	manifest.Apply(*v)
 
 	cm := newCompactionManager(DefaultFS(), dir, manifest, nil)
@@ -527,13 +540,25 @@ func TestAutoCompact_Incremental_Triggered(t *testing.T) {
 
 	cm.SetAutoCompact("incremental", 0.01)
 
-	// MaybeCompact should queue a compaction job.
 	cm.MaybeCompact()
-	// The compaction loop drains the channel asynchronously; check that
-	// a job was enqueued by observing the queue length before the loop
-	// drains it.
-	if len(cm.compactionQueue) == 0 {
-		t.Error("auto_compact=incremental should enqueue a compaction job when budget exceeded")
+
+	// Wait for the async compaction to finish. Poll compacting flag plus a brief
+	// sleep to avoid busy-waiting.
+	deadline := time.Now().Add(5 * time.Second)
+	for cm.compacting.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if cm.compacting.Load() {
+		t.Fatal("compaction did not finish within timeout")
+	}
+
+	// Verify compaction moved the L0 file to L1.
+	newV := manifest.Current()
+	if got := len(newV.levels[0]); got != 0 {
+		t.Errorf("L0 should be empty after compaction, got %d files", got)
+	}
+	if got := len(newV.levels[1]); got != 1 {
+		t.Errorf("L1 should have 1 file after compaction, got %d", got)
 	}
 }
 
@@ -552,15 +577,36 @@ func TestAutoCompact_Full_Triggered(t *testing.T) {
 	}
 	defer manifest.Close()
 
-	// Build a version with files at multiple levels.
+	// Build two real SST files (L0 and L1) so the compaction goroutine can
+	// open them. Metadata sizes are set large enough to exceed budgets.
+	w := newSSTWriter()
+	w.Add([]byte("key1"), []byte("value1"))
+	w.Add([]byte("key3"), []byte("value3"))
+	l0Data, err := w.Finish()
+	if err != nil {
+		t.Fatalf("finish L0 SST writer: %v", err)
+	}
+	w = newSSTWriter()
+	w.Add([]byte("key2"), []byte("value2"))
+	w.Add([]byte("key4"), []byte("value4"))
+	l1Data, err := w.Finish()
+	if err != nil {
+		t.Fatalf("finish L1 SST writer: %v", err)
+	}
+
+	l0File := SSTFileMeta{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 10 * 1024 * 1024, BloomBits: 10}
+	l1File := SSTFileMeta{FileID: 2, Level: 1, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 8 * 1024 * 1024, BloomBits: 10}
+	if err := os.WriteFile(filepath.Join(dir, fileName(&l0File)), l0Data, 0644); err != nil {
+		t.Fatalf("write L0 SST: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, fileName(&l1File)), l1Data, 0644); err != nil {
+		t.Fatalf("write L1 SST: %v", err)
+	}
+
 	v := manifest.Current()
 	v.levels = make([][]SSTFileMeta, 3)
-	v.levels[0] = []SSTFileMeta{
-		{FileID: 1, Level: 0, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 10 * 1024 * 1024},
-	}
-	v.levels[1] = []SSTFileMeta{
-		{FileID: 2, Level: 1, MinKey: []byte("a"), MaxKey: []byte("z"), Size: 8 * 1024 * 1024},
-	}
+	v.levels[0] = []SSTFileMeta{l0File}
+	v.levels[1] = []SSTFileMeta{l1File}
 	manifest.Apply(*v)
 
 	cm := newCompactionManager(DefaultFS(), dir, manifest, nil)
@@ -569,8 +615,24 @@ func TestAutoCompact_Full_Triggered(t *testing.T) {
 	cm.SetAutoCompact("full", 0.01)
 
 	cm.MaybeCompact()
-	if len(cm.compactionQueue) == 0 {
-		t.Error("auto_compact=full should enqueue compaction jobs when budget exceeded")
+
+	// Wait for the async compaction to finish.
+	deadline := time.Now().Add(5 * time.Second)
+	for cm.compacting.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if cm.compacting.Load() {
+		t.Fatal("compaction did not finish within timeout")
+	}
+
+	// Verify compaction ran: L0 must be empty (input consumed) and
+	// L1 must contain the merged output (overlap file + input merged).
+	newV := manifest.Current()
+	if got := len(newV.levels[0]); got != 0 {
+		t.Errorf("L0 should be empty after compaction, got %d files", got)
+	}
+	if got := len(newV.levels[1]); got != 1 {
+		t.Errorf("L1 should have 1 merged file after compaction, got %d", got)
 	}
 }
 
