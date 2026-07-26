@@ -4,7 +4,10 @@
 // breaking the import cycle that would otherwise block cluster extraction.
 package PL
 
-import "sync/atomic"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 import (
 	"context"
@@ -166,9 +169,21 @@ func (r *Row) LookupValue(name string) (Value, bool) {
 	return Value{}, false
 }
 
+// colIndexPool pools map[string]int for Row.ColIndex to eliminate
+// per-row allocations in groupby queries. REQ002026.
+var colIndexPool = sync.Pool{
+	New: func() any {
+		m := make(map[string]int, 8)
+		return &m
+	},
+}
+
 // buildColIndex builds the O(1) column name → index map.
+// REQ002026: uses pooled map to eliminate per-row allocation.
 func (r *Row) buildColIndex() {
-	r.ColIndex = make(map[string]int, len(r.Cols))
+	m := colIndexPool.Get().(*map[string]int)
+	clear(*m)
+	r.ColIndex = *m
 	allLower := true
 	for _, c := range r.Cols {
 		if c != "" && (c[0] < 'a' || c[0] > 'z') && c[0] != '_' && c[0] != '.' {
@@ -190,6 +205,19 @@ func (r *Row) buildColIndex() {
 			r.ColIndex[strings.ToLower(c)] = i
 		}
 	}
+}
+
+// ReleaseColIndex returns the row's ColIndex map to the pool.
+// Call this when the row is no longer needed to allow map reuse.
+// REQ002026.
+func (r *Row) ReleaseColIndex() {
+	if r.ColIndex == nil {
+		return
+	}
+	clear(r.ColIndex)
+	m := r.ColIndex
+	colIndexPool.Put(&m)
+	r.ColIndex = nil
 }
 
 // GetPlanner walks the Row outer chain and returns the first
