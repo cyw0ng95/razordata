@@ -1239,6 +1239,10 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 	// to skip it and produce 0 rows.
 	consumedPreds := map[PS.Expr]bool{}
 	baseOccurrence := make(map[string]int)
+	joinClauseIdx := make(map[string][]int, len(joinClauses))
+	for ci, jc := range joinClauses {
+		joinClauseIdx[jc.Right] = append(joinClauseIdx[jc.Right], ci)
+	}
 	for gi, group := range joinGroups {
 		baseTable := group[0]
 		var current DT.Operator
@@ -1282,10 +1286,6 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 		}
 		initialConjuncts := localConjuncts
 		tableOccurrence := make(map[string]int, len(group))
-		joinClauseIdx := make(map[string][]int, len(joinClauses))
-		for ci, jc := range joinClauses {
-			joinClauseIdx[jc.Right] = append(joinClauseIdx[jc.Right], ci)
-		}
 		if gi == 0 {
 			current = filteredScan
 			leftTbl = s.From
@@ -1506,6 +1506,18 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			current = joinOp
 			joinedTables[tbl] = true
 			leftTbl = rightTbl
+		}
+		// Propagate table occurrence from this group into baseOccurrence
+		// so that subsequent groups consuming the same physical table
+		// select the correct join clause (and thus the correct alias).
+		// Without this, when tab2 appears in group 0 as "tab2" and in
+		// group 1 as "tab2 AS cor0", group 1 re-uses the first join
+		// clause (no alias) because baseOccurrence was never incremented
+		// by group 0's inner-loop processing.
+		for tbl, cnt := range tableOccurrence {
+			if cnt > baseOccurrence[tbl] {
+				baseOccurrence[tbl] = cnt
+			}
 		}
 		if current != nil {
 			groupOps = append(groupOps, groupResult{
