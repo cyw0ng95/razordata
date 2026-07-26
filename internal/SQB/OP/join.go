@@ -22,9 +22,12 @@ import (
 // millions of these allocations (2705 MB flat / 35% of select4 cumulative).
 // The pool returns buffers sized to the previous batch's peak, so the
 // common case (same join shape, same row counts) reuses capacity.
+// REQ002029: reduced initial capacity from 4096 to 1024 (typical
+// batch size) to reduce pool miss allocation cost. The pool grows on
+// demand — larger buffers are still acquired when needed.
 var nljBlockDataBufPool = sync.Pool{
 	New: func() any {
-		buf := make([]Value, 0, 4096)
+		buf := make([]Value, 0, 1024)
 		return &buf
 	},
 }
