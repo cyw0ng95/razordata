@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"math"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -116,6 +117,9 @@ func EvalBatch(expr PS.Expr, batch *UT.Batch, params []any) []uint16 {
 			list[i] = v
 		}
 		return evalInListBatch(col, list, batch.Size)
+	case *PS.BetweenExpr:
+		// REQ002031: BETWEEN batch evaluation.
+		return evalBetweenBatch(e, batch, params)
 	default:
 		// Fallback: row-at-a-time
 		return evalRowFallback(expr, batch, params)
@@ -145,6 +149,21 @@ func evalBinaryBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
 	}
 	if e.Op == LX.T_OR {
 		return evalOrBatch(e, batch, params)
+	}
+
+	// REQ002031: IS NULL / IS NOT NULL batch evaluation.
+	if e.Op == LX.T_IS {
+		return evalIsBatch(e, batch, params)
+	}
+
+	// REQ002031: LIKE batch evaluation.
+	if e.Op == LX.T_LIKE {
+		return evalLikeBatch(e, batch, params)
+	}
+
+	// REQ002031: GLOB batch evaluation.
+	if e.Op == LX.T_GLOB {
+		return evalGlobBatch(e, batch, params)
 	}
 
 	// REQ002073: comparison expressions with non-column operands (e.g.
@@ -1439,6 +1458,12 @@ func evalBinaryBatchExpr(e *PS.BinaryExpr, batch *UT.Batch, params []any) UT.Col
 		return evalConcatBatchExpr(e, batch, params)
 	case LX.T_EQ, LX.T_NE, LX.T_LT, LX.T_LE, LX.T_GT, LX.T_GE:
 		return evalComparisonBatch(e, batch, params)
+	case LX.T_IS:
+		return evalIsBatchExpr(e, batch, params)
+	case LX.T_LIKE:
+		return evalLikeBatchExpr(e, batch, params)
+	case LX.T_GLOB:
+		return evalGlobBatchExpr(e, batch, params)
 	default:
 		return evalRowFallbackColumn(e, batch, params)
 	}
@@ -2934,4 +2959,508 @@ func writeHashToFNV(h hash.Hash64, v Value) {
 	default:
 		h.Write([]byte{0xff})
 	}
+}
+
+// ── REQ002031: IS NULL / IS NOT NULL / LIKE / GLOB / BETWEEN batch kernels ──
+
+// evalIsBatch handles T_IS for predicate evaluation (selection vector).
+// IS NULL: BinaryExpr{T_IS, col, NullLiteral}
+// IS NOT NULL: BinaryExpr{T_IS, col, UnaryExpr{T_NOT, NullLiteral}}
+func evalIsBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
+	// Check if right side is NullLiteral → IS NULL
+	if _, ok := e.Right.(*PS.NullLiteral); ok {
+		col, ok := ExtractColumnRef(e.Left, batch)
+		if !ok {
+			return evalRowFallback(e, batch, params)
+		}
+		return evalIsNullBatch(col, batch)
+	}
+	// Check if right side is UnaryExpr{T_NOT, NullLiteral} → IS NOT NULL
+	if u, ok := e.Right.(*PS.UnaryExpr); ok && u.Op == LX.T_NOT {
+		if _, ok := u.Operand.(*PS.NullLiteral); ok {
+			col, ok := ExtractColumnRef(e.Left, batch)
+			if !ok {
+				return evalRowFallback(e, batch, params)
+			}
+			return evalIsNotNullBatch(col, batch)
+		}
+	}
+	// Fallback for other IS expressions (e.g. IS TRUE, IS FALSE)
+	return evalRowFallback(e, batch, params)
+}
+
+// evalIsNullBatch returns selection vector of rows where the column is NULL.
+// If col.Nulls == nil, no rows are NULL → return empty []uint16{}.
+func evalIsNullBatch(col UT.Column, batch *UT.Batch) []uint16 {
+	n := batch.Size
+	if n == 0 {
+		return nil
+	}
+	if col.Nulls == nil {
+		return []uint16{}
+	}
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if i < len(col.Nulls) && col.Nulls[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+// evalIsNotNullBatch returns selection vector of rows where the column is NOT NULL.
+// If col.Nulls == nil, all rows are non-null → return nil (all match).
+func evalIsNotNullBatch(col UT.Column, batch *UT.Batch) []uint16 {
+	n := batch.Size
+	if n == 0 {
+		return nil
+	}
+	if col.Nulls == nil {
+		return nil // all rows match
+	}
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if i >= len(col.Nulls) || !col.Nulls[i] {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+// evalLikeBatch evaluates col LIKE pattern per row.
+// LIKE is case-insensitive (SQLite semantics): % matches any sequence, _ matches any single char.
+// Fast paths:
+//   - No % or _ → exact string comparison (case-insensitive)
+//   - Pattern is 'prefix%' → strings.HasPrefix (case-insensitive)
+//   - Otherwise → convert to regex
+func evalLikeBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
+	// Extract left column
+	leftCol, leftIsCol := ExtractColumnRef(e.Left, batch)
+	if !leftIsCol {
+		return evalRowFallback(e, batch, params)
+	}
+	if !isTextColumn(leftCol) {
+		return evalRowFallback(e, batch, params)
+	}
+
+	// Extract right pattern as a literal string
+	patternLit, isLit := evalLiteral(e.Right, params)
+	if !isLit {
+		return evalRowFallback(e, batch, params)
+	}
+	pattern, ok := patternLit.(string)
+	if !ok {
+		return evalRowFallback(e, batch, params)
+	}
+
+	n := batch.Size
+	if n == 0 {
+		return nil
+	}
+
+	data := leftCol.Data.Strs
+
+	// Fast path: no wildcards → exact match (case-insensitive)
+	if !strings.Contains(pattern, "%") && !strings.Contains(pattern, "_") {
+		sel := make([]uint16, 0, n)
+		patternLower := strings.ToLower(pattern)
+		for i := 0; i < n; i++ {
+			if isNull(leftCol, i) {
+				continue
+			}
+			if i < len(data) && strings.ToLower(data[i]) == patternLower {
+				sel = append(sel, uint16(i))
+			}
+		}
+		return sel
+	}
+
+	// Fast path: prefix pattern 'prefix%' → HasPrefix (case-insensitive)
+	if strings.HasSuffix(pattern, "%") && !strings.Contains(pattern[:len(pattern)-1], "%") && !strings.Contains(pattern, "_") {
+		prefix := pattern[:len(pattern)-1]
+		prefixLower := strings.ToLower(prefix)
+		sel := make([]uint16, 0, n)
+		for i := 0; i < n; i++ {
+			if isNull(leftCol, i) {
+				continue
+			}
+			if i < len(data) && strings.HasPrefix(strings.ToLower(data[i]), prefixLower) {
+				sel = append(sel, uint16(i))
+			}
+		}
+		return sel
+	}
+
+	// General path: convert LIKE pattern to regex
+	re := likeToRegex(pattern)
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(leftCol, i) {
+			continue
+		}
+		if i < len(data) && re.MatchString(strings.ToLower(data[i])) {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+// likeToRegex converts a SQL LIKE pattern to a case-insensitive regexp.
+// % → .*, _ → ., other regex chars are escaped.
+func likeToRegex(pattern string) *regexp.Regexp {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		ch := pattern[i]
+		switch ch {
+		case '%':
+			b.WriteString(".*")
+		case '_':
+			b.WriteString(".")
+		default:
+			// Escape regex meta-characters
+			if strings.ContainsRune(`\.+*?()|[]{}^$`, rune(ch)) {
+				b.WriteByte('\\')
+			}
+			b.WriteByte(ch)
+		}
+	}
+	b.WriteString("$")
+	return regexp.MustCompile(b.String())
+}
+
+// evalGlobBatch evaluates col GLOB pattern per row.
+// GLOB is case-sensitive (Unix glob rules): * matches any sequence, ? matches any single char.
+func evalGlobBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
+	// Extract left column
+	leftCol, leftIsCol := ExtractColumnRef(e.Left, batch)
+	if !leftIsCol {
+		return evalRowFallback(e, batch, params)
+	}
+	if !isTextColumn(leftCol) {
+		return evalRowFallback(e, batch, params)
+	}
+
+	// Extract right pattern as a literal string
+	patternLit, isLit := evalLiteral(e.Right, params)
+	if !isLit {
+		return evalRowFallback(e, batch, params)
+	}
+	pattern, ok := patternLit.(string)
+	if !ok {
+		return evalRowFallback(e, batch, params)
+	}
+
+	n := batch.Size
+	if n == 0 {
+		return nil
+	}
+
+	data := leftCol.Data.Strs
+
+	// Fast path: no wildcards → exact match (case-sensitive)
+	if !strings.Contains(pattern, "*") && !strings.Contains(pattern, "?") {
+		sel := make([]uint16, 0, n)
+		for i := 0; i < n; i++ {
+			if isNull(leftCol, i) {
+				continue
+			}
+			if i < len(data) && data[i] == pattern {
+				sel = append(sel, uint16(i))
+			}
+		}
+		return sel
+	}
+
+	// Fast path: prefix pattern 'prefix*' → HasPrefix (case-sensitive)
+	if strings.HasSuffix(pattern, "*") && !strings.Contains(pattern[:len(pattern)-1], "*") && !strings.Contains(pattern, "?") {
+		prefix := pattern[:len(pattern)-1]
+		sel := make([]uint16, 0, n)
+		for i := 0; i < n; i++ {
+			if isNull(leftCol, i) {
+				continue
+			}
+			if i < len(data) && strings.HasPrefix(data[i], prefix) {
+				sel = append(sel, uint16(i))
+			}
+		}
+		return sel
+	}
+
+	// General path: convert GLOB pattern to regex (case-sensitive)
+	re := globToRegex(pattern)
+	sel := make([]uint16, 0, n)
+	for i := 0; i < n; i++ {
+		if isNull(leftCol, i) {
+			continue
+		}
+		if i < len(data) && re.MatchString(data[i]) {
+			sel = append(sel, uint16(i))
+		}
+	}
+	return sel
+}
+
+// globToRegex converts a SQL GLOB pattern to a case-sensitive regexp.
+// * → .*, ? → ., other regex chars are escaped.
+func globToRegex(pattern string) *regexp.Regexp {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		ch := pattern[i]
+		switch ch {
+		case '*':
+			b.WriteString(".*")
+		case '?':
+			b.WriteString(".")
+		default:
+			// Escape regex meta-characters
+			if strings.ContainsRune(`\.+*?()|[]{}^$`, rune(ch)) {
+				b.WriteByte('\\')
+			}
+			b.WriteByte(ch)
+		}
+	}
+	b.WriteString("$")
+	return regexp.MustCompile(b.String())
+}
+
+// evalBetweenBatch evaluates expr BETWEEN low AND high.
+// Returns selection vector where expr >= low AND expr <= high.
+// Rows where any of expr/low/high is NULL are excluded.
+func evalBetweenBatch(e *PS.BetweenExpr, batch *UT.Batch, params []any) []uint16 {
+	n := batch.Size
+	if n == 0 {
+		return nil
+	}
+
+	// Evaluate expr, low, high as columns via EvalBatchExpr
+	exprCol := EvalBatchExpr(e.Expr, batch, params)
+	lowCol := EvalBatchExpr(e.Low, batch, params)
+	highCol := EvalBatchExpr(e.High, batch, params)
+
+	// Determine the comparison type
+	typ := exprCol.Type
+	if typ == LX.T_NULL {
+		return []uint16{}
+	}
+
+	sel := make([]uint16, 0, n)
+	switch typ {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		exprInts := exprCol.Data.Ints
+		lowInts := lowCol.Data.Ints
+		highInts := highCol.Data.Ints
+		// Convert float bounds to int if needed
+		for i := 0; i < n; i++ {
+			if isNull(exprCol, i) || isNull(lowCol, i) || isNull(highCol, i) {
+				continue
+			}
+			var lo, hi int64
+			if lowCol.Type == LX.T_FLOAT_KW && i < len(lowCol.Data.Floats) {
+				lo = int64(lowCol.Data.Floats[i])
+			} else if i < len(lowInts) {
+				lo = lowInts[i]
+			}
+			if highCol.Type == LX.T_FLOAT_KW && i < len(highCol.Data.Floats) {
+				hi = int64(highCol.Data.Floats[i])
+			} else if i < len(highInts) {
+				hi = highInts[i]
+			}
+			var val int64
+			if i < len(exprInts) {
+				val = exprInts[i]
+			}
+			if val >= lo && val <= hi {
+				sel = append(sel, uint16(i))
+			}
+		}
+	case LX.T_FLOAT_KW:
+		exprFloats := exprCol.Data.Floats
+		for i := 0; i < n; i++ {
+			if isNull(exprCol, i) || isNull(lowCol, i) || isNull(highCol, i) {
+				continue
+			}
+			var val, lo, hi float64
+			if i < len(exprFloats) {
+				val = exprFloats[i]
+			}
+			switch lowCol.Type {
+			case LX.T_INT_KW, LX.T_BIGINT:
+				if i < len(lowCol.Data.Ints) {
+					lo = float64(lowCol.Data.Ints[i])
+				}
+			case LX.T_FLOAT_KW:
+				if i < len(lowCol.Data.Floats) {
+					lo = lowCol.Data.Floats[i]
+				}
+			}
+			switch highCol.Type {
+			case LX.T_INT_KW, LX.T_BIGINT:
+				if i < len(highCol.Data.Ints) {
+					hi = float64(highCol.Data.Ints[i])
+				}
+			case LX.T_FLOAT_KW:
+				if i < len(highCol.Data.Floats) {
+					hi = highCol.Data.Floats[i]
+				}
+			}
+			if val >= lo && val <= hi {
+				sel = append(sel, uint16(i))
+			}
+		}
+	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+		exprStrs := exprCol.Data.Strs
+		for i := 0; i < n; i++ {
+			if isNull(exprCol, i) || isNull(lowCol, i) || isNull(highCol, i) {
+				continue
+			}
+			var val, lo, hi string
+			if i < len(exprStrs) {
+				val = exprStrs[i]
+			}
+			switch lowCol.Type {
+			case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+				if i < len(lowCol.Data.Strs) {
+					lo = lowCol.Data.Strs[i]
+				}
+			}
+			switch highCol.Type {
+			case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+				if i < len(highCol.Data.Strs) {
+					hi = highCol.Data.Strs[i]
+				}
+			}
+			if val >= lo && val <= hi {
+				sel = append(sel, uint16(i))
+			}
+		}
+	default:
+		// Unsupported type: fallback
+		return evalRowFallback(e, batch, params)
+	}
+	return sel
+}
+
+// ── REQ002031: IS/LIKE/GLOB batch expression (column-returning) kernels ──
+
+// evalIsBatchExpr evaluates T_IS expressions over a batch, returning a
+// boolean column (for EvalBatchExpr path). REQ002031.
+func evalIsBatchExpr(e *PS.BinaryExpr, batch *UT.Batch, params []any) UT.Column {
+	n := batch.Size
+	if n == 0 {
+		return UT.Column{Type: LX.T_BOOL}
+	}
+	out := UT.Column{
+		Name: "",
+		Type: LX.T_BOOL,
+		Data: UT.ColumnData{Bools: make([]bool, n)},
+	}
+
+	// Check if right side is NullLiteral → IS NULL
+	if _, ok := e.Right.(*PS.NullLiteral); ok {
+		leftCol, leftIsCol := ExtractColumnRef(e.Left, batch)
+		if !leftIsCol {
+			return evalRowFallbackColumn(e, batch, params)
+		}
+		for i := 0; i < n; i++ {
+			if isNull(leftCol, i) {
+				out.Data.Bools[i] = true
+			}
+		}
+		return out
+	}
+
+	// Check if right side is UnaryExpr{T_NOT, NullLiteral} → IS NOT NULL
+	if u, ok := e.Right.(*PS.UnaryExpr); ok && u.Op == LX.T_NOT {
+		if _, ok := u.Operand.(*PS.NullLiteral); ok {
+			leftCol, leftIsCol := ExtractColumnRef(e.Left, batch)
+			if !leftIsCol {
+				return evalRowFallbackColumn(e, batch, params)
+			}
+			for i := 0; i < n; i++ {
+				if !isNull(leftCol, i) {
+					out.Data.Bools[i] = true
+				}
+			}
+			return out
+		}
+	}
+
+	// Fallback for other IS expressions
+	return evalRowFallbackColumn(e, batch, params)
+}
+
+// evalLikeBatchExpr evaluates T_LIKE expressions over a batch, returning a
+// boolean column (for EvalBatchExpr path). REQ002031.
+func evalLikeBatchExpr(e *PS.BinaryExpr, batch *UT.Batch, params []any) UT.Column {
+	sel := evalLikeBatch(e, batch, params)
+	n := batch.Size
+	out := UT.Column{
+		Name: "",
+		Type: LX.T_BOOL,
+		Data: UT.ColumnData{Bools: make([]bool, n)},
+	}
+	if sel == nil {
+		for i := 0; i < n; i++ {
+			out.Data.Bools[i] = true
+		}
+	} else {
+		for _, idx := range sel {
+			out.Data.Bools[idx] = true
+		}
+	}
+
+	// Mark NULL rows (left column is NULL) as NULL in output
+	leftCol, leftIsCol := ExtractColumnRef(e.Left, batch)
+	if leftIsCol {
+		for i := 0; i < n; i++ {
+			if isNull(leftCol, i) {
+				if out.Nulls == nil {
+					out.Nulls = make([]bool, n)
+				}
+				out.Nulls[i] = true
+				out.Data.Bools[i] = false
+			}
+		}
+	}
+
+	return out
+}
+
+// evalGlobBatchExpr evaluates T_GLOB expressions over a batch, returning a
+// boolean column (for EvalBatchExpr path). REQ002031.
+func evalGlobBatchExpr(e *PS.BinaryExpr, batch *UT.Batch, params []any) UT.Column {
+	sel := evalGlobBatch(e, batch, params)
+	n := batch.Size
+	out := UT.Column{
+		Name: "",
+		Type: LX.T_BOOL,
+		Data: UT.ColumnData{Bools: make([]bool, n)},
+	}
+	if sel == nil {
+		for i := 0; i < n; i++ {
+			out.Data.Bools[i] = true
+		}
+	} else {
+		for _, idx := range sel {
+			out.Data.Bools[idx] = true
+		}
+	}
+
+	// Mark NULL rows (left column is NULL) as NULL in output
+	leftCol, leftIsCol := ExtractColumnRef(e.Left, batch)
+	if leftIsCol {
+		for i := 0; i < n; i++ {
+			if isNull(leftCol, i) {
+				if out.Nulls == nil {
+					out.Nulls = make([]bool, n)
+				}
+				out.Nulls[i] = true
+				out.Data.Bools[i] = false
+			}
+		}
+	}
+
+	return out
 }
