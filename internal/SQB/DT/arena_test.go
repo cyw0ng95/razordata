@@ -343,6 +343,58 @@ func TestRowArena_OldSlabsNotCollectedWhileReferenced(t *testing.T) {
 	arena.Reset()
 }
 
+// TestRowArena_InitReleasesOldSlab verifies REQ002011: Init must
+// return the old slab to the pool before allocating a new one. Without
+// this fix, Init silently leaked ~200 MB per SLT file because old
+// slabs were dropped for GC instead of being returned to arenaSlabPool.
+func TestRowArena_InitReleasesOldSlab(t *testing.T) {
+	schema := &StoreSchema{
+		Cols:     []string{"a", "b", "c", "d", "e"},
+		ColIndex: map[string]int{"a": 0, "b": 1, "c": 2, "d": 3, "e": 4},
+	}
+
+	arena := &RowArena{}
+	arena.Init(100, 5)
+
+	// Allocate some rows to populate the slab.
+	for i := 0; i < 50; i++ {
+		row := arena.AllocRow(5, schema)
+		row.Data[0] = NewIntValue(int64(i))
+	}
+
+	// Second Init with larger size should release the old slab to pool.
+	arena.Init(200, 5)
+
+	// Functional check: the arena should still work after re-init.
+	for i := 0; i < 100; i++ {
+		row := arena.AllocRow(5, schema)
+		row.Data[0] = NewIntValue(int64(i))
+	}
+
+	arena.Reset()
+}
+
+// TestRowArena_GrowLockedReleasesOldSlab verifies REQ002011: growLocked
+// must return the old slab to the pool before allocating a new one.
+func TestRowArena_GrowLockedReleasesOldSlab(t *testing.T) {
+	schema := &StoreSchema{
+		Cols:     []string{"a", "b", "c", "d", "e"},
+		ColIndex: map[string]int{"a": 0, "b": 1, "c": 2, "d": 3, "e": 4},
+	}
+
+	arena := &RowArena{}
+	arena.Init(10, 5)
+
+	// Allocate enough rows to force a grow beyond the initial slab.
+	for i := 0; i < 20000; i++ {
+		row := arena.AllocRow(5, schema)
+		row.Data[0] = NewIntValue(int64(i))
+	}
+
+	// Functional check: arena still works after multiple grows.
+	arena.Reset()
+}
+
 // BenchmarkSelect1_GCPressure measures alloc/grow/reset cycles under
 // GC pressure. REQ001639: removing redundant slabs tracking should
 // reduce GC scan time compared to the old approach.

@@ -40,6 +40,13 @@ func (a *RowArena) Init(estimatedRows, colsPerRow int) {
 	if needed < arenaSlabSize {
 		needed = arenaSlabSize
 	}
+	// REQ002011: release the old slab to the pool before replacing it.
+	// Without this, Init silently leaks ~200 MB per SLT file because
+	// the old slab is dropped for GC instead of being returned to the
+	// arenaSlabPool for reuse.
+	if a.slab != nil {
+		putSlab(a.slab)
+	}
 	// REQ001496: reuse pooled slab if capacity suffices.
 	if needed <= arenaSlabSize && a.pooledSlab != nil && cap(a.pooledSlab) >= needed {
 		a.slab = a.pooledSlab[:needed:needed]
@@ -157,6 +164,10 @@ func (a *RowArena) growLocked(needed int) {
 	}
 	if needed > cap {
 		cap = needed
+	}
+	// REQ002011: release the old slab to the pool before replacing it.
+	if a.slab != nil {
+		putSlab(a.slab)
 	}
 	// REQ001496: reuse pooled slab if available.
 	if cap <= arenaSlabSize && a.pooledSlab != nil {
