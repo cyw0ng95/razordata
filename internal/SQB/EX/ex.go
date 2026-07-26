@@ -715,10 +715,10 @@ func (e *Executor) planWithCache(stmt PS.Stmt) (*pl.PlanResult, error) {
 			// is reusable. Without this, the second call to QueryAll for
 			// the same SQL returns 0 rows.
 			fresh := &pl.PlanResult{
-				Root:    AD.NewAdaptiveOp(cached.Root.(*AD.AdaptiveOp).Child(), key),
-				Cost:    cached.Cost,
-				MemoKey: cached.MemoKey,
-			}
+					Root:    AD.NewAdaptiveOp(cached.Root.(*AD.AdaptiveOp).Child(), key),
+					Cost:    cached.Cost,
+					MemoKey: key, // REQ002060: use current key, not stale cached.MemoKey
+				}
 			replaceLiteralsOnTree(fresh.Root, params)
 			return fresh, nil
 		}
