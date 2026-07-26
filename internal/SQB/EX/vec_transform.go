@@ -466,22 +466,49 @@ func resolveAggDef(expr PS.Expr, child DT.Operator) (AG.AggDef, bool) {
 		}
 	}
 	def := AG.AggDef{Kind: kind, Separator: sep, Distinct: af.Distinct}
-	switch arg := af.Arg.(type) {
+	return resolveAggArg(af.Arg, child, def, isStringAgg)
+}
+
+// resolveAggArg resolves the aggregate argument expression into an AggDef.
+// REQ002030: unwraps *PS.UnaryExpr (+, -) and *PS.CastExpr around the
+// underlying *PS.Ident. Chains like -(-col0) are handled by toggling Negate.
+func resolveAggArg(arg PS.Expr, child DT.Operator, def AG.AggDef, isStringAgg bool) (AG.AggDef, bool) {
+	switch a := arg.(type) {
 	case *PS.StarExpr:
 		// COUNT(*) uses Col: -1 (no column needed)
 		return def, true
 	case *PS.Ident:
-		idx, ok := resolveColumnIndex(child, arg.Name)
+		idx, ok := resolveColumnIndex(child, a.Name)
 		if !ok {
 			return AG.AggDef{}, false
 		}
 		def.Col = idx
 		return def, true
-	default:
-		// REQ001993: GROUP_CONCAT/STRING_AGG with expression args (e.g., CAST) not yet supported
+	case *PS.UnaryExpr:
+		// REQ002030: unwrap unary +/- around column reference.
+		// +x is a no-op; -x sets Negate flag (toggled for chains).
+		if isStringAgg {
+			// Negate is meaningless for string aggregates.
+			return AG.AggDef{}, false
+		}
+		switch a.Op {
+		case LX.T_PLUS:
+			return resolveAggArg(a.Operand, child, def, isStringAgg)
+		case LX.T_MINUS:
+			def.Negate = !def.Negate // toggle for -(-x) chains
+			return resolveAggArg(a.Operand, child, def, isStringAgg)
+		default:
+			// ~x (bitwise NOT) not supported.
+			return AG.AggDef{}, false
+		}
+	case *PS.CastExpr:
+		// REQ002030: unwrap CAST(expr AS type) when the inner expr
+		// is a resolvable column reference or unary expression.
 		if isStringAgg {
 			return AG.AggDef{}, false
 		}
+		return resolveAggArg(a.Expr, child, def, isStringAgg)
+	default:
 		return AG.AggDef{}, false
 	}
 }

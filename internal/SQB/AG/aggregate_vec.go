@@ -640,11 +640,15 @@ const (
 // Col is the source column index in the input batch (use -1 for COUNT(*)).
 // Separator is the separator string for GROUP_CONCAT/STRING_AGG.
 // Distinct controls deduplication for GROUP_CONCAT.
+// Negate is set when the aggregate argument is a unary minus (e.g. SUM(-col0)).
+// REQ002030: the value is pre-negated during accumulation so that SUM/MIN/MAX/AVG
+// produce correct results without changing the result-construction path.
 type AggDef struct {
 	Kind      AggKind
 	Col       int
 	Separator string
 	Distinct  bool
+	Negate    bool
 }
 
 // aggPayload holds the accumulator state for one hash table slot.
@@ -654,10 +658,10 @@ type aggPayload struct {
 	Min         int64
 	Max         int64
 	HasValue    bool
-	StrParts    []string           // REQ001993: GROUP_CONCAT/STRING_AGG accumulator
-	StrSep      string             // REQ001993: separator for string concat
-	StrSeen     map[any]bool       // REQ001993: DISTINCT dedup for GROUP_CONCAT
-	StrDistinct bool               // REQ001993: whether DISTINCT is enabled
+	StrParts    []string     // REQ001993: GROUP_CONCAT/STRING_AGG accumulator
+	StrSep      string       // REQ001993: separator for string concat
+	StrSeen     map[any]bool // REQ001993: DISTINCT dedup for GROUP_CONCAT
+	StrDistinct bool         // REQ001993: whether DISTINCT is enabled
 	// REQ001730: per-DISTINCT-agg dedup sets for numeric aggregates
 	// (SUM/COUNT/MIN/MAX/AVG). Lazily allocated when an aggregate with
 	// Distinct=true processes its first row.
@@ -681,9 +685,9 @@ type VectorizedHashAggregate struct {
 	// hashes, validRows, plus the redundant keysToPass/hashesToPass
 	// copies). Capacity grows monotonically; cleared between
 	// batches by re-slicing to 0.
-	scratchKeys    []int64
-	scratchHashes  []uint64
-	scratchValid   []int
+	scratchKeys   []int64
+	scratchHashes []uint64
+	scratchValid  []int
 }
 
 // hashInt64 computes a uint64 hash of an int64 key using
@@ -904,6 +908,10 @@ func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot in
 				continue
 			}
 			val := col.Data.Ints[src]
+			// REQ002030: pre-negate value when aggregate arg is unary minus.
+			if def.Negate {
+				val = -val
+			}
 			// REQ001730: DISTINCT dedup for numeric aggregates.
 			if def.Distinct {
 				if di >= len(p.DistinctSeen) {
@@ -995,6 +1003,10 @@ func (a *VectorizedHashAggregate) updateAggregates(batch *UT.Batch, src, slot in
 			continue
 		}
 		val := col.Data.Ints[src]
+		// REQ002030: pre-negate value when aggregate arg is unary minus.
+		if def.Negate {
+			val = -val
+		}
 		// REQ001730: DISTINCT dedup for numeric aggregates.
 		if def.Distinct {
 			if di >= len(p.DistinctSeen) {
