@@ -1550,20 +1550,10 @@ func evalArithBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) UT.Column {
 	// Both int64 → int64 kernel.
 	if leftCol.Type == LX.T_INT_KW || leftCol.Type == LX.T_BIGINT {
 		if rightCol.Type == LX.T_INT_KW || rightCol.Type == LX.T_BIGINT {
-			var op func(a, b int64) int64
 			switch e.Op {
-			case LX.T_PLUS:
-				op = func(a, b int64) int64 { return a + b }
-			case LX.T_MINUS:
-				op = func(a, b int64) int64 { return a - b }
-			case LX.T_STAR:
-				op = func(a, b int64) int64 { return a * b }
-			case LX.T_SLASH, LX.T_DIV:
-				op = func(a, b int64) int64 { return a / b }
-			}
-			if op != nil {
+			case LX.T_PLUS, LX.T_MINUS, LX.T_STAR, LX.T_SLASH, LX.T_DIV:
 				isDiv := e.Op == LX.T_SLASH || e.Op == LX.T_DIV
-				return evalArithIntBatch(leftCol, rightCol, batch, op, isDiv)
+				return evalArithIntBatch(leftCol, rightCol, batch, e.Op, isDiv)
 			}
 		}
 	}
@@ -1603,7 +1593,9 @@ func isTextColumn(col UT.Column) bool {
 // evalArithIntBatch evaluates an int64 binary arithmetic expression over
 // two columns, respecting the batch's selection vector and propagating NULLs.
 // When isDiv is true, zero divisors produce NULL in the output.
-func evalArithIntBatch(left, right UT.Column, batch *UT.Batch, op func(a, b int64) int64, isDiv bool) UT.Column {
+// REQ002040: overflow-checked arithmetic — matches NumericArithValue logic.
+// On overflow the output cell is set to NULL.
+func evalArithIntBatch(left, right UT.Column, batch *UT.Batch, op LX.TokenType, isDiv bool) UT.Column {
 	n := batch.LogicalSize()
 	out := UT.Column{
 		Name: "",
@@ -1614,42 +1606,112 @@ func evalArithIntBatch(left, right UT.Column, batch *UT.Batch, op func(a, b int6
 		return out
 	}
 
+	// overflowAdd checks a+b for int64 overflow.
+	overflowAdd := func(a, b int64) bool {
+		return (b > 0 && a > math.MaxInt64-b) || (b < 0 && a < math.MinInt64-b)
+	}
+	// overflowSub checks a-b for int64 overflow.
+	overflowSub := func(a, b int64) bool {
+		return (b < 0 && a > math.MaxInt64+b) || (b > 0 && a < math.MinInt64+b)
+	}
+	// overflowMul checks a*b for int64 overflow (matches NumericArithValue).
+	overflowMul := func(a, b int64) bool {
+		if a == 0 || b == 0 {
+			return false
+		}
+		if a == -1 && b == math.MinInt64 {
+			return true
+		}
+		if b == -1 && a == math.MinInt64 {
+			return true
+		}
+		if a > 0 && b > 0 && a > math.MaxInt64/b {
+			return true
+		}
+		if a < 0 && b < 0 && a < math.MaxInt64/b {
+			return true
+		}
+		if (a > 0 && b < 0 && b < math.MinInt64/a) || (a < 0 && b > 0 && a < math.MinInt64/b) {
+			return true
+		}
+		return false
+	}
+
+	setOutNull := func(i int) {
+		if out.Nulls == nil {
+			out.Nulls = make([]bool, batch.Size)
+		}
+		out.Nulls[i] = true
+	}
+
 	if batch.Sel != nil {
 		for _, idx := range batch.Sel {
 			i := int(idx)
 			if isNull(left, i) || isNull(right, i) {
-				if out.Nulls == nil {
-					out.Nulls = make([]bool, batch.Size)
-				}
-				out.Nulls[i] = true
+				setOutNull(i)
 				continue
 			}
 			if isDiv && right.Data.Ints[i] == 0 {
-				if out.Nulls == nil {
-					out.Nulls = make([]bool, batch.Size)
-				}
-				out.Nulls[i] = true
+				setOutNull(i)
 				continue
 			}
-			out.Data.Ints[i] = op(left.Data.Ints[i], right.Data.Ints[i])
+			a, b := left.Data.Ints[i], right.Data.Ints[i]
+			switch op {
+			case LX.T_PLUS:
+				if overflowAdd(a, b) {
+					setOutNull(i)
+					continue
+				}
+				out.Data.Ints[i] = a + b
+			case LX.T_MINUS:
+				if overflowSub(a, b) {
+					setOutNull(i)
+					continue
+				}
+				out.Data.Ints[i] = a - b
+			case LX.T_STAR:
+				if overflowMul(a, b) {
+					setOutNull(i)
+					continue
+				}
+				out.Data.Ints[i] = a * b
+			case LX.T_SLASH, LX.T_DIV:
+				out.Data.Ints[i] = a / b
+			}
 		}
 	} else {
 		for i := 0; i < n; i++ {
 			if isNull(left, i) || isNull(right, i) {
-				if out.Nulls == nil {
-					out.Nulls = make([]bool, batch.Size)
-				}
-				out.Nulls[i] = true
+				setOutNull(i)
 				continue
 			}
 			if isDiv && right.Data.Ints[i] == 0 {
-				if out.Nulls == nil {
-					out.Nulls = make([]bool, batch.Size)
-				}
-				out.Nulls[i] = true
+				setOutNull(i)
 				continue
 			}
-			out.Data.Ints[i] = op(left.Data.Ints[i], right.Data.Ints[i])
+			a, b := left.Data.Ints[i], right.Data.Ints[i]
+			switch op {
+			case LX.T_PLUS:
+				if overflowAdd(a, b) {
+					setOutNull(i)
+					continue
+				}
+				out.Data.Ints[i] = a + b
+			case LX.T_MINUS:
+				if overflowSub(a, b) {
+					setOutNull(i)
+					continue
+				}
+				out.Data.Ints[i] = a - b
+			case LX.T_STAR:
+				if overflowMul(a, b) {
+					setOutNull(i)
+					continue
+				}
+				out.Data.Ints[i] = a * b
+			case LX.T_SLASH, LX.T_DIV:
+				out.Data.Ints[i] = a / b
+			}
 		}
 	}
 	return out
