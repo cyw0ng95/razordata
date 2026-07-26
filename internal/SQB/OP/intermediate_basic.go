@@ -167,7 +167,7 @@ func (fp *FilterProject) Next(ctx context.Context) (Row, error) {
 		} else {
 			fp.dataBuf = fp.dataBuf[:required]
 		}
-	dataSlice := fp.dataBuf[off : off+fp.dataPerRow : off+fp.dataPerRow]
+		dataSlice := fp.dataBuf[off : off+fp.dataPerRow : off+fp.dataPerRow]
 		out := Row{
 			Cols:     fp.prefixCols,
 			Data:     dataSlice,
@@ -249,11 +249,75 @@ func (fp *FilterProject) ReplaceLiterals(vals []any) {
 // instances. Filters are created per query and hold batchBuf/batchEmit
 // slices; returning them to this pool in Close() allows the next query's
 // Filter to reuse the capacity instead of re-allocating.
+// REQ002014: retainedBatchBufs keeps a small set of buffers alive across
+// GC cycles. sync.Pool clears on every GC, which caused high miss rates
+// for large (2048-row) buffers — they got collected faster than they
+// were refilled under GC pressure. The retained slice holds up to
+// retainedBatchBufCount buffers permanently; Get first tries sync.Pool,
+// then retained, then allocates. Put fills retained first, then pool.
 var batchBufPool = sync.Pool{
 	New: func() any {
 		b := make([]Row, 0, filterBatchSize)
 		return &b
 	},
+}
+
+var retainedBatchBufs []*[]Row
+var retainedBatchBufMu sync.Mutex
+
+const retainedBatchBufCount = 8
+
+// getBatchBuf gets a buffer from the pool, trying retained buffers first
+// (which survive GC), then sync.Pool, then allocating fresh. REQ002014.
+func getBatchBuf() *[]Row {
+	retainedBatchBufMu.Lock()
+	if n := len(retainedBatchBufs); n > 0 {
+		b := retainedBatchBufs[n-1]
+		retainedBatchBufs = retainedBatchBufs[:n-1]
+		retainedBatchBufMu.Unlock()
+		*b = (*b)[:0]
+		return b
+	}
+	retainedBatchBufMu.Unlock()
+	if b, ok := batchBufPool.Get().(*[]Row); ok && b != nil {
+		*b = (*b)[:0]
+		return b
+	}
+	b := make([]Row, 0, filterBatchSize)
+	return &b
+}
+
+// putBatchBuf returns a buffer: fills retained first (up to cap), then
+// sync.Pool. Only buffers with cap >= filterBatchSize are kept.
+// REQ002014.
+func putBatchBuf(b *[]Row) {
+	if cap(*b) < filterBatchSize {
+		return
+	}
+	*b = (*b)[:0]
+	retainedBatchBufMu.Lock()
+	if len(retainedBatchBufs) < retainedBatchBufCount {
+		retainedBatchBufs = append(retainedBatchBufs, b)
+		retainedBatchBufMu.Unlock()
+		return
+	}
+	retainedBatchBufMu.Unlock()
+	batchBufPool.Put(b)
+}
+
+// WarmFilterBatchPool pre-allocates n filter batch buffers and places
+// them in the retained set to eliminate cold-start pool misses.
+// REQ002014.
+func WarmFilterBatchPool(n int) {
+	if n <= 0 {
+		return
+	}
+	retainedBatchBufMu.Lock()
+	defer retainedBatchBufMu.Unlock()
+	for i := 0; i < n && len(retainedBatchBufs) < retainedBatchBufCount; i++ {
+		b := make([]Row, 0, filterBatchSize)
+		retainedBatchBufs = append(retainedBatchBufs, &b)
+	}
 }
 
 // REQ001091: projectDataBufPool reuses Project.dataBuf slices across
@@ -382,17 +446,10 @@ func NewFilter(child Operator, predicate PS.Expr, schema *DT.StoreSchema) *Filte
 		}
 	}
 
-	// REQ000869: try to reuse batch buffers from the pool.
-	buf, _ := batchBufPool.Get().(*[]Row)
-	emit, _ := batchBufPool.Get().(*[]Row)
-	if buf == nil {
-		buf = new([]Row)
-		*buf = make([]Row, 0, filterBatchSize)
-	}
-	if emit == nil {
-		emit = new([]Row)
-		*emit = make([]Row, 0, filterBatchSize)
-	}
+	// REQ002014: use getBatchBuf which checks retained buffers first
+	// (GC-resistant), then sync.Pool, then allocates fresh.
+	buf := getBatchBuf()
+	emit := getBatchBuf()
 	return &Filter{
 		child:     child,
 		predicate: predicate,
@@ -784,20 +841,20 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 				}
 			}
 			if r.Data != nil {
-			r.Data = append([]Value(nil), r.Data...)
-		}
-		// REQ001583: deep-copy StoreKey — it aliases the SeqScan's
-		// internal iterator buffer which is only valid until the
-		// next Next() call. Without the copy, ExtractPKForUpdate
-		// sees an empty StoreKey and allocates a new synthetic
-		// rowid for every UPDATE, creating new rows instead of
-		// overwriting old ones.
-		if r.StoreKey != nil {
-			sk := make([]byte, len(r.StoreKey))
-			copy(sk, r.StoreKey)
-			r.StoreKey = sk
-		}
-		f.batchEmit = append(f.batchEmit, r)
+				r.Data = append([]Value(nil), r.Data...)
+			}
+			// REQ001583: deep-copy StoreKey — it aliases the SeqScan's
+			// internal iterator buffer which is only valid until the
+			// next Next() call. Without the copy, ExtractPKForUpdate
+			// sees an empty StoreKey and allocates a new synthetic
+			// rowid for every UPDATE, creating new rows instead of
+			// overwriting old ones.
+			if r.StoreKey != nil {
+				sk := make([]byte, len(r.StoreKey))
+				copy(sk, r.StoreKey)
+				r.StoreKey = sk
+			}
+			f.batchEmit = append(f.batchEmit, r)
 		}
 	}
 	return nil
@@ -805,15 +862,10 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 
 func (f *Filter) Close() error {
 	f.closed.Store(true)
-	// REQ000869: return batch buffers to the pool for reuse.
-	if cap(f.batchBuf) >= filterBatchSize {
-		f.batchBuf = f.batchBuf[:0]
-		batchBufPool.Put(&f.batchBuf)
-	}
-	if cap(f.batchEmit) >= filterBatchSize {
-		f.batchEmit = f.batchEmit[:0]
-		batchBufPool.Put(&f.batchEmit)
-	}
+	// REQ002014: use putBatchBuf which fills retained set first (GC-resistant),
+	// then sync.Pool. Only buffers with cap >= filterBatchSize are kept.
+	putBatchBuf(&f.batchBuf)
+	putBatchBuf(&f.batchEmit)
 	return f.child.Close()
 }
 
@@ -831,19 +883,19 @@ func (f *Filter) Reset(ctx context.Context) error {
 }
 
 type Project struct {
-	child     Operator
-	cols      []PS.Expr
-	params    []any
-	prefixCols  []string
-	prefixTypes []LX.TokenType // REQ001184: output row type metadata
-	colIndex    map[string]int
-	compiledExprs  []func(in *Row) (Value, error)
-	dataBuf         []Value
-	dataPerRow      int
-	execCtx    *pl.ExecContext
+	child         Operator
+	cols          []PS.Expr
+	params        []any
+	prefixCols    []string
+	prefixTypes   []LX.TokenType // REQ001184: output row type metadata
+	colIndex      map[string]int
+	compiledExprs []func(in *Row) (Value, error)
+	dataBuf       []Value
+	dataPerRow    int
+	execCtx       *pl.ExecContext
 	// REQ001567: reusable buffer for function call argument allocation.
 	fnArgBuf []any
-	closed    atomic.Bool
+	closed   atomic.Bool
 }
 
 func (p *Project) Child() Operator               { return p.child }
@@ -867,16 +919,15 @@ func NewProject(child Operator, cols []PS.Expr) *Project {
 	} else {
 		dataBufPtr = new([]Value)
 	}
-	// REQ001288: pre-allocate to hold at least 1024 rows worth of data
-	// to avoid growth allocations for typical queries. The pool provides
-	// capacity 512, which may be insufficient for larger result sets.
-	dataPerRow := len(cols)
-	preallocSize := dataPerRow * 1024
-	if preallocSize < projectDataBufChunkSize {
-		preallocSize = projectDataBufChunkSize
-	}
-	if cap(dataBuf) < preallocSize {
-		dataBuf = make([]Value, 0, preallocSize)
+	// REQ002015: don't pre-allocate beyond what the pool provides.
+	// Previously we pre-allocated dataPerRow * 1024 values, which for
+	// 20+ column queries wasted 20K+ values and discarded the 512-value
+	// pooled buffer. Now we use the pool buffer as-is (or a small default
+	// if the pool is empty) and let dataBuf grow lazily in Next() when
+	// more capacity is needed. This eliminates the discard and reduces
+	// NewProject allocations to near-zero when the pool is warm.
+	if cap(dataBuf) == 0 {
+		dataBuf = make([]Value, 0, projectDataBufChunkSize)
 	}
 	// REQ001707: acquire prefixCols from pool to avoid repeated
 	// make([]string, N) heap allocations across queries. Resize the
@@ -1783,7 +1834,7 @@ func compileBinaryArith(v *PS.BinaryExpr) func(*Row) Value {
 	if left == nil || right == nil {
 		return nil
 	}
-switch v.Op {
+	switch v.Op {
 	case LX.T_PLUS:
 		return func(row *Row) Value {
 			a, b := left(row), right(row)

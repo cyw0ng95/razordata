@@ -98,14 +98,12 @@ func drainBatchProducer(ctx context.Context, bp UT.BatchProducer, execCtx *DT.Ex
 // 1 row), so a 256-row pre-alloc (EngineBatchSize) was almost entirely
 // wasted (250MB flat / ~20% of BenchmarkSLT_Update). For larger result
 // sets, append grows the slice amortized. Plain `min` builtin (Go 1.21+).
+// REQ002016: bump initial cap from 64 → EngineBatchSize (512) to
+// eliminate growslice churn for 100-200 row aggregate result sets.
+// The row-based path sees enough medium-sized results that the 64-row
+// cap caused 134 MB of growslice allocs via repeated doubling.
 func drainPlanRows(ctx context.Context, root pl.Operator, execCtx *DT.ExecContext) ([]DT.Row, error) {
-	// REQ001973: bump initial capacity from 8 → 64 to reduce growslice churn.
-	// The 8-row cap caused ~752 MB flat allocs via repeated doubling (8→16→32→64→…).
-	initialCap := OP.EngineBatchSize()
-	if initialCap > 64 {
-		initialCap = 64
-	}
-	out := make([]DT.Row, 0, initialCap)
+	out := make([]DT.Row, 0, OP.EngineBatchSize())
 	for {
 		row, err := root.Next(ctx)
 		if err != nil {

@@ -408,6 +408,7 @@ func NewExecutor() *Executor {
 	e.planner.SetPool(e.pool)
 	e.initStmtCache(256)
 	e.initPlanCache(128)
+	OP.WarmFilterBatchPool(4)
 	return e
 }
 
@@ -422,6 +423,7 @@ func NewExecutorWithPlanner(pl *Planner) *Executor {
 	pl.SetPool(e.pool)
 	e.initStmtCache(256)
 	e.initPlanCache(128)
+	OP.WarmFilterBatchPool(4)
 	return e
 }
 
@@ -438,6 +440,7 @@ func NewExecutorWithEngine(store DT.Store) *Executor {
 	e.initStmtCache(256)
 	e.initPlanCache(128)
 	e.initTextPlanCache(1000)
+	OP.WarmFilterBatchPool(4)
 	return e
 }
 
