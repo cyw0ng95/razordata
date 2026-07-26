@@ -207,7 +207,6 @@ func TestAutoCoveringIndex_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("aci_basic", []string{"pk", "a", "z"}, "pk")
@@ -256,7 +255,6 @@ func TestAutoCoveringIndex_MultiCol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("aci_multi", []string{"pk", "a", "b", "c"}, "pk")
@@ -306,7 +304,6 @@ func TestAutoCoveringIndex_ExplainContainsAnnotated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("aci_explain", []string{"pk", "a"}, "pk")

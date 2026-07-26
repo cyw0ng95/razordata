@@ -608,8 +608,7 @@ func TestHashJoin_HardCapPreventsOOM(t *testing.T) {
 // REQ001361.
 func TestJoinUsing_StarExpands(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.Exec(ctx, "CREATE TABLE t1 (id INT, v INT)")

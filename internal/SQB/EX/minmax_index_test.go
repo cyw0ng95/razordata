@@ -25,7 +25,6 @@ func TestMinMax_Indexed_Correctness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t_mm", []string{"id", "a"}, "id")
@@ -73,7 +72,6 @@ func TestMinMax_Indexed_PlanUsesIndex(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t_mm_p", []string{"id", "a"}, "id")
@@ -115,7 +113,6 @@ func TestMinMax_NoIndexFallback(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t_mm_ni", []string{"id", "a"}, "id")

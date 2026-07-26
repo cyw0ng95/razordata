@@ -12,8 +12,7 @@ import (
 // deduplicates before counting. REQ000437 (iter-27).
 func TestAggregate_Distinct_Count(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	for _, s := range []string{
@@ -43,8 +42,7 @@ func TestAggregate_Distinct_Count(t *testing.T) {
 // deduplicates before summing.
 func TestAggregate_Distinct_Sum(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	for _, s := range []string{
@@ -75,8 +73,7 @@ func TestAggregate_Distinct_Sum(t *testing.T) {
 // deduplicates before averaging.
 func TestAggregate_Distinct_Avg(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	for _, s := range []string{
@@ -109,8 +106,7 @@ func TestAggregate_Distinct_Avg(t *testing.T) {
 // TestAggregate_Distinct_MinMax verifies REQ000437: MIN/MAX(DISTINCT col).
 func TestAggregate_Distinct_MinMax(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	for _, s := range []string{
@@ -143,8 +139,7 @@ func TestAggregate_Distinct_MinMax(t *testing.T) {
 // GROUP_CONCAT(DISTINCT col) deduplicates before concatenating.
 func TestAggregate_Distinct_GroupConcat(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	for _, s := range []string{
@@ -184,8 +179,7 @@ func TestAggregate_GroupConcat_Separator(t *testing.T) {
 
 	t.Run("basic", func(t *testing.T) {
 		ResetForTest(t)
-		ex, eng := newEngineExecutor(t)
-		defer eng.Close()
+		ex, _ := newEngineExecutor(t)
 		ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 		for _, s := range []string{
 			"INSERT INTO t VALUES (1, 'a')",
@@ -212,8 +206,7 @@ func TestAggregate_GroupConcat_Separator(t *testing.T) {
 
 	t.Run("distinct_with_sep", func(t *testing.T) {
 		ResetForTest(t)
-		ex, eng := newEngineExecutor(t)
-		defer eng.Close()
+		ex, _ := newEngineExecutor(t)
 		ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 		for _, s := range []string{
 			"INSERT INTO t VALUES (1, 'a')",
@@ -239,8 +232,7 @@ func TestAggregate_GroupConcat_Separator(t *testing.T) {
 
 	t.Run("empty_set", func(t *testing.T) {
 		ResetForTest(t)
-		ex, eng := newEngineExecutor(t)
-		defer eng.Close()
+		ex, _ := newEngineExecutor(t)
 		ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 		rows, err := ex.QueryAll(ctx, "SELECT GROUP_CONCAT(v, ';') FROM t")
 		if err != nil {
@@ -259,8 +251,7 @@ func TestAggregate_GroupConcat_Separator(t *testing.T) {
 // compose correctly with GROUP BY.
 func TestAggregate_Distinct_GroupBy(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "grp", "v"}, "id")
 	ctx := context.Background()
 	for _, s := range []string{
@@ -296,8 +287,7 @@ func TestAggregate_Distinct_GroupBy(t *testing.T) {
 // skipped before dedup (NULLs do not count as duplicates).
 func TestAggregate_Distinct_Nulls(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	for _, s := range []string{
@@ -331,8 +321,7 @@ func TestAggregate_Distinct_Nulls(t *testing.T) {
 // are unique, DISTINCT produces the same result as the non-DISTINCT form.
 func TestAggregate_Distinct_AllUnique(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	for _, s := range []string{
@@ -369,8 +358,7 @@ func TestAggregate_Distinct_AllUnique(t *testing.T) {
 // an empty table returns NULL (same as non-DISTINCT).
 func TestAggregate_Distinct_EmptyTable(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	rows, err := ex.QueryAll(ctx, "SELECT SUM(DISTINCT v), AVG(DISTINCT v), MIN(DISTINCT v), MAX(DISTINCT v), GROUP_CONCAT(DISTINCT v) FROM t")
@@ -392,8 +380,7 @@ func TestAggregate_Distinct_EmptyTable(t *testing.T) {
 // aggregate DISTINCT (regression test for REQ000437 root cause).
 func TestAggregate_Distinct_ParseError(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 1)"); err != nil {

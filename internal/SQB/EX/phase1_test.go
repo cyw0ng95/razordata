@@ -9,8 +9,7 @@ import (
 
 func TestPhase1_DropTableIfExists(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	// DROP TABLE IF EXISTS on non-existent table — should not error
@@ -29,8 +28,7 @@ func TestPhase1_DropTableIfExists(t *testing.T) {
 
 func TestPhase1_CreateIndexIfNotExists(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.Exec(ctx, "CREATE TABLE t1 (id INT, name TEXT)")
@@ -61,8 +59,7 @@ func TestPhase1_CreateIndexIfNotExists(t *testing.T) {
 
 func TestPhase1_DropIndexIfExists(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.Exec(ctx, "CREATE TABLE t1 (id INT, name TEXT)")
@@ -83,8 +80,7 @@ func TestPhase1_DropIndexIfExists(t *testing.T) {
 
 func TestPhase1_AlterTableRenameColumn(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.Exec(ctx, "CREATE TABLE t1 (id INT, name TEXT)")
@@ -116,8 +112,7 @@ func TestPhase1_AlterTableRenameColumn(t *testing.T) {
 
 func TestPhase1_PragmaNoOp(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	// PRAGMA should not error

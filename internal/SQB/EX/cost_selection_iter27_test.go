@@ -18,8 +18,7 @@ import (
 // prefer OP.IndexScan (lower cost) over OP.SeqScan.
 func TestCost_BasedScanSelection_PrefersIndex(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	ex.RegisterIndex("t", "idx_a", []string{"a"})
 	DT.RegisterIndexWithID("t", DT.RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})
@@ -40,8 +39,7 @@ func TestCost_BasedScanSelection_PrefersIndex(t *testing.T) {
 // back to OP.SeqScan.
 func TestCost_BasedScanSelection_NoIndexOnColumn(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	plan, err := ex.Explain("SELECT * FROM t WHERE a = 'x'")
 	if err != nil {
@@ -60,8 +58,7 @@ func TestCost_BasedScanSelection_NoIndexOnColumn(t *testing.T) {
 // prefer OP.IndexScan via the cost model.
 func TestCost_BasedScanSelection_HighSelectivityRange(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
 	ex.RegisterIndex("t", "idx_a", []string{"a"})
 	DT.RegisterIndexWithID("t", DT.RegisteredIndex{Name: "idx_a", Columns: []string{"a"}})

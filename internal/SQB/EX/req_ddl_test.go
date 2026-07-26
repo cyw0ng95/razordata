@@ -17,8 +17,7 @@ import (
 func TestREQ000722_WhereOnIndexReturnsRows(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "CREATE TABLE tab1 (pk INTEGER PRIMARY KEY, col0 INTEGER)"); err != nil {
@@ -39,15 +38,13 @@ func TestREQ000722_WhereOnIndexReturnsRows(t *testing.T) {
 	if len(rows) == 0 {
 		t.Errorf("REQ000722: store-path WHERE on indexed table returned 0 rows; bug regressed?")
 	}
-	_ = eng
 }
 
 // REQ000723: NOT(...) filter returns wrong results on indexed DT.Tables.
 func TestREQ000723_NOTFilterOnIndex(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "CREATE TABLE tab0 (pk INTEGER PRIMARY KEY, col0 INTEGER)"); err != nil {
@@ -68,15 +65,13 @@ func TestREQ000723_NOTFilterOnIndex(t *testing.T) {
 	if len(rows) == 0 {
 		t.Errorf("expected >0 rows, got 0")
 	}
-	_ = eng
 }
 
 // REQ000724: Complex OR/AND/IN on indexed DT.Tables.
 func TestREQ000724_ComplexORANDIN(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "CREATE TABLE tab1 (pk INTEGER PRIMARY KEY, col0 INTEGER, col1 REAL)"); err != nil {
@@ -94,7 +89,6 @@ func TestREQ000724_ComplexORANDIN(t *testing.T) {
 	if len(rows) == 0 {
 		t.Errorf("expected >0 rows, got 0")
 	}
-	_ = eng
 }
 
 // REQ000725: Multi-table implicit cross join with 4+ DT.Tables.

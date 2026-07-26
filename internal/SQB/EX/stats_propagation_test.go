@@ -19,7 +19,6 @@ func TestStatsPropagation_JoinEquality(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("sp_t1", []string{"id", "a"}, "id")
@@ -92,7 +91,6 @@ func TestStatsPropagation_NoStats(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("sp_ns_1", []string{"id", "a"}, "id")
@@ -115,7 +113,6 @@ func TestStatsPropagation_Analyze(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("an_t1", []string{"id", "a"}, "id")

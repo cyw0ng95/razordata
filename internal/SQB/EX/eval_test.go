@@ -635,8 +635,7 @@ func TestFilter_NullNotEqual(t *testing.T) {
 // REQ001293.
 func TestScalarSubquery_ConstantFold(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.Exec(ctx, "CREATE TABLE t (a INT, b INT)")

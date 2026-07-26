@@ -13,7 +13,6 @@ func TestCreateIndex_Registers(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "email"}, "id")
@@ -34,7 +33,6 @@ func TestCreateIndex_PopulatesOnInsert(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "email"}, "id")
@@ -60,7 +58,6 @@ func TestCreateIndex_Duplicate(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "email"}, "id")
@@ -88,7 +85,6 @@ func TestDropIndex_RemovesFromRegistry(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "email"}, "id")
@@ -110,8 +106,7 @@ func TestAggregate_EmptyTable_Scalar(t *testing.T) {
 	// REQ000345: no GROUP BY + empty input = single row
 	// with NULL/SUM/COUNT values (not 0 rows).
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	// COUNT(*) on empty table = 0
@@ -152,8 +147,7 @@ func TestAggregate_EmptyTable_Scalar(t *testing.T) {
 func TestAggregate_EmptyTable_GroupBy(t *testing.T) {
 	// REQ000345: GROUP BY + empty input = 0 rows (no groups).
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	rows, err := ex.QueryAll(ctx, "SELECT v, COUNT(*) FROM t GROUP BY v")
@@ -169,7 +163,6 @@ func TestDropIndex_FullFlow(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "email"}, "id")

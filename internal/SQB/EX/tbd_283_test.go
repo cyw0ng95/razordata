@@ -27,8 +27,7 @@ func TestREQ650_NullIN_EmptyList(t *testing.T) {
 
 func TestREQ642_ReplaceRemoveConflicting(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.RegisterTableWithPK("t1", []string{"x", "y"}, "x")
@@ -53,8 +52,7 @@ func TestREQ642_ReplaceRemoveConflicting(t *testing.T) {
 
 func TestREQ640_NOTIN_TableScan(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.RegisterTableWithPK("t1", []string{"id"}, "id")
@@ -73,8 +71,7 @@ func TestREQ640_NOTIN_TableScan(t *testing.T) {
 
 func TestREQ647_NotBetweenRows(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.RegisterTableWithPK("t1", []string{"d"}, "d")
@@ -93,8 +90,7 @@ func TestREQ647_NotBetweenRows(t *testing.T) {
 
 func TestREQ648_IsNullWrongCount(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	// REQ001128: INTEGER PRIMARY KEY auto-generates values for NULL
@@ -120,8 +116,7 @@ func TestREQ648_IsNullWrongCount(t *testing.T) {
 
 func TestREQ646_ColComparison(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.RegisterTableWithPK("t1", []string{"e", "c", "d"}, "e")
@@ -143,8 +138,7 @@ func TestREQ646_ColComparison(t *testing.T) {
 
 func TestREQ649_AbsFilter(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.RegisterTableWithPK("t1", []string{"a", "b", "c", "d"}, "a")
@@ -163,8 +157,7 @@ func TestREQ649_AbsFilter(t *testing.T) {
 
 func TestREQ641_DeleteFromView(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	mustExec(t, ex, ctx, `CREATE TABLE t_base (id INTEGER PRIMARY KEY, val TEXT)`)
@@ -191,8 +184,7 @@ func TestREQ641_DeleteFromView(t *testing.T) {
 
 func TestREQ643_TriggerBodySemicolon(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	mustExec(t, ex, ctx, `CREATE TABLE t1 (id INTEGER PRIMARY KEY, val INTEGER)`)
@@ -212,8 +204,7 @@ func TestREQ643_TriggerBodySemicolon(t *testing.T) {
 
 func TestREQ643_TriggerMultiStmtBody(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	mustExec(t, ex, ctx, `CREATE TABLE t1 (id INTEGER PRIMARY KEY, val INTEGER)`)
@@ -233,8 +224,7 @@ func TestREQ643_TriggerMultiStmtBody(t *testing.T) {
 
 func TestREQ644_GroupByQualifiedColumn(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	mustExec(t, ex, ctx, `CREATE TABLE t1 (id INTEGER PRIMARY KEY, val INTEGER)`)

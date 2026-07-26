@@ -88,8 +88,7 @@ func TestLimitOffset_Combined(t *testing.T) {
 }
 
 func TestPlanSelect_OrderByPKDropsSort(t *testing.T) {
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "name"}, "id")
 	ctx := context.Background()
 	for _, s := range []string{
@@ -110,8 +109,7 @@ func TestPlanSelect_OrderByPKDropsSort(t *testing.T) {
 }
 
 func TestPlanSelect_OrderByNonPKKeepsSort(t *testing.T) {
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "name"}, "id")
 	ctx := context.Background()
 	for _, s := range []string{
@@ -132,8 +130,7 @@ func TestPlanSelect_OrderByNonPKKeepsSort(t *testing.T) {
 }
 
 func TestPlanSelect_OrderByPKDescKeepsSort(t *testing.T) {
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "name"}, "id")
 	plan, err := ex.Explain("SELECT * FROM t ORDER BY id DESC")
 	if err != nil {

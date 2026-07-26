@@ -34,8 +34,7 @@ func TestIsSimpleSort_FilterSeqScan(t *testing.T) {
 // REQ001633.
 func BenchmarkSelect1_Count_NoGoroutine(b *testing.B) {
 	ResetForTest(b)
-	ex, eng := newEngineExecutor(b)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(b)
 
 	ctx := context.Background()
 	mustExec(b, ex, ctx, "CREATE TABLE bm_count (a INT, b TEXT)")
@@ -62,8 +61,7 @@ func BenchmarkSelect1_Count_NoGoroutine(b *testing.B) {
 // REQ001633.
 func BenchmarkSelect1_Order_NoGoroutine(b *testing.B) {
 	ResetForTest(b)
-	ex, eng := newEngineExecutor(b)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(b)
 
 	ctx := context.Background()
 	mustExec(b, ex, ctx, "CREATE TABLE bm_order (a INT, b TEXT)")

@@ -12,8 +12,7 @@ import (
 func BenchmarkQueryAll_VecVsRow_1KRows(b *testing.B) {
 	const rowCount = 1024
 	ResetForTest(b)
-	ex, eng := newEngineExecutor(b)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(b)
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "CREATE TABLE bench (a INTEGER PRIMARY KEY, b INTEGER, c TEXT)"); err != nil {
 		if err == nil || !strings.Contains(err.Error(), "already exists") {
@@ -41,8 +40,7 @@ func BenchmarkQueryAll_VecVsRow_1KRows(b *testing.B) {
 func BenchmarkVectorized_SelectFilter_10K(b *testing.B) {
 	const rowCount = 10000
 	ResetForTest(b)
-	ex, eng := newEngineExecutor(b)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(b)
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "CREATE TABLE bench (a INTEGER PRIMARY KEY, b INTEGER, c TEXT, d INTEGER)"); err != nil {
 		if err == nil || !strings.Contains(err.Error(), "already exists") {
@@ -73,8 +71,7 @@ func BenchmarkVectorized_SelectFilter_10K(b *testing.B) {
 func BenchmarkVectorized_Aggregate_10K(b *testing.B) {
 	const rowCount = 10000
 	ResetForTest(b)
-	ex, eng := newEngineExecutor(b)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(b)
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "CREATE TABLE bench (a INTEGER PRIMARY KEY, b INTEGER, c TEXT, d INTEGER)"); err != nil {
 		if err == nil || !strings.Contains(err.Error(), "already exists") {
@@ -105,8 +102,7 @@ func BenchmarkVectorized_Aggregate_10K(b *testing.B) {
 func BenchmarkVectorized_Join_10K(b *testing.B) {
 	const rowCount = 10000
 	ResetForTest(b)
-	ex, eng := newEngineExecutor(b)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(b)
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "CREATE TABLE t1 (a INTEGER PRIMARY KEY, b INTEGER, c TEXT)"); err != nil {
 		if err == nil || !strings.Contains(err.Error(), "already exists") {
@@ -146,8 +142,7 @@ func BenchmarkVectorized_Join_10K(b *testing.B) {
 func BenchmarkVectorized_Update_10K(b *testing.B) {
 	const rowCount = 10000
 	ResetForTest(b)
-	ex, eng := newEngineExecutor(b)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(b)
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "CREATE TABLE bench (a INTEGER PRIMARY KEY, b INTEGER, c TEXT, d INTEGER)"); err != nil {
 		if err == nil || !strings.Contains(err.Error(), "already exists") {
@@ -178,8 +173,7 @@ func BenchmarkVectorized_Update_10K(b *testing.B) {
 func BenchmarkVectorized_Delete_10K(b *testing.B) {
 	const rowCount = 10000
 	ResetForTest(b)
-	ex, eng := newEngineExecutor(b)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(b)
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "CREATE TABLE bench (a INTEGER PRIMARY KEY, b INTEGER, c TEXT, d INTEGER)"); err != nil {
 		if err == nil || !strings.Contains(err.Error(), "already exists") {
@@ -208,8 +202,7 @@ func BenchmarkVectorized_Delete_10K(b *testing.B) {
 func BenchmarkVectorized_Subquery_1K(b *testing.B) {
 	const rowCount = 1000
 	ResetForTest(b)
-	ex, eng := newEngineExecutor(b)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(b)
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "CREATE TABLE t1 (a INTEGER, b INTEGER, c TEXT)"); err != nil {
 		if err == nil || !strings.Contains(err.Error(), "already exists") {

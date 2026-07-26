@@ -670,8 +670,7 @@ func TestBugfix_CreateTableAsSelect(t *testing.T) {
 // limitation — in-memory unique lookup doesn't see engine-stored rows).
 func TestBugfix_CompositePrimaryKey(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	_, err := ex.Exec(ctx, "CREATE TABLE cpk (a INT, b TEXT, c INT, PRIMARY KEY (a, b))")
@@ -722,8 +721,7 @@ func TestBugfix_CompositePrimaryKey(t *testing.T) {
 // for omitted columns are coerced to match the column's declared type.
 func TestBugfix_FillDefaults_TypeCoercion(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	// CREATE TABLE with a TEXT column that has DEFAULT 1 (int literal)
@@ -758,8 +756,7 @@ func TestBugfix_FillDefaults_TypeCoercion(t *testing.T) {
 // StarExpr into all columns of the inserted/updated/deleted row.
 func TestBugfix_ReturningStar(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "name", "val"}, "id")
 	ctx := context.Background()
 
@@ -810,8 +807,7 @@ func TestBugfix_ReturningStar(t *testing.T) {
 // empty set, not nil.
 func TestBugfix_CountEmptySet(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 
@@ -848,8 +844,7 @@ func TestBugfix_CountEmptySet(t *testing.T) {
 // results for every outer row, not just the first one.
 func TestBugfix_CorrelatedSubquery_Reexecutes(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ex.RegisterTableWithPK("s", []string{"id", "tid"}, "id")
 	ctx := context.Background()
@@ -959,8 +954,7 @@ func TestBugfix_CorrelatedExists_SameColumnName(t *testing.T) {
 // DT.Tables populated via INSERT INTO ... SELECT.
 func TestBugfix_SLT_IndexWhereFilter(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.RegisterTableWithPK("tab0", []string{"pk", "col0", "col1"}, "pk")

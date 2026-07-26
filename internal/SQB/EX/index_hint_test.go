@@ -11,7 +11,6 @@ import (
 func TestIndexHint_ForcesIndex(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("users", []string{"id", "email", "name"}, "id")
@@ -39,7 +38,6 @@ func TestIndexHint_ForcesIndex(t *testing.T) {
 func TestIndexHint_InvalidName_Error(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("users", []string{"id"}, "id")
@@ -58,7 +56,6 @@ func TestIndexHint_InvalidName_Error(t *testing.T) {
 func TestIndexHint_NotIndexed_ForcesSeqScan(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("users", []string{"id", "email"}, "id")
@@ -87,7 +84,6 @@ func TestIndexHint_NotIndexed_ForcesSeqScan(t *testing.T) {
 func TestIndexHint_WithoutIndex_Fallback(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("users", []string{"id"}, "id")

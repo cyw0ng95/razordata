@@ -12,8 +12,7 @@ import (
 func TestREQ000714_StoreDeleteSelfSubquery(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 
 	ctx := context.Background()
 	if _, err := ex.Exec(ctx, "CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)"); err != nil {

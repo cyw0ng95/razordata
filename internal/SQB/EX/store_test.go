@@ -13,8 +13,7 @@ import (
 )
 
 func TestSeqScan_AgainstRealStore(t *testing.T) {
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 
 	ex.RegisterTableWithPK("users", []string{"id", "name"}, "id")
 	ctx := context.Background()
@@ -39,8 +38,7 @@ func TestSeqScan_AgainstRealStore(t *testing.T) {
 }
 
 func TestInsert_AndGetViaExecutor(t *testing.T) {
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 
 	ex.RegisterTableWithPK("kv", []string{"k", "v"}, "k")
 	ctx := context.Background()
@@ -62,8 +60,7 @@ func TestInsert_AndGetViaExecutor(t *testing.T) {
 }
 
 func TestUpdate_AppendsVersion(t *testing.T) {
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 
 	ex.RegisterTableWithPK("t", []string{"id", "val"}, "id")
 	ctx := context.Background()
@@ -91,8 +88,7 @@ func TestUpdate_AppendsVersion(t *testing.T) {
 }
 
 func TestDelete_InsertsTombstone(t *testing.T) {
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 
 	ex.RegisterTableWithPK("t", []string{"id", "val"}, "id")
 	ctx := context.Background()
@@ -117,8 +113,7 @@ func TestDelete_InsertsTombstone(t *testing.T) {
 }
 
 func TestSQLviaEngine_CreateInsertUpdateSelect(t *testing.T) {
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	_, err := ex.Exec(ctx, "CREATE TABLE engine_t (id INTEGER PRIMARY KEY, val INTEGER)")
@@ -162,8 +157,7 @@ func TestSQLviaEngine_CreateInsertUpdateSelect(t *testing.T) {
 }
 
 func TestEngine_SequentialDDL(t *testing.T) {
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	// Create multiple DT.Tables with indexes (like SLT tests do)
@@ -257,7 +251,6 @@ func BenchmarkSeqScan_BatchVsSingle(b *testing.B) {
 	if err != nil {
 		b.Fatalf("ls.Open: %v", err)
 	}
-	defer eng.Close()
 
 	s := &engineStore{eng: eng}
 	schema := []string{"id", "name", "val"}
@@ -378,7 +371,6 @@ func BenchmarkSeqScan_FullScan(b *testing.B) {
 	if err != nil {
 		b.Fatalf("ls.Open: %v", err)
 	}
-	defer eng.Close()
 
 	s := &engineStore{eng: eng}
 	schema := []string{"id", "name", "val"}
@@ -441,7 +433,6 @@ func BenchmarkSelect1_VecPath(b *testing.B) {
 	if err != nil {
 		b.Fatalf("ls.Open: %v", err)
 	}
-	defer eng.Close()
 
 	s := &engineStore{eng: eng}
 	schema := []string{"id", "name", "val"}

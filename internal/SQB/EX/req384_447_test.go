@@ -82,8 +82,7 @@ func TestREQ384_Abs_UnitTests(t *testing.T) {
 
 func TestREQ384_Abs_EndToEnd(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 
@@ -117,8 +116,7 @@ func TestREQ384_Abs_EndToEnd(t *testing.T) {
 
 func TestREQ384_Abs_StringToZero(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTable("t", []string{"v"})
 	ctx := context.Background()
 
@@ -142,8 +140,7 @@ func TestREQ384_Abs_StringToZero(t *testing.T) {
 
 func TestREQ447_CountDistinct(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 
@@ -171,8 +168,7 @@ func TestREQ447_CountDistinct(t *testing.T) {
 
 func TestREQ447_SumDistinct(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 
@@ -200,8 +196,7 @@ func TestREQ447_SumDistinct(t *testing.T) {
 
 func TestREQ447_AvgDistinct(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 

@@ -10,8 +10,7 @@ import (
 
 func TestREQ001270_CommaJoin_Reproduction(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 
 	ctx := context.Background()
 

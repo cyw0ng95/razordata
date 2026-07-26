@@ -21,7 +21,6 @@ func TestIndexScan_WithIndexSeek(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ls.Open: %v", err)
 	}
-	defer eng.Close()
 
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
@@ -119,7 +118,6 @@ func TestIndexScan_BuildIndexKey(t *testing.T) {
 func TestIndexScan_WithStore_Fallback(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t_fallback", []string{"id", "a"}, "id")
@@ -150,7 +148,6 @@ func TestIndexScan_WithStore_Fallback(t *testing.T) {
 func TestIndexScan_CloseWithIndex(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")

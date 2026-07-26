@@ -23,7 +23,6 @@ func TestIndexScan_RangeSeek_GT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ls.Open: %v", err)
 	}
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 
@@ -76,7 +75,6 @@ func TestIndexScan_RangeSeek_GT(t *testing.T) {
 func TestIndexScan_RangeSeek_GE(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
@@ -111,7 +109,6 @@ func TestIndexScan_RangeSeek_GE(t *testing.T) {
 func TestIndexScan_RangeSeek_Between(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
@@ -151,7 +148,6 @@ func TestIndexScan_RangeSeek_Planner(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
@@ -191,7 +187,6 @@ func TestIndexScan_RangeSeek_PlannerExplains(t *testing.T) {
 	ResetForTest(t)
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")

@@ -14,8 +14,7 @@ import (
 // REQ000805: ALL keyword in aggregate functions.
 func TestAggregate_AllKeyword(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	for _, s := range []string{
@@ -316,8 +315,7 @@ func TestCreateVirtualTable_StubRegistration(t *testing.T) {
 // four object types: table, view, index, trigger. REQ001388.
 func TestSqliteMaster_AllTypes(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.Exec(ctx, "CREATE TABLE t1 (id INT)")
@@ -350,8 +348,7 @@ func TestSqliteMaster_AllTypes(t *testing.T) {
 // the same results as sqlite_master. REQ001389.
 func TestSqliteSchema_MatchesSqliteMaster(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.Exec(ctx, "CREATE TABLE t (id INT)")

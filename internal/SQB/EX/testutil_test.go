@@ -5,7 +5,9 @@ package EX
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
@@ -44,17 +46,53 @@ func (s *engineStore) NewIterator(prefix []byte) ls.RangeIter {
 }
 func (s *engineStore) ManualCompact() error { return s.eng.ManualCompact() }
 
-// newEngineExecutor creates an Executor backed by a real LSM engine.
+// REQ002035: shared engine + executor for engine-backed tests.
+// Eliminates per-test NewPageCache / WarmFilterBatchPool / flate.NewWriter
+// allocations that caused 83% GC overhead and 618ms test time.
+// The engine is initialized lazily on first use and reset between tests.
+var (
+	sharedEngOnce sync.Once
+	sharedEng     *ls.Engine
+	sharedEngEx   *Executor
+	sharedEngDir  string
+)
+
+func initSharedEngine(t testing.TB) {
+	t.Helper()
+	sharedEngOnce.Do(func() {
+		var err error
+		sharedEngDir, err = os.MkdirTemp("", "razor-ex-test-")
+		if err != nil {
+			t.Fatalf("os.MkdirTemp: %v", err)
+		}
+		sharedEng, err = ls.Open(filepath.Join(sharedEngDir, "db"))
+		if err != nil {
+			t.Fatalf("ls.Open: %v", err)
+		}
+		sharedEngEx = NewExecutorWithEngine(&engineStore{eng: sharedEng})
+	})
+}
+
+// resetSharedEngine resets the shared engine to a clean state.
+func resetSharedEngine(t testing.TB) {
+	t.Helper()
+	UnregisterAll()
+	sharedEngEx.ClearPlanCache()
+	if err := sharedEng.DropAll(); err != nil {
+		t.Fatalf("sharedEng.DropAll: %v", err)
+	}
+	sharedEng.ResetPageCache()
+}
+
+// newEngineExecutor returns an Executor backed by the shared LSM engine,
+// reset to a clean state. REQ002035: reuses one engine across all tests
+// instead of creating a fresh one per test (saves ~921 MB allocs + GC).
 // Accepts testing.TB so both tests (*testing.T) and benchmarks (*testing.B) can use it.
 func newEngineExecutor(t testing.TB) (*Executor, *ls.Engine) {
 	t.Helper()
-	dir := t.TempDir()
-	eng, err := ls.Open(filepath.Join(dir, "db"))
-	if err != nil {
-		t.Fatalf("ls.Open: %v", err)
-	}
-	ex := NewExecutorWithEngine(&engineStore{eng: eng})
-	return ex, eng
+	initSharedEngine(t)
+	resetSharedEngine(t)
+	return sharedEngEx, sharedEng
 }
 
 // mustExec runs a statement and fails the test on error.

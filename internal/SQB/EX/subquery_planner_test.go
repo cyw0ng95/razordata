@@ -94,8 +94,7 @@ func TestPlanner_SemiJoin(t *testing.T) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.RegisterTableWithPK("t1", []string{"id", "val"}, "id")
@@ -181,8 +180,7 @@ func BenchmarkExistsDecorrelation_Select1(b *testing.B) {
 	UnregisterAll()
 	defer UnregisterAll()
 
-	ex, eng := newEngineExecutor(b)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(b)
 	ctx := context.Background()
 
 	ex.RegisterTableWithPK("t1", []string{"id", "val"}, "id")

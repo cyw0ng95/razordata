@@ -22,8 +22,7 @@ import (
 // improvement) instead of per-row conversion.
 func TestQueryAll_GoesThroughVectorizedPath_SimpleProject(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	schema := []string{"id", "name"}
@@ -59,8 +58,7 @@ func TestQueryAll_GoesThroughVectorizedPath_SimpleProject(t *testing.T) {
 // VectorizedSeqScan + VectorizedProject over an in-memory slice.
 func TestVecTransformToRowsAdapter_StreamSimpleSelect(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 	mustExec(t, ex, ctx, "CREATE TABLE vadapter (a INTEGER PRIMARY KEY, b TEXT)")
 	for i := 0; i < 50; i++ {

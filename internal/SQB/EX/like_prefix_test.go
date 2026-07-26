@@ -23,7 +23,6 @@ func TestLikePrefix_RangeScan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t_like", []string{"id", "name"}, "id")
@@ -143,7 +142,6 @@ func TestLikePrefix_NoIndexFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t_no_idx", []string{"id", "name"}, "id")

@@ -7,8 +7,7 @@ import (
 
 // REQ000455 — subquery planner store propagation
 func TestReq455_SubqueryPlannerStorePath(t *testing.T) {
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.RegisterTableWithPK("t1", []string{"a", "b", "c"}, "a")
@@ -115,8 +114,7 @@ func TestReq458_BetweenNullSemantics(t *testing.T) {
 
 // REQ000456 — CREATE TABLE + ALTER TABLE with store
 func TestReq456_AlterTableNoDeadlock(t *testing.T) {
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")

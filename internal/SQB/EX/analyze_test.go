@@ -54,7 +54,6 @@ func TestVacuum_WithStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ls.Open: %v", err)
 	}
-	defer eng.Close()
 
 	store := &engineStore{eng: eng}
 

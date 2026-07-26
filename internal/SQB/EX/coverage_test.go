@@ -15,8 +15,7 @@ import (
 
 func TestCoverage_Aggregate_WithParams(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -28,8 +27,7 @@ func TestCoverage_Aggregate_WithParams(t *testing.T) {
 
 func TestCoverage_AnalyzeWithStore(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 
 	dir := t.TempDir()
 	cat, err := ls.NewCatalog(filepath.Join(dir, "cat"))
@@ -125,8 +123,7 @@ func TestCoverage_newUniqueForCatalogEmpty(t *testing.T) {
 
 func TestCoverage_Compound_Intersect(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
@@ -140,8 +137,7 @@ func TestCoverage_Compound_Intersect(t *testing.T) {
 
 func TestCoverage_Compound_Except(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
@@ -155,8 +151,7 @@ func TestCoverage_Compound_Except(t *testing.T) {
 
 func TestCoverage_Compound_UnionAll(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
@@ -169,8 +164,7 @@ func TestCoverage_Compound_UnionAll(t *testing.T) {
 
 func TestCoverage_Compound_Union(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
@@ -183,8 +177,7 @@ func TestCoverage_Compound_Union(t *testing.T) {
 
 func TestCoverage_Compound_UnionOrderBy(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
@@ -197,8 +190,7 @@ func TestCoverage_Compound_UnionOrderBy(t *testing.T) {
 
 func TestCoverage_Compound_UnionLimit(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
@@ -211,8 +203,7 @@ func TestCoverage_Compound_UnionLimit(t *testing.T) {
 
 func TestCoverage_sumDistinct(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -230,8 +221,7 @@ func TestCoverage_sumDistinct(t *testing.T) {
 
 func TestCoverage_avgDistinct(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -245,8 +235,7 @@ func TestCoverage_avgDistinct(t *testing.T) {
 
 func TestCoverage_countDistinct(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -260,8 +249,7 @@ func TestCoverage_countDistinct(t *testing.T) {
 
 func TestCoverage_sumWithNull(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -275,8 +263,7 @@ func TestCoverage_sumWithNull(t *testing.T) {
 
 func TestCoverage_avgWithNull(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -290,8 +277,7 @@ func TestCoverage_avgWithNull(t *testing.T) {
 
 func TestCoverage_minMaxWithNull(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, NULL)")
@@ -305,8 +291,7 @@ func TestCoverage_minMaxWithNull(t *testing.T) {
 
 func TestCoverage_groupConcatWithNull(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 'a')")
@@ -320,8 +305,7 @@ func TestCoverage_groupConcatWithNull(t *testing.T) {
 
 func TestCoverage_groupConcatDistinctSep(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 'a')")
@@ -335,8 +319,7 @@ func TestCoverage_groupConcatDistinctSep(t *testing.T) {
 
 func TestCoverage_aggGroupBy(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "grp", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 'x', 10)")
@@ -350,8 +333,7 @@ func TestCoverage_aggGroupBy(t *testing.T) {
 
 func TestCoverage_aggGroupByHaving(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "grp", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 'x', 10)")
@@ -365,8 +347,7 @@ func TestCoverage_aggGroupByHaving(t *testing.T) {
 
 func TestCoverage_scalarIn(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
@@ -381,8 +362,7 @@ func TestCoverage_scalarIn(t *testing.T) {
 
 func TestCoverage_scalarInMiss(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
@@ -394,8 +374,7 @@ func TestCoverage_scalarInMiss(t *testing.T) {
 
 func TestCoverage_deleteWhere(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -409,8 +388,7 @@ func TestCoverage_deleteWhere(t *testing.T) {
 
 func TestCoverage_deleteAll(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
@@ -423,8 +401,7 @@ func TestCoverage_deleteAll(t *testing.T) {
 
 func TestCoverage_updateWhere(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -437,8 +414,7 @@ func TestCoverage_updateWhere(t *testing.T) {
 
 func TestCoverage_distinct(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -455,8 +431,7 @@ func TestCoverage_distinct(t *testing.T) {
 
 func TestCoverage_orderByExpr(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "a", "b"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10, 5)")
@@ -473,8 +448,7 @@ func TestCoverage_orderByExpr(t *testing.T) {
 
 func TestCoverage_caseWhen(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -487,8 +461,7 @@ func TestCoverage_caseWhen(t *testing.T) {
 
 func TestCoverage_castIntToText(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 42)")
@@ -500,8 +473,7 @@ func TestCoverage_castIntToText(t *testing.T) {
 
 func TestCoverage_limitOffset(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	for i := int64(1); i <= 10; i++ {
@@ -518,8 +490,7 @@ func TestCoverage_limitOffset(t *testing.T) {
 
 func TestCoverage_nullComparison(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, NULL)")
@@ -532,8 +503,7 @@ func TestCoverage_nullComparison(t *testing.T) {
 
 func TestCoverage_isNullWhere(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, NULL)")
@@ -546,8 +516,7 @@ func TestCoverage_isNullWhere(t *testing.T) {
 
 func TestCoverage_isNotNullWhere(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, NULL)")
@@ -560,8 +529,7 @@ func TestCoverage_isNotNullWhere(t *testing.T) {
 
 func TestCoverage_notIn(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -575,8 +543,7 @@ func TestCoverage_notIn(t *testing.T) {
 
 func TestCoverage_notLike(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 'hello')")
@@ -589,8 +556,7 @@ func TestCoverage_notLike(t *testing.T) {
 
 func TestCoverage_notBetween(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -604,8 +570,7 @@ func TestCoverage_notBetween(t *testing.T) {
 
 func TestCoverage_like(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 'hello')")
@@ -619,8 +584,7 @@ func TestCoverage_like(t *testing.T) {
 // REQ000567: LIKE ... ESCAPE
 func TestCoverage_likeEscape(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, '100%')")
@@ -677,8 +641,7 @@ func TestCoverage_likeEscape(t *testing.T) {
 
 func TestCoverage_between(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -692,8 +655,7 @@ func TestCoverage_between(t *testing.T) {
 
 func TestCoverage_coalesce(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "a", "b"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, NULL, 20)")
@@ -707,8 +669,7 @@ func TestCoverage_coalesce(t *testing.T) {
 
 func TestCoverage_nullif(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -722,8 +683,7 @@ func TestCoverage_nullif(t *testing.T) {
 
 func TestCoverage_scalarSubquery(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -736,8 +696,7 @@ func TestCoverage_scalarSubquery(t *testing.T) {
 
 func TestCoverage_existsSubquery(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ex.RegisterTableWithPK("s", []string{"id", "tid"}, "id")
 	ctx := context.Background()
@@ -754,8 +713,7 @@ func TestCoverage_existsSubquery(t *testing.T) {
 
 func TestCoverage_inSubquery(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ex.RegisterTableWithPK("s", []string{"id", "v"}, "id")
 	ctx := context.Background()
@@ -772,8 +730,7 @@ func TestCoverage_inSubquery(t *testing.T) {
 
 func TestCoverage_windowRowNumber(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -787,8 +744,7 @@ func TestCoverage_windowRowNumber(t *testing.T) {
 
 func TestCoverage_windowRank(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "grp", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 'x', 10)")
@@ -802,8 +758,7 @@ func TestCoverage_windowRank(t *testing.T) {
 
 func TestCoverage_windowDenseRank(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -817,8 +772,7 @@ func TestCoverage_windowDenseRank(t *testing.T) {
 
 func TestCoverage_windowSum(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "grp", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 'x', 10)")
@@ -832,8 +786,7 @@ func TestCoverage_windowSum(t *testing.T) {
 
 func TestCoverage_createTrigger(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	_, err := ex.Exec(ctx, "CREATE TRIGGER trg AFTER INSERT ON t BEGIN SELECT 1; END")
@@ -844,8 +797,7 @@ func TestCoverage_createTrigger(t *testing.T) {
 
 func TestCoverage_dropTrigger(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "CREATE TRIGGER trg AFTER INSERT ON t BEGIN SELECT 1; END")
@@ -857,8 +809,7 @@ func TestCoverage_dropTrigger(t *testing.T) {
 
 func TestCoverage_createView(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	_, err := ex.Exec(ctx, "CREATE VIEW v AS SELECT * FROM t")
@@ -869,8 +820,7 @@ func TestCoverage_createView(t *testing.T) {
 
 func TestCoverage_dropView(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "CREATE VIEW v AS SELECT * FROM t")
@@ -882,8 +832,7 @@ func TestCoverage_dropView(t *testing.T) {
 
 func TestCoverage_dropViewIfExists(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 	_, err := ex.Exec(ctx, "DROP VIEW IF EXISTS nonexistent")
 	if err != nil {
@@ -893,8 +842,7 @@ func TestCoverage_dropViewIfExists(t *testing.T) {
 
 func TestCoverage_dropTriggerIfExists(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 	_, err := ex.Exec(ctx, "DROP TRIGGER IF EXISTS nonexistent")
 	if err != nil {
@@ -904,8 +852,7 @@ func TestCoverage_dropTriggerIfExists(t *testing.T) {
 
 func TestCoverage_ctas(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("src", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO src VALUES (1, 10)")
@@ -918,8 +865,7 @@ func TestCoverage_ctas(t *testing.T) {
 
 func TestCoverage_explain(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -934,8 +880,7 @@ func TestCoverage_explain(t *testing.T) {
 
 func TestCoverage_pragma(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 	_, err := ex.Exec(ctx, "PRAGMA cache_size")
 	if err != nil {
@@ -945,8 +890,7 @@ func TestCoverage_pragma(t *testing.T) {
 
 func TestCoverage_pragmaWithValue(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 	_, err := ex.Exec(ctx, "PRAGMA journal_mode = WAL")
 	if err != nil {
@@ -956,8 +900,7 @@ func TestCoverage_pragmaWithValue(t *testing.T) {
 
 func TestCoverage_reindex(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 	_, err := ex.Exec(ctx, "REINDEX")
 	if err != nil {
@@ -967,8 +910,7 @@ func TestCoverage_reindex(t *testing.T) {
 
 func TestCoverage_truncate(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1)")
@@ -981,8 +923,7 @@ func TestCoverage_truncate(t *testing.T) {
 
 func TestCoverage_multiAggregate(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -996,8 +937,7 @@ func TestCoverage_multiAggregate(t *testing.T) {
 
 func TestCoverage_countWhere(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -1010,8 +950,7 @@ func TestCoverage_countWhere(t *testing.T) {
 
 func TestCoverage_updateAll(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -1024,8 +963,7 @@ func TestCoverage_updateAll(t *testing.T) {
 
 func TestCoverage_multiInsert(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	_, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)")
@@ -1036,8 +974,7 @@ func TestCoverage_multiInsert(t *testing.T) {
 
 func TestCoverage_insertOrReplace(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -1049,8 +986,7 @@ func TestCoverage_insertOrReplace(t *testing.T) {
 
 func TestCoverage_insertOrIgnore(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -1062,8 +998,7 @@ func TestCoverage_insertOrIgnore(t *testing.T) {
 
 func TestCoverage_insertReturning(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	_, err := ex.Exec(ctx, "INSERT INTO t VALUES (1, 10) RETURNING *")
@@ -1074,8 +1009,7 @@ func TestCoverage_insertReturning(t *testing.T) {
 
 func TestCoverage_updateReturning(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -1087,8 +1021,7 @@ func TestCoverage_updateReturning(t *testing.T) {
 
 func TestCoverage_deleteReturning(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -1100,8 +1033,7 @@ func TestCoverage_deleteReturning(t *testing.T) {
 
 func TestCoverage_emptyTableAgg(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	_, err := ex.QueryAll(ctx, "SELECT COUNT(*), SUM(v), AVG(v), MIN(v), MAX(v) FROM t")
@@ -1112,8 +1044,7 @@ func TestCoverage_emptyTableAgg(t *testing.T) {
 
 func TestCoverage_emptyTableGroupBy(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "grp", "v"}, "id")
 	ctx := context.Background()
 	_, err := ex.QueryAll(ctx, "SELECT grp, COUNT(*) FROM t GROUP BY grp")
@@ -1124,8 +1055,7 @@ func TestCoverage_emptyTableGroupBy(t *testing.T) {
 
 func TestCoverage_emptyTableLimit(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	_, err := ex.QueryAll(ctx, "SELECT id FROM t LIMIT 5")
@@ -1136,8 +1066,7 @@ func TestCoverage_emptyTableLimit(t *testing.T) {
 
 func TestCoverage_emptyTableDistinct(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	_, err := ex.QueryAll(ctx, "SELECT DISTINCT v FROM t")
@@ -1148,8 +1077,7 @@ func TestCoverage_emptyTableDistinct(t *testing.T) {
 
 func TestCoverage_emptyTableOrderBy(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	_, err := ex.QueryAll(ctx, "SELECT id FROM t ORDER BY v")
@@ -1160,8 +1088,7 @@ func TestCoverage_emptyTableOrderBy(t *testing.T) {
 
 func TestCoverage_emptyTableUnionAll(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id"}, "id")
 	ctx := context.Background()
 	_, err := ex.QueryAll(ctx, "SELECT id FROM t UNION ALL SELECT id FROM t")
@@ -1172,8 +1099,7 @@ func TestCoverage_emptyTableUnionAll(t *testing.T) {
 
 func TestCoverage_allNullAggregate(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, NULL)")
@@ -1186,8 +1112,7 @@ func TestCoverage_allNullAggregate(t *testing.T) {
 
 func TestCoverage_havingEmpty(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ex.RegisterTableWithPK("t", []string{"id", "grp", "v"}, "id")
 	ctx := context.Background()
 	rows, err := ex.QueryAll(ctx, "SELECT grp, COUNT(*) FROM t GROUP BY grp HAVING COUNT(*) > 1")
@@ -1202,8 +1127,13 @@ func TestCoverage_havingEmpty(t *testing.T) {
 func setupCatalogEngine(t *testing.T) (*Executor, *ls.Engine, *ls.Catalog) {
 	t.Helper()
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
 	dir := t.TempDir()
+	eng, err := ls.Open(filepath.Join(dir, "db"))
+	if err != nil {
+		t.Fatalf("ls.Open: %v", err)
+	}
+	t.Cleanup(func() { eng.Close() })
+	ex := NewExecutorWithEngine(&engineStore{eng: eng})
 	cat, err := ls.NewCatalog(filepath.Join(dir, "cat"))
 	if err != nil {
 		t.Fatalf("NewCatalog: %v", err)
@@ -1237,8 +1167,7 @@ func registerCatalogTable(t *testing.T, ex *Executor, cat *ls.Catalog, name stri
 }
 
 func TestAnalyze_ComputesRowCount(t *testing.T) {
-	ex, eng, cat := setupCatalogEngine(t)
-	defer eng.Close()
+	ex, _, cat := setupCatalogEngine(t)
 	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	for i := 0; i < 7; i++ {
@@ -1260,8 +1189,7 @@ func TestAnalyze_ComputesRowCount(t *testing.T) {
 }
 
 func TestAnalyze_ComputesNDV(t *testing.T) {
-	ex, eng, cat := setupCatalogEngine(t)
-	defer eng.Close()
+	ex, _, cat := setupCatalogEngine(t)
 	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -1290,8 +1218,7 @@ func TestAnalyze_ComputesNDV(t *testing.T) {
 }
 
 func TestAnalyze_ComputesNullCount_NotNullCol(t *testing.T) {
-	ex, eng, cat := setupCatalogEngine(t)
-	defer eng.Close()
+	ex, _, cat := setupCatalogEngine(t)
 	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 10)")
@@ -1319,8 +1246,7 @@ func TestAnalyze_ComputesNullCount_NotNullCol(t *testing.T) {
 }
 
 func TestAnalyze_ComputesMinMax(t *testing.T) {
-	ex, eng, cat := setupCatalogEngine(t)
-	defer eng.Close()
+	ex, _, cat := setupCatalogEngine(t)
 	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, 100)")
@@ -1343,8 +1269,7 @@ func TestAnalyze_ComputesMinMax(t *testing.T) {
 }
 
 func TestAnalyze_NullExcludedFromMinMax(t *testing.T) {
-	ex, eng, cat := setupCatalogEngine(t)
-	defer eng.Close()
+	ex, _, cat := setupCatalogEngine(t)
 	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	ex.Exec(ctx, "INSERT INTO t VALUES (1, NULL)")
@@ -1371,8 +1296,7 @@ func TestAnalyze_LargeTable_Sampling(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping large-table test in short mode")
 	}
-	ex, eng, cat := setupCatalogEngine(t)
-	defer eng.Close()
+	ex, _, cat := setupCatalogEngine(t)
 	registerCatalogTable(t, ex, cat, "t", []string{"id", "v"}, "id")
 	ctx := context.Background()
 	// Insert 10K rows to stay under the 1M threshold
@@ -1397,8 +1321,13 @@ func TestAnalyze_LargeTable_Sampling(t *testing.T) {
 
 func TestAnalyze_PersistsAcrossRestart(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
 	dir := t.TempDir()
+	eng, err := ls.Open(filepath.Join(dir, "db"))
+	if err != nil {
+		t.Fatalf("ls.Open: %v", err)
+	}
+	defer eng.Close()
+	ex := NewExecutorWithEngine(&engineStore{eng: eng})
 	cat, err := ls.NewCatalog(filepath.Join(dir, "cat"))
 	if err != nil {
 		t.Fatalf("NewCatalog: %v", err)
@@ -1453,8 +1382,13 @@ func TestAnalyze_PersistsAcrossRestart(t *testing.T) {
 
 func TestStats_WiredOnOpen(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
 	dir := t.TempDir()
+	eng, err := ls.Open(filepath.Join(dir, "db"))
+	if err != nil {
+		t.Fatalf("ls.Open: %v", err)
+	}
+	defer eng.Close()
+	ex := NewExecutorWithEngine(&engineStore{eng: eng})
 	cat, err := ls.NewCatalog(filepath.Join(dir, "cat"))
 	if err != nil {
 		t.Fatalf("NewCatalog: %v", err)
@@ -1531,8 +1465,7 @@ func TestStats_WiredOnOpen(t *testing.T) {
 
 func TestStats_Queries_UseLoadedNDV(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	dir := t.TempDir()
 	cat, err := ls.NewCatalog(filepath.Join(dir, "cat"))
 	if err != nil {

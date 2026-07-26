@@ -16,7 +16,6 @@ func TestSeqScan_NeedsStableKey_Default(t *testing.T) {
 	// Register a schema so NewSeqScanWithStore succeeds.
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
 	ex.RegisterTableWithPK("kv", []string{"k", "v"}, "k")
 	ss, err := OP.NewSeqScanWithStore(&engineStore{eng: eng}, "kv")
 	if err != nil {
@@ -33,7 +32,6 @@ func TestSeqScan_NeedsStableKey_Default(t *testing.T) {
 func TestSeqScan_NeedsStableKey_False_AliasesKey(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
 	ex.RegisterTableWithPK("kv", []string{"k", "v"}, "k")
 	ctx := context.Background()
 	for _, s := range []string{
@@ -89,7 +87,6 @@ func TestSeqScan_NeedsStableKey_False_AliasesKey(t *testing.T) {
 func TestSeqScan_NeedsStableKey_True_IndependentCopy(t *testing.T) {
 	ResetForTest(t)
 	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
 	ex.RegisterTableWithPK("kv", []string{"k", "v"}, "k")
 	ctx := context.Background()
 	for _, s := range []string{

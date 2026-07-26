@@ -12,7 +12,6 @@ import (
 func TestIndex_EndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("users", []string{"id", "email", "name"}, "id")
@@ -111,7 +110,6 @@ func TestIndex_EndToEnd(t *testing.T) {
 func TestIndex_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "a"}, "id")
@@ -136,7 +134,6 @@ func TestIndex_NotFound(t *testing.T) {
 func TestIndex_NumericValue(t *testing.T) {
 	dir := t.TempDir()
 	eng, _ := ls.Open(dir)
-	defer eng.Close()
 	store := &engineStore{eng: eng}
 	ex := NewExecutorWithEngine(store)
 	ex.RegisterTableWithPK("t", []string{"id", "score"}, "id")

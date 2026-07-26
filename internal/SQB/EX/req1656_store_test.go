@@ -16,8 +16,7 @@ import (
 // SLT runner path but not in the standalone executor path.
 func TestCrossJoin_StoreEngineRepro(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	setupSQLs := []string{

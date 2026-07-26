@@ -17,8 +17,7 @@ import (
 // getSubqueryPlanner can locate the planner.
 func TestReq001460_NonCorrelatedScalarSubquery_Projection(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	mustExec(t, ex, ctx, "CREATE TABLE subq_t (a INTEGER PRIMARY KEY, b INTEGER)")
@@ -49,8 +48,7 @@ func TestReq001460_NonCorrelatedScalarSubquery_Projection(t *testing.T) {
 // ExecCtx so evalScalarSubquery can locate the planner.
 func TestReq001460_NonCorrelatedScalarSubquery_Filter(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	mustExec(t, ex, ctx, "CREATE TABLE subq_f (a INTEGER PRIMARY KEY, b INTEGER)")
@@ -74,8 +72,7 @@ func TestReq001460_NonCorrelatedScalarSubquery_Filter(t *testing.T) {
 // inner table has no rows (subquery yields NULL).
 func TestReq001460_NullSubquery(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	mustExec(t, ex, ctx, "CREATE TABLE subq_n_src (a INTEGER PRIMARY KEY)")
@@ -106,8 +103,7 @@ func TestReq001460_NullSubquery(t *testing.T) {
 // so extractCorrelatedColumns sees a clear qualified outer reference.
 func TestReq001460_CorrelatedSubquery(t *testing.T) {
 	ResetForTest(t)
-	ex, eng := newEngineExecutor(t)
-	defer eng.Close()
+	ex, _ := newEngineExecutor(t)
 	ctx := context.Background()
 
 	mustExec(t, ex, ctx, "CREATE TABLE subq_c (a INTEGER, b INTEGER, c INTEGER, d INTEGER, e INTEGER)")
