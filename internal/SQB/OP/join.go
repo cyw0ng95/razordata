@@ -311,6 +311,18 @@ func (j *NestedLoopJoin) SharedCols() []string { return j.sharedCols }
 
 func (j *NestedLoopJoin) SharedTypes() []LX.TokenType { return j.sharedTypes }
 
+// SharedColIndex exposes the pre-built ColIndex map. REQ002033: vec
+// transformer copies this into VectorizedNestedLoopJoin so its
+// output batch carries the same alias-prefixed names the non-vec
+// path would have produced.
+func (j *NestedLoopJoin) SharedColIndex() map[string]int { return j.sharedColIndex }
+
+// SharedBuilt reports whether WithSharedSchema has populated the schema.
+func (j *NestedLoopJoin) SharedBuilt() bool { return j.sharedBuilt }
+
+// Projection returns the projected column names (may be nil).
+func (j *NestedLoopJoin) Projection() []string { return j.projectedCols }
+
 func (j *NestedLoopJoin) Next(ctx context.Context) (Row, error) {
 	ec.BUG_ON(j.closed.Load(), "NestedLoopJoin.Next() after Close()")
 	if err := ctx.Err(); err != nil {
