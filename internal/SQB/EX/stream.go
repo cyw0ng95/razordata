@@ -370,6 +370,10 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	}
 	go func() {
 		defer close(rowCh)
+		// REQ002059: always close the plan on goroutine exit so the
+		// operator tree is cleaned up even when the caller abandons
+		// the iterator without calling Close().
+		defer plan.Root.Close()
 		// REQ001604: if the plan is vectorized, drain via NextBatch()
 		// instead of per-row Next() to avoid goroutine-per-row overhead.
 		// REQ001587: exclude *UT.BatchToRowAdapter from the fast-path —
@@ -405,14 +409,23 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 			}
 			return
 		}
+		// REQ002059: hold the mutex across the closed check AND the
+		// Next() call to avoid the TOCTOU race where closer() closes
+		// the plan between the check and the call.
+		//
+		// The outer loop acquires the lock, checks closed, calls Next,
+		// and releases. The closer() function (lines 362-370) also
+		// acquires the lock and sets closed=true before calling Close().
+		// This ensures that if we see closed=false, the plan is still
+		// open for the subsequent Next() call.
 		for {
 			closeMu.Lock()
 			if closed {
 				closeMu.Unlock()
 				return
 			}
-			closeMu.Unlock()
 			r, err := plan.Root.Next(ctx)
+			closeMu.Unlock()
 			if err != nil {
 				return
 			}
