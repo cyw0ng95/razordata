@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	ErrNoActiveMemtable    = errors.New("ls: no active memtable")
+	ErrNoActiveMemtable = errors.New("ls: no active memtable")
 	// REQ001472: pageBufPool recycles 4KB buffers to eliminate
 	// per-page make([]byte, PageSize) allocations during SST loading.
 	pageBufPool = sync.Pool{
@@ -60,9 +60,10 @@ type Options struct {
 	MmapFiles      bool  // REQ001227: zero-copy reads via mmap
 	BlockCacheSize int   // REQ001242: decompressed SST block cache, 0 = disabled
 	SmallTableRows int64 // REQ001244: skip SST reads for tables with ≤N rows
+	MemoryOnly     bool  // REQ002071: keep all data in memtable, no flush to SST
 
 	// REQ001304: LSM auto-compaction settings.
-	AutoCompactMode    string  // "none" | "incremental" | "full", default "none"
+	AutoCompactMode      string  // "none" | "incremental" | "full", default "none"
 	AutoCompactThreshold float64 // garbage ratio threshold, default 0.3
 }
 
@@ -110,10 +111,17 @@ func newEngineWithOptions(dir string, opts Options) (*engine, error) {
 		dir:       dir,
 		memtables: make([]memtableIface, 0, 4),
 		opts:      opts,
-		fs:        opts.FS,
 		log:       slog.Default(),
 	}
-	if e.fs == nil {
+	// REQ002071: MemoryOnly mode uses inMemFS (no disk I/O).
+	if opts.MemoryOnly {
+		e.fs = newInMemFS()
+		if dir == "" {
+			e.dir = ":memory:"
+		}
+	} else if opts.FS != nil {
+		e.fs = opts.FS
+	} else {
 		e.fs = DefaultFS()
 	}
 	activeMem := newShardedMemtable(opts.MemTableSize, opts.MemTableShards)
@@ -156,7 +164,8 @@ func (e *engine) Write(key, value []byte) error {
 	if err := e.activeMem.Insert(key, value); err != nil {
 		return err
 	}
-	if e.activeMem.ShouldFlush() {
+	// REQ002071: suppress flush in MemoryOnly mode — data stays in memtable.
+	if e.activeMem.ShouldFlush() && !e.opts.MemoryOnly {
 		return e.flushActiveMemtable()
 	}
 	return nil
@@ -171,9 +180,10 @@ func (e *engine) Write(key, value []byte) error {
 // REQ001421: per-call overhead is amortised over N rows for
 // autocommit INSERT batches. The cost model:
 //   - Single Write:  1× closed.Load + 1× shouldFlush.Load atomics
-//                    per row.
+//     per row.
 //   - WriteBatch:   1× closed.Load + 1× shouldFlush.Load atomics
-//                    per batch.
+//     per batch.
+//
 // For 100-row INSERT batches this drops the atomic-bound cost
 // from O(N) to O(1).
 func (e *engine) WriteBatch(keys, values [][]byte) error {
@@ -191,7 +201,7 @@ func (e *engine) WriteBatch(keys, values [][]byte) error {
 			return err
 		}
 	}
-	if e.activeMem.ShouldFlush() {
+	if e.activeMem.ShouldFlush() && !e.opts.MemoryOnly {
 		return e.flushActiveMemtable()
 	}
 	return nil
@@ -219,7 +229,7 @@ func (e *engine) DeleteBatch(keys [][]byte) error {
 			return err
 		}
 	}
-	if e.activeMem.ShouldFlush() {
+	if e.activeMem.ShouldFlush() && !e.opts.MemoryOnly {
 		return e.flushActiveMemtable()
 	}
 	return nil
@@ -242,6 +252,10 @@ func (e *engine) flushActiveMemtable() error {
 }
 
 func (e *engine) Sync() error {
+	// REQ002071: no-op in MemoryOnly mode — nothing to flush or sync.
+	if e.opts.MemoryOnly {
+		return nil
+	}
 	if e.activeMem == nil {
 		return ErrNoActiveMemtable
 	}
@@ -633,5 +647,35 @@ func (e *engine) DropAll() error {
 		}
 	}
 
+	return nil
+}
+
+// DropAllInMemory resets the engine to a freshly-opened state without
+// any disk I/O. Only valid when opts.MemoryOnly is true. Clears
+// memtables, manifest version, and page cache. REQ002071.
+func (e *engine) DropAllInMemory() error {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.memtables = nil
+	e.activeMem = newShardedMemtable(e.opts.MemTableSize, e.opts.MemTableShards)
+	e.stats.MemtableHits.Store(0)
+	e.stats.SSTHits.Store(0)
+	e.stats.DiskReads.Store(0)
+	if e.manifest != nil {
+		emptyVersion := &Version{
+			num:     1,
+			levels:  make([][]SSTFileMeta, 0),
+			created: time.Now(),
+		}
+		e.manifest.current.Store(emptyVersion)
+		e.manifest.version.Store(1)
+		_ = e.manifest.Apply(*emptyVersion) // writes via inMemFS, no real I/O
+	}
+	if e.pageCache != nil {
+		e.pageCache.Reset()
+	}
 	return nil
 }

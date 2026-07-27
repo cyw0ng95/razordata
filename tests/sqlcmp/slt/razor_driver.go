@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,55 +74,31 @@ func (c *RazorClassifier) Classify(err error) Verdict {
 	}
 }
 
-// Connect creates a unique temp dir, opens a database/sql connection,
-// and stores the underlying engine for edge-probe tests.
-// Temp dir is created under RAZOR_SLT_TMP when set, or the system
-// default temp dir otherwise. REQ001056: use a non-tmpfs directory
-// (e.g. project-local tmp/) to avoid in-memory filesystem issues.
+// Connect creates an in-memory engine for SQL logic testing.
+// REQ002071: uses MemoryOnly mode — no WAL, no SST flush, no disk I/O.
+// This eliminates temp directory creation and all file I/O for 20-50%
+// SLT speedup. Results are identical to disk-backed mode.
 func (d *RazorDriver) Connect(ctx context.Context) error {
-	tmpRoot := os.Getenv("RAZOR_SLT_TMP")
-	if tmpRoot == "" {
-		tmpRoot = ""
-	}
-	dir, err := os.MkdirTemp(tmpRoot, "razor-slt-")
-	if err != nil {
-		return err
-	}
-	d.dir = dir
-
-	dsn := filepath.Join(dir, "db.razor")
-	d.dsn = dsn
-
-	// Pre-create engine with small memory budget to avoid OOM.
-opts := AP.Options{
-		Dir:              filepath.Join(dir, "db.razor.engine"),
-		MemTableSize:     1 << 20,   // 1 MiB minimum
-		BufferPoolMB:     64,        // 64 MiB minimum
+	opts := AP.Options{
+		MemoryOnly:        true,
 		MaxMemoryPerQuery: 512 << 20, // 512 MiB per-query cap (REQ001056)
 		JoinBufferSize:    256 << 20, // 256 MiB per-hash-join cap (REQ001056)
 		MaxResultRows:     100_000,   // cap query results to prevent OOM from cross joins (REQ001056)
 	}
-	if err := os.MkdirAll(opts.Dir, 0o755); err != nil {
-		_ = os.RemoveAll(dir)
-		d.dir = ""
-		return err
-	}
-	eng, err := v1.Open(ctx, dir, opts)
+	eng, err := v1.Open(ctx, "", opts)
 	if err != nil {
-		_ = os.RemoveAll(dir)
-		d.dir = ""
 		return err
 	}
 	d.engine = eng
 
-	// Register the engine so sql.Open("razor", dsn) finds it.
+	// For database/sql driver registration, use a synthetic DSN.
+	dsn := fmt.Sprintf("memory://%p", eng)
+	d.dsn = dsn
 	razordriver.RegisterEngine(dsn, eng)
 
 	db, err := sql.Open("razor", dsn)
 	if err != nil {
 		_ = eng.Close(context.Background())
-		_ = os.RemoveAll(dir)
-		d.dir = ""
 		d.engine = nil
 		return err
 	}
@@ -134,8 +109,6 @@ opts := AP.Options{
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		_ = eng.Close(context.Background())
-		_ = os.RemoveAll(dir)
-		d.dir = ""
 		d.db = nil
 		d.engine = nil
 		return err

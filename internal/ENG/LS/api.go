@@ -269,6 +269,16 @@ func (eng *Engine) Sync() error {
 	return eng.e.Sync()
 }
 
+// DropAllInMemory resets the engine to a freshly-opened state without
+// disk I/O. Only valid when the engine was opened with MemoryOnly.
+// REQ002071.
+func (eng *Engine) DropAllInMemory() error {
+	if eng == nil || eng.e == nil {
+		return nil
+	}
+	return eng.e.DropAllInMemory()
+}
+
 // Stats returns a snapshot of the engine's read-path counters.
 func (eng *Engine) Stats() ReadStats {
 	if eng == nil || eng.e == nil {

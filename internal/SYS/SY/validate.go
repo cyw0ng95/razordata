@@ -12,7 +12,7 @@ func validateOptions(o *AP.Options) error {
 	if o == nil {
 		return fmt.Errorf("%w: options is nil", AP.New(AP.KindInvalidOptions, "invalid options"))
 	}
-	if !o.InMemory {
+	if !o.InMemory && !o.MemoryOnly {
 		if o.Dir == "" {
 			return fmt.Errorf("%w: Dir is required", AP.New(AP.KindInvalidOptions, "invalid options"))
 		}

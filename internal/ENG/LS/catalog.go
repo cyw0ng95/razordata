@@ -80,6 +80,16 @@ type Catalog struct {
 }
 
 // NewCatalog opens or creates a catalog rooted at dir.
+// NewInMemoryCatalog creates a catalog that never writes to disk.
+// Used by MemoryOnly engine mode for SLT tests. REQ002071.
+func NewInMemoryCatalog() *Catalog {
+	inner := ct.NewCatalogNoPersist(lsEncodeEntry, lsDecodeEntry)
+	return &Catalog{
+		inner:  inner,
+		nextID: 1,
+	}
+}
+
 func NewCatalog(dir string) (*Catalog, error) {
 	inner, err := ct.NewCatalog(dir, lsEncodeEntry, lsDecodeEntry)
 	if err != nil {
@@ -310,6 +320,18 @@ func (c *Catalog) Close() error {
 		return nil
 	}
 	return c.inner.Close()
+}
+
+// Reset clears all catalog entries, returning to a freshly-opened state.
+// Used by Engine.Reset in MemoryOnly mode. REQ002071.
+func (c *Catalog) Reset() {
+	if c == nil {
+		return
+	}
+	c.inner.Reset()
+	c.mu.Lock()
+	c.nextID = 1
+	c.mu.Unlock()
 }
 
 func (c *Catalog) Path() string {

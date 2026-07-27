@@ -93,6 +93,21 @@ type Catalog struct {
 	closed      atomic.Bool
 	encodeEntry EncodeFunc
 	decodeEntry DecodeFunc
+	noPersist   bool // REQ002071: in-memory mode, skip all disk writes
+}
+
+// NewCatalogNoPersist creates an in-memory catalog that never writes to
+// disk. All mutations stay in the in-memory cache. Used by MemoryOnly
+// engine mode for SLT tests. REQ002071.
+func NewCatalogNoPersist(encode EncodeFunc, decode DecodeFunc) *Catalog {
+	return &Catalog{
+		cache:       make(map[uint64]*RawEntry),
+		byName:      make(map[string]uint64),
+		nextID:      1,
+		encodeEntry: encode,
+		decodeEntry: decode,
+		noPersist:   true,
+	}
 }
 
 // NewCatalog opens or creates a catalog rooted at dir. The encode
@@ -118,6 +133,10 @@ func NewCatalog(dir string, encode EncodeFunc, decode DecodeFunc) (*Catalog, err
 }
 
 func (c *Catalog) bootstrap() error {
+	if c.noPersist {
+		c.nextID = 1
+		return nil // REQ002071: in-memory mode, skip disk read
+	}
 	data, err := os.ReadFile(c.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -336,6 +355,17 @@ func (c *Catalog) Len() int {
 	return len(c.cache)
 }
 
+// Reset clears all catalog entries, returning it to a freshly-opened
+// state. Used by Engine.Reset in MemoryOnly mode to ensure complete
+// cleanup between SLT test files. REQ002071.
+func (c *Catalog) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	clear(c.cache)
+	clear(c.byName)
+	c.nextID = 1
+}
+
 // Close marks the catalog as closed. Safe to call multiple times.
 func (c *Catalog) Close() error {
 	if c == nil {
@@ -361,6 +391,9 @@ func (c *Catalog) FlushLocked() error {
 }
 
 func (c *Catalog) flushLocked() error {
+	if c.noPersist {
+		return nil // REQ002071: in-memory mode, skip disk write
+	}
 	var buf []byte
 	buf = append(buf, CatalogMagic[:]...)
 	buf = append(buf, SchemaVersionCurrent)

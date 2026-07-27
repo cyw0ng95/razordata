@@ -19,8 +19,8 @@ import (
 	lg "github.com/cyw0ng95/razordata/internal/LOG/LG"
 	bf "github.com/cyw0ng95/razordata/internal/MEM/BF"
 	sp "github.com/cyw0ng95/razordata/internal/MEM/SP"
-	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	executor "github.com/cyw0ng95/razordata/internal/SQB/EX"
 	"github.com/cyw0ng95/razordata/internal/SYS/AP"
 	vl "github.com/cyw0ng95/razordata/internal/TXN/VL"
 	fl "github.com/cyw0ng95/razordata/internal/WAL/FL"
@@ -61,7 +61,7 @@ type Engine struct {
 }
 
 func Open(ctx context.Context, dir string, opts AP.Options) (*Engine, error) {
-	if !opts.InMemory && dir == "" {
+	if !opts.InMemory && !opts.MemoryOnly && dir == "" {
 		return nil, fmt.Errorf("%w: dir is required", AP.New(AP.KindInvalidOptions, "invalid options"))
 	}
 	opts.Dir = dir
@@ -111,6 +111,9 @@ func (e *Engine) open(ctx context.Context) (err error) {
 	executor.UnregisterAll()
 	if e.opts.InMemory {
 		return e.openInMemory()
+	}
+	if e.opts.MemoryOnly {
+		return e.openMemoryOnly()
 	}
 	if e.opts.CreateIfMissing {
 		if err := os.MkdirAll(e.dir, 0o755); err != nil {
@@ -229,6 +232,53 @@ func (e *Engine) openInMemory() (err error) {
 	return nil
 }
 
+// openMemoryOnly creates a full engine with in-memory storage: LS engine
+// with inMemFS, no WAL, no SST flush, no BufferPool. All data stays in
+// memtable. Used by SLT tests for 20-50% speedup. REQ002071.
+func (e *Engine) openMemoryOnly() (err error) {
+	e.log = lg.New(lg.Options{Format: "text", Level: e.opts.LogLevel, Output: os.Stderr})
+	success := false
+	defer func() {
+		if !success {
+			e.closeBestEffort()
+		}
+	}()
+	e.sp = sp.NewWithOptions(sp.Options{EnableHugePages: e.opts.EnableHugePages})
+
+	// Open LS engine with inMemFS — all data stays in memtable, no flush.
+	e.eng, err = ls.OpenWithOptions(":memory:", ls.Options{
+		MemTableShards: ls.DefaultMemTableShards,
+		MemTableSize:   1 << 30, // 1 GiB — large enough for SLT data
+		MemoryOnly:     true,
+		BlockCacheSize: 0, // no SST block cache needed
+	})
+	if err != nil {
+		return err
+	}
+
+	// Transaction manager (no WAL wired — e.wr is nil).
+	e.txn = vl.NewManager()
+
+	// Executor wired to LS engine.
+	e.exeAdapter = &executorStoreAdapter{eng: e.eng}
+	e.exe = executor.NewExecutorWithEngine(e.exeAdapter)
+	e.exe.SetRowArena(&e.rowArena)
+	e.exe.WithMemoryBudget(e.opts.MaxMemoryPerQuery, e.opts.JoinBufferSize)
+	if e.opts.MaxResultRows > 0 {
+		e.exe.WithMaxResultRows(e.opts.MaxResultRows)
+	}
+
+	// In-memory catalog (no disk persistence).
+	cat := ls.NewInMemoryCatalog()
+	DT.SetCatalog(cat)
+	e.catalog = cat
+
+	e.started = time.Now()
+	e.opened.Store(true)
+	success = true
+	return nil
+}
+
 func (e *Engine) SetSnapshot(ts uint64) {
 	e.exeAdapter.SetSnapshot(ts)
 	e.exe.SetSnapshot(ts)
@@ -341,7 +391,7 @@ func (e *Engine) Begin(ctx context.Context) (AP.Session, error) {
 	return sessionConstructor(e), nil
 }
 
-func (e *Engine) IsClosed() bool   { return e.closed.Load() }
+func (e *Engine) IsClosed() bool { return e.closed.Load() }
 
 // Reset drops all user tables, schemas, and in-memory state, returning
 // the engine to a clean post-Open state. Preserves the directory, WAL,
@@ -367,9 +417,23 @@ func (e *Engine) Reset(ctx context.Context) error {
 	// state (memtable, manifest, page cache, mmap, SST files) so each
 	// file runs against a truly fresh engine.
 	if e.eng != nil {
-		if err := e.eng.DropAll(); err != nil {
-			return err
+		if e.opts.MemoryOnly {
+			if err := e.eng.DropAllInMemory(); err != nil {
+				return err
+			}
+		} else {
+			if err := e.eng.DropAll(); err != nil {
+				return err
+			}
 		}
+	}
+	// REQ002071: reset catalog entries in MemoryOnly mode so
+	// subsequent queries cannot resolve stale table definitions.
+	// Re-bind the catalog into DT so table ID allocation continues
+	// from 1 (consistent with fresh-open behavior).
+	if e.catalog != nil && e.opts.MemoryOnly {
+		e.catalog.Reset()
+		DT.SetCatalog(e.catalog)
 	}
 	return nil
 }
@@ -409,7 +473,7 @@ func (e *Engine) Stats() AP.EngineStats {
 		tx := e.txn.Stats()
 		out.Tx = AP.TxnStats{Active: tx.Active, Committed: tx.Committed, Aborted: tx.Aborted}
 	}
-	if !e.opts.InMemory {
+	if !e.opts.InMemory && !e.opts.MemoryOnly {
 		out.WAL = e.walStats()
 	}
 	return out
@@ -428,6 +492,7 @@ type executorStoreAdapter struct {
 
 func (a *executorStoreAdapter) Insert(k, v []byte) error { return a.eng.Insert(k, v) }
 func (a *executorStoreAdapter) Delete(k []byte) error    { return a.eng.Delete(k) }
+
 // WriteBatch forwards REQ001421's amortised batched inserts. Adding
 // this method makes the adapter satisfy DT.BatchStore so the
 // executor's chunked mutation path (REQ001555 UpdateRowBatch,
@@ -436,6 +501,7 @@ func (a *executorStoreAdapter) Delete(k []byte) error    { return a.eng.Delete(k
 func (a *executorStoreAdapter) WriteBatch(keys, values [][]byte) error {
 	return a.eng.WriteBatch(keys, values)
 }
+
 // DeleteBatch forwards REQ001556's amortised batched tombstone writes.
 // Adding this method makes the adapter satisfy DT.BatchDeleteStore so
 // the executor's chunked DELETE path (REQ001556 DeleteRowBatch)

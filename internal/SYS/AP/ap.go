@@ -32,6 +32,7 @@ type Options struct {
 	CreateIfMissing    bool
 	CreateIfMissingSet bool
 	InMemory           bool
+	MemoryOnly         bool          // REQ002071: full engine with in-memory storage, no WAL/SST/disk I/O
 	ShutdownTimeout    time.Duration // REQ000687: configurable shutdown timeout, default 30s
 	EmergencyShutdown  bool          // REQ000688: skip Phase 2+3, flush only
 	MaxMemoryPerQuery  int64         // REQ001056: per-query memory cap, 0 = unlimited

@@ -124,19 +124,22 @@ func (e *Engine) runShutdown(ctx context.Context, timeouts ShutdownTimeouts) err
 	if e.log != nil {
 		e.log.Info("sy.shutdown.phase3", "msg", "flush pending writes")
 	}
-	if e.eng != nil {
-		if err := e.eng.Sync(); err != nil {
-			setErr(err, "phase3.engine.sync")
+	// REQ002071: skip flush in MemoryOnly mode — nothing to flush.
+	if !e.opts.MemoryOnly {
+		if e.eng != nil {
+			if err := e.eng.Sync(); err != nil {
+				setErr(err, "phase3.engine.sync")
+			}
 		}
-	}
-	if e.wr != nil {
-		if err := e.wr.Sync(); err != nil {
-			setErr(err, "phase3.wal.sync")
+		if e.wr != nil {
+			if err := e.wr.Sync(); err != nil {
+				setErr(err, "phase3.wal.sync")
+			}
 		}
-	}
-	if e.fl != nil {
-		if err := e.fl.Sync(); err != nil {
-			setErr(err, "phase3.flusher.sync")
+		if e.fl != nil {
+			if err := e.fl.Sync(); err != nil {
+				setErr(err, "phase3.flusher.sync")
+			}
 		}
 	}
 phase4:
