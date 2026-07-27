@@ -72,13 +72,32 @@ func drainBatchProducer(ctx context.Context, bp UT.BatchProducer, execCtx *DT.Ex
 		}
 		rows, newBuf := batch.ToRowsShared(buf)
 		buf = newBuf
+		// REQ001638: deep-copy Data since the shared buffer is
+		// reused across batches.
+		// REQ002012: use RowArena to avoid per-row make+copy heap
+		// allocation (~5% of total alloc bytes). The arena is a
+		// bump allocator; rows are valid until the arena is reset
+		// at the end of the query.
 		for i := range rows {
-			// REQ001638: deep-copy Data since the shared buffer is
-			// reused across batches.
 			row := rows[i]
-			copied := make([]pl.Value, len(row.Data))
-			copy(copied, row.Data)
-			row.Data = copied
+			if execCtx != nil {
+				if arena, ok := execCtx.RowArena.(*DT.RowArena); ok && arena != nil {
+					arenaRow := arena.AllocRow(len(row.Data), nil)
+					copy(arenaRow.Data, row.Data)
+					arenaRow.Cols = row.Cols
+					arenaRow.Types = row.Types
+					arenaRow.ColIndex = row.ColIndex
+					row = arenaRow
+				} else {
+					copied := make([]pl.Value, len(row.Data))
+					copy(copied, row.Data)
+					row.Data = copied
+				}
+			} else {
+				copied := make([]pl.Value, len(row.Data))
+				copy(copied, row.Data)
+				row.Data = copied
+			}
 			if execCtx != nil {
 				DT.WithExecContext(&row, execCtx)
 			}
