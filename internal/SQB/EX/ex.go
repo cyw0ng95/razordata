@@ -149,8 +149,10 @@ type stmtCacheEntry struct {
 }
 
 // planCacheEntry holds a cached compiled plan with LRU metadata.
-// REQ001011.
+// REQ001011. REQ002066: store the key so eviction can delete from
+// the map without scanning all entries (O(N²) → O(1)).
 type planCacheEntry struct {
+	key    string
 	result *pl.PlanResult
 }
 
@@ -601,18 +603,15 @@ func (e *Executor) putCachedPlan(key string, result *pl.PlanResult) {
 	if aop, ok := result.Root.(*AD.AdaptiveOp); ok {
 		cachedResult.Root = AD.NewAdaptiveOp(aop.Child(), key)
 	}
-	ent := &planCacheEntry{result: &cachedResult}
+	ent := &planCacheEntry{result: &cachedResult, key: key}
 	e.planCache.entries[key] = ent
 	e.planCache.lru = append([]*planCacheEntry{ent}, e.planCache.lru...)
 	for len(e.planCache.lru) > e.planCache.maxSize {
 		oldest := e.planCache.lru[len(e.planCache.lru)-1]
 		e.planCache.lru = e.planCache.lru[:len(e.planCache.lru)-1]
-		for key, val := range e.planCache.entries {
-			if val == oldest {
-				delete(e.planCache.entries, key)
-				break
-			}
-		}
+		// REQ002066: use the stored key for O(1) map deletion
+		// instead of scanning all entries to find the key.
+		delete(e.planCache.entries, oldest.key)
 	}
 }
 
