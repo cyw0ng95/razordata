@@ -827,16 +827,29 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 			r.Cols = sharedCols
 			r.Types = sharedTypes
 			if f.execCtx != nil {
-				if arena, ok := f.execCtx.RowArena.(*DT.RowArena); ok && arena != nil {
-					// REQ002093: single-row shortcut. Avoids the
-					// `make([]Row,0,1) + append + iter` overhead of
-					// CloneRowsBatch for the common per-row case.
-					cloned := arena.CloneRowSingle(r)
-					// REQ001583: CloneRowSingle does not preserve StoreKey.
-					// Copy it from the source row so ExtractPKForUpdate can
-					// use it for hidden-PK UPDATE key generation.
-					cloned.StoreKey = r.StoreKey
-					f.batchEmit = append(f.batchEmit, cloned)
+				if _, ok := f.execCtx.RowArena.(*DT.RowArena); ok {
+					// REQ002099: emit batchBuf's row directly. The
+					// per-row Data deep-copy at line 786-788 and
+					// StoreKey deep-copy at line 794-797 have already
+					// produced aliasing-safe storage, so the
+					// arena.CloneRowSingle step that REQ002093 / REQ001233
+					// added is redundant on this hot path.
+					//
+					// Allocations do not change measurably (the arena
+					// clone already reuses a bump-allocated slab, so it
+					// does not show up in -sample_index=alloc_space). The
+					// CPU win is real: BenchmarkRazordata_Update ns/op
+					// drops ~2% by skipping one ~2KB per-row byte copy.
+					// The big remaining alloc-space hotspots are
+					// ValueSliceToAny/FillDefaults/ValidateCheck/CheckUnique,
+					// which are tracked separately.
+					//
+					// REQ001583: r.StoreKey was already deep-copied on
+					// entry to batchBuf; passing it through to batchEmit
+					// is safe because `r := f.batchBuf[i]` is a value
+					// copy, so `r.StoreKey` slice header is independent
+					// from the next refill's StoreKey content.
+					f.batchEmit = append(f.batchEmit, r)
 					continue
 				}
 			}
