@@ -710,10 +710,22 @@ func RowEqual(a, b Row) bool {
 }
 
 // ReplaceBySnapshot replaces a row in a table by matching a snapshot.
+// REQ002098: when the snapshot carries a valid RowIndex (set by SeqScan
+// for in-memory tables), use it directly for O(1) lookup instead of
+// scanning the entire table via RowIndexLocked. Falls back to the
+// linear scan when RowIndex is out of bounds or the row at that index
+// does not match (e.g. the row was shifted by a concurrent operation).
 func ReplaceBySnapshot(table string, snapshot, updated Row) error {
 	TablesMu.Lock()
 	defer TablesMu.Unlock()
 	existing := Tables[table]
+	idx := snapshot.RowIndex
+	if idx >= 0 && idx < len(existing) && RowEqual(existing[idx], snapshot) {
+		existing[idx] = updated
+		Tables[table] = existing
+		return nil
+	}
+	// Fallback: linear scan (store-backed tables, or RowIndex mismatch).
 	idx, ok := RowIndexLocked(existing, snapshot)
 	if !ok {
 		return errors.New("ex: row not found for update")

@@ -712,6 +712,7 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 	// REQ000759: clone one row on demand instead of eager snapshot.
 	r := src[s.pos]
 	s.pos++
+	rowIndex := s.pos - 1
 	schema := getTableSchema(s.table, src)
 	if schema == nil {
 		return Row{}, ErrNoRows
@@ -722,7 +723,12 @@ func (s *SeqScan) Next(ctx context.Context) (Row, error) {
 		s.iu.RecordIndexSkip(s.availableIdx[0], s.table, "SeqScan used instead of IndexScan")
 	}
 
-	return s.cloneRow(r, schema), nil
+	out := s.cloneRow(r, schema)
+	// REQ002098: record the in-memory table position so
+	// ReplaceBySnapshot can find the row in O(1) instead of
+	// scanning the entire table.
+	out.RowIndex = rowIndex
+	return out, nil
 }
 
 func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {

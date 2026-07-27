@@ -207,6 +207,7 @@ func (a *RowArena) cloneRowLocked(r Row) Row {
 		Types:    r.Types,
 		ColIndex: r.ColIndex,
 		Data:     dst,
+		RowIndex: r.RowIndex,
 	}
 }
 
@@ -486,6 +487,7 @@ func (a *RowArena) CloneRow(r Row) Row {
 		Types:    r.Types,
 		ColIndex: r.ColIndex,
 		Data:     dst,
+		RowIndex: r.RowIndex,
 	}
 }
 
@@ -541,7 +543,7 @@ func (a *RowArena) SnapshotRowSingle(src Row, nCols int) Row {
 		nCols = len(src.Data)
 	}
 	if nCols == 0 {
-		return Row{Cols: src.Cols, Types: src.Types, ColIndex: src.ColIndex}
+		return Row{Cols: src.Cols, Types: src.Types, ColIndex: src.ColIndex, RowIndex: src.RowIndex}
 	}
 	needed := a.offset + nCols
 	if needed > a.slabCap {
@@ -556,5 +558,8 @@ func (a *RowArena) SnapshotRowSingle(src Row, nCols int) Row {
 		Types:    src.Types,
 		ColIndex: src.ColIndex,
 		Data:     dst,
+		// REQ002098: preserve RowIndex so ReplaceBySnapshot can
+		// find the row in O(1) instead of scanning the entire table.
+		RowIndex: src.RowIndex,
 	}
 }

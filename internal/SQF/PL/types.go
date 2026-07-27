@@ -87,12 +87,19 @@ type Row struct {
 	// subquery eval can resolve QualifiedName references against
 	// the correct table.
 	TableName string
-	// RowFromSubsetDecode is set by SeqScan when the row was
+// RowFromSubsetDecode is set by SeqScan when the row was
 	// produced by the column-aware subset decoder (REQ001434).
 	// The downstream alias pass in nextFromStore must skip
-	// rewriting row.Cols because the subset decoder already
-	// produced the correct (possibly aliased) names.
+	// prefixCols for such rows.
 	RowFromSubsetDecode bool
+	// REQ002098: RowIndex is the position of this row in the
+	// in-memory DT.Tables slice. Set by SeqScan.Next for in-memory
+	// tables; used by ReplaceBySnapshot to find the row in O(1)
+	// instead of scanning the entire table. 0 is a valid index
+	// (the first row). For store-backed rows and rows not from a
+	// SeqScan, RowIndex is 0 but the store-path fallback in
+	// ReplaceBySnapshot handles those correctly via StoreKey.
+	RowIndex int
 }
 
 // Lookup returns the value at the given column name.
