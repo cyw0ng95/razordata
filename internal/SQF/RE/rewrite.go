@@ -40,6 +40,12 @@ func rewriteSelect(s *PS.Select) *PS.Select {
 	out.OrderBy = cloneOrderBy(s.OrderBy)
 	out.Limit = RewriteExpr(s.Limit)
 	out.Offset = RewriteExpr(s.Offset)
+	// REQ002053: also rewrite GroupBy and Having expressions.
+	// Without this, constant folding inside GROUP BY/HAVING is
+	// skipped, and expressions like SUM(col) inside HAVING bypass
+	// the rewriter entirely.
+	out.Having = RewriteExpr(s.Having)
+	out.GroupBy = cloneExprSlice(s.GroupBy)
 	return &out
 }
 
