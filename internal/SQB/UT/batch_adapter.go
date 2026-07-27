@@ -21,6 +21,9 @@ type BatchToRowAdapter struct {
 	// a fresh []pl.Row per batch; this buffer avoids that allocation
 	// by growing to the max batch size and re-slicing.
 	rowBuf []pl.Row
+	// REQ002096: reusable Data slab for ToRowsShared. Eliminates the
+	// per-row make([]pl.Value, nCols) that ToRows() does.
+	rowBufData []pl.Value
 }
 
 // NewBatchToRowAdapter creates an adapter that wraps a BatchProducer
@@ -56,15 +59,41 @@ func (a *BatchToRowAdapter) Next(ctx context.Context) (pl.Row, error) {
 		// Next.
 		// REQ001663: reuse rowBuf across refills to avoid
 		// allocating a new []pl.Row per batch.
-		rows := b.ToRows()
-		if cap(a.rowBuf) < len(rows) {
-			a.rowBuf = make([]pl.Row, len(rows))
+		// REQ002096: drain the batch directly into a.rowBuf with
+		// a shared Data slab (a.rowBufData). This avoids the
+		// ToRows() / ToRowsShared() call altogether, saving the
+		// `make([]pl.Row, 0, logical)` allocation (13.6% flat
+		// alloc in BenchmarkRazordata_SelectGroupBy) and the
+		// copy into a.rowBuf.
+		names := b.ColNames()
+		nCols := len(names)
+		logical := b.LogicalSize()
+		needed := logical * nCols
+		if cap(a.rowBufData) < needed {
+			a.rowBufData = make([]pl.Value, needed)
 		} else {
-			a.rowBuf = a.rowBuf[:len(rows)]
+			a.rowBufData = a.rowBufData[:needed]
 		}
-		copy(a.rowBuf, rows)
-		// The rows slice from ToRows is discarded; the GC
-		// reclaims it. a.rowBuf holds the stable copy.
+		if cap(a.rowBuf) < logical {
+			a.rowBuf = make([]pl.Row, logical)
+		} else {
+			a.rowBuf = a.rowBuf[:logical]
+		}
+		for r := 0; r < logical; r++ {
+			phys := r
+			if b.Sel != nil {
+				phys = int(b.Sel[r])
+			}
+			off := r * nCols
+			data := a.rowBufData[off : off+nCols : off+nCols]
+			for c := range names {
+				data[c] = ToValue(b.Cols[c], phys)
+			}
+			a.rowBuf[r] = pl.Row{
+				Cols: names,
+				Data: data,
+			}
+		}
 		a.rows = a.rowBuf
 		if b.Pooled {
 			b.Put()
