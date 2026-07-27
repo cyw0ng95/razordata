@@ -2,27 +2,13 @@
 // Next() calls. Producers (SeqScan.cloneRow) get slices from the pool;
 // consumers (Sort.Close) return them. Slices are zeroed before reuse to
 // prevent reference leaks.
+//
+// REQ002099: rowDataPool removed — the pool was never populated
+// (putRowData was never called), so every getRowData fell back to
+// make([]Value, n). The sync.Pool eface boxing overhead was worse
+// than the direct allocation. Use make([]Value, n) directly.
 package OP
 
-import (
-	"sync"
-)
-
-var rowDataPool sync.Pool
-
 func getRowData(n int) []Value {
-	if v := rowDataPool.Get(); v != nil {
-		buf := *v.(*[]Value)
-		if cap(buf) >= n {
-			return buf[:n]
-		}
-	}
 	return make([]Value, n)
-}
-
-func putRowData(s []Value) {
-	for i := range s {
-		s[i] = Value{}
-	}
-	rowDataPool.Put(&s)
 }

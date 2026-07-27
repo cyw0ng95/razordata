@@ -350,8 +350,38 @@ func CheckUnique(schema *DT.StoreSchema, row DT.Row, pending map[string]struct{}
 		}
 	}
 	for _, uk := range keys {
-		vals := make([]any, len(uk.Cols))
+		// REQ002099: defer the vals allocation — only needed when the
+		// snapshot check fails (UPDATE path where the PK changed) or
+		// when the lookup is called. The UPDATE bench hot path has
+		// pending=nil and the PK doesn't change (only score is modified),
+		// so the snapshot check always matches and the lookup is never
+		// called. This avoids the per-row make([]any,1) + ToAny boxing
+		// (~12.5% flat alloc on BenchmarkRazordata_Update).
+		//
+		// Self-match for UPDATE no-ops: if the old value (from
+		// snapshot) equals the new value for every column in this
+		// unique key, skip the lookup.
 		anyNil := false
+		if len(snapshot.Data) > 0 {
+			same := true
+			for _, idx := range uk.Cols {
+				if idx >= len(snapshot.Data) {
+					same = false
+					break
+				}
+// REQ002099: compare Value directly to avoid ToAny boxing.
+				eq, err := DT.EqualValue(snapshot.Data[idx], row.Data[idx])
+				if err != nil || !eq {
+					same = false
+					break
+				}
+			}
+			if same {
+				continue
+			}
+		}
+		// Build vals only when needed (snapshot check failed or INSERT).
+		vals := make([]any, len(uk.Cols))
 		for i, idx := range uk.Cols {
 			vals[i] = row.Data[idx].ToAny()
 			if vals[i] == nil {
@@ -359,9 +389,6 @@ func CheckUnique(schema *DT.StoreSchema, row DT.Row, pending map[string]struct{}
 				break
 			}
 		}
-		// NULL semantics: skip columns with NULL — SQL standard allows
-		// multiple NULLs in a UNIQUE column. v1 behavior: skip the
-		// check entirely for this key (consistent with PG/SQLite).
 		if anyNil {
 			continue
 		}
@@ -378,21 +405,6 @@ func CheckUnique(schema *DT.StoreSchema, row DT.Row, pending map[string]struct{}
 			keyStr = string(key)
 			if _, dup := pending[keyStr]; dup {
 				return fmt.Errorf("%w: duplicate of (%v) within statement", ErrConstraint, vals)
-			}
-		}
-		// Self-match for UPDATE no-ops: if the old value (from
-		// snapshot) equals the new value for every column in this
-		// unique key, skip the lookup.
-		if len(snapshot.Data) > 0 {
-			same := true
-			for i, idx := range uk.Cols {
-				if idx >= len(snapshot.Data) || !DT.EqualValueAny(snapshot.Data[idx], vals[i]) {
-					same = false
-					break
-				}
-			}
-			if same {
-				continue
 			}
 		}
 		exists, err := lookup(uk.Cols, vals)

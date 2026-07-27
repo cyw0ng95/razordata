@@ -182,6 +182,9 @@ type SeqScan struct {
 	// instead of allocating an independent copy, eliminating one
 	// per-row allocation. The Filter.refillBatch path still deep-copies
 	// StoreKey before retaining it, so aliasing is safe for SELECT.
+	// REQ001583: needsStableKey is set for UPDATE/DELETE paths so
+	// the SeqScan deep-copies the store key into a stable buffer
+	// that won't be overwritten by the next Next() call.
 	// Default true (safe for UPDATE/DELETE which read StoreKey via
 	// ExtractPKForUpdate).
 	needsStableKey bool
