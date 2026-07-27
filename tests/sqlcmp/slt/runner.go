@@ -3,6 +3,7 @@ package slt
 import (
 	"context"
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -663,11 +664,13 @@ func (r *Runner) runStraightThrough(ctx context.Context, records []Record) Stats
 }
 
 // isContextDeadlineExceeded detects go context deadline errors.
+// REQ002064: use errors.Is for reliable wrapping detection instead
+// of fragile string matching.
 func isContextDeadlineExceeded(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "context deadline exceeded")
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 // truncateStr truncates s to max characters with an ellipsis suffix.
