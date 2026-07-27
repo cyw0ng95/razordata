@@ -929,6 +929,10 @@ func (j *VectorizedHashJoin) refillProbe(ctx context.Context) bool {
 
 func (j *VectorizedHashJoin) newOutputBatch(nCols int) *UT.Batch {
 	output := UT.GetBatch(nCols)
+	// REQ002043: explicitly reset Size — GetBatch may recycle a batch
+	// whose Size is > 0 from a prior use, and phantom rows would appear
+	// if the VectorizedHashJoin's output consumer reads Size directly.
+	output.Size = 0
 	for i := 0; i < j.buildN; i++ {
 		output.Cols[i].Name = j.buildNames[i]
 		output.Cols[i].Type = j.buildTypes[i]

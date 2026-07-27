@@ -1113,8 +1113,15 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 			execCtx.RowArena = e.ensureArena()
 			propagateExecContext(plan.Root, execCtx)
-			defer plan.Root.Close()
-			row, err := plan.Root.Next(ctx)
+			// REQ002058: wrap the cached plan in a fresh AdaptiveOp so
+			// Close() only closes the wrapper, not the cached tree.
+			// The previous code used defer plan.Root.Close() which closed
+			// the shared operator tree, causing subsequent cache hits to
+			// operate on a closed tree → ErrNoRows or panic.
+			cachedKey := plan.MemoKey
+			wrapper := AD.NewAdaptiveOp(plan.Root, cachedKey)
+			row, err := wrapper.Next(ctx)
+			wrapper.Close()
 			if err != nil {
 				if err == DT.ErrNoRows {
 					return &Rows{}, nil
