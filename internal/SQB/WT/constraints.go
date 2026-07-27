@@ -315,6 +315,14 @@ func ValidateCheck(schema *DT.StoreSchema, row DT.Row) error {
 // non-nil, each unique key's old value is compared: if the old value
 // equals the new value, the check is skipped (no-op self-match) so
 // `UPDATE t SET a = a` does not self-conflict. REQ000516.
+//
+// REQ002100 (attempted, rolled back): sync.Pool of []any / []byte
+// scratch buffers showed 0% improvement on BenchmarkRazordata_Update
+// because each Put/Get boxes the slice into `any`, which itself
+// allocates the eface header on the heap — for small slices (~32B)
+// the pool overhead cancels the savings. The encodeUniqueKeyInto
+// helper is kept for future per-call reuse paths that do not go
+// through sync.Pool.
 func CheckUnique(schema *DT.StoreSchema, row DT.Row, pending map[string]struct{}, snapshot DT.Row, lookup UniqueLookup) error {
 	if lookup == nil {
 		return nil
@@ -350,10 +358,17 @@ func CheckUnique(schema *DT.StoreSchema, row DT.Row, pending map[string]struct{}
 		if anyNil {
 			continue
 		}
-		key := EncodeUniqueKey(uk.Cols, vals)
-		keyStr := string(key)
-		// Pending-batch check.
+		// REQ002100 (round 2): only encode the pending key when the
+		// pending map is non-nil. The bench UPDATE hot path passes
+		// pending=nil (writers_dml.go:1080) and only uses the
+		// lookup(uk.Cols, vals) result below; the previous code
+		// always allocated a []byte via EncodeUniqueKey + copied it
+		// to a string for an unused keyStr, costing ~31 MB flat
+		// alloc_space in BenchmarkRazordata_Update.
+		var keyStr string
 		if pending != nil {
+			key := EncodeUniqueKey(uk.Cols, vals)
+			keyStr = string(key)
 			if _, dup := pending[keyStr]; dup {
 				return fmt.Errorf("%w: duplicate of (%v) within statement", ErrConstraint, vals)
 			}
@@ -417,6 +432,55 @@ func EncodeUniqueKey(cols []int, vals []any) []byte {
 		}
 	}
 	out := make([]byte, 0, size)
+	for _, v := range vals {
+		switch x := v.(type) {
+		case int64:
+			out = append(out, 0)
+			var buf [8]byte
+			binary.LittleEndian.PutUint64(buf[:], uint64(x))
+			out = append(out, buf[:]...)
+		case float64:
+			out = append(out, 1)
+			var buf [8]byte
+			binary.LittleEndian.PutUint64(buf[:], math.Float64bits(x))
+			out = append(out, buf[:]...)
+		case string:
+			out = append(out, 2)
+			var blen [4]byte
+			binary.LittleEndian.PutUint32(blen[:], uint32(len(x)))
+			out = append(out, blen[:]...)
+			out = append(out, x...)
+		case bool:
+			out = append(out, 3)
+			if x {
+				out = append(out, 1)
+			} else {
+				out = append(out, 0)
+			}
+		case []byte:
+			out = append(out, 4)
+			var blen [4]byte
+			binary.LittleEndian.PutUint32(blen[:], uint32(len(x)))
+			out = append(out, blen[:]...)
+			out = append(out, x...)
+		default:
+			out = append(out, 5)
+			s := fmt.Sprintf("%v", v)
+			var blen [4]byte
+			binary.LittleEndian.PutUint32(blen[:], uint32(len(s)))
+			out = append(out, blen[:]...)
+			out = append(out, s...)
+		}
+	}
+	return out
+}
+
+// encodeUniqueKeyInto writes the encoded unique-key bytes into dst
+// starting at offset 0 and returns the new slice. Used by CheckUnique
+// to avoid per-row make([]byte,0,size) allocations on the unique-constraint
+// hot path; the returned slice may share storage with dst. REQ002100.
+func encodeUniqueKeyInto(dst []byte, cols []int, vals []any) []byte {
+	out := dst[:0]
 	for _, v := range vals {
 		switch x := v.(type) {
 		case int64:
