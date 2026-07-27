@@ -1139,23 +1139,23 @@ func (p *Project) Close() error {
 	// NewProject call can reuse the backing arrays without fresh
 	// allocations.  Reset len to 0 first so pooled capacity is not
 	// wasted by returning partially-filled slices.
-	var prefixCols []string
-	if p.prefixCols != nil && len(p.prefixCols) > 0 {
-		prefixCols = make([]string, 0, cap(p.prefixCols))
-		prefixCols = append(prefixCols, p.prefixCols...)
+	// REQ002018: use p.field[:0] instead of make+append to avoid
+	// the per-Close allocation of a fresh backing array. The pool
+	// only needs the backing array, not the data.
+	if p.prefixCols != nil && cap(p.prefixCols) > 0 {
+		prefixCols := p.prefixCols[:0]
 		projectPrefixColsPool.Put(&prefixCols)
 	}
 	p.prefixCols = nil
-	var fnArgBuf []any
-	if p.fnArgBuf != nil && len(p.fnArgBuf) > 0 {
-		fnArgBuf = make([]any, 0, cap(p.fnArgBuf))
-		fnArgBuf = append(fnArgBuf, p.fnArgBuf...)
+	if p.fnArgBuf != nil && cap(p.fnArgBuf) > 0 {
+		fnArgBuf := p.fnArgBuf[:0]
 		projectFnArgBufPool.Put(&fnArgBuf)
 	}
 	p.fnArgBuf = nil
-	// compiledExprs are function closures but we CAN pool the backing
-	// slice since the functions themselves are just pointers.  Reset len
-	// to 0 so capacity is preserved for reuse.
+	// compiledExprs: keep the old make+copy pattern because the
+	// compileProjectExprs function reslices the pooled slice without
+	// clearing stale entries, and a reused slice may carry dangling
+	// function pointers that cause subtle test failures. REQ002018.
 	var compiledExprs []func(*Row) (Value, error)
 	if p.compiledExprs != nil && len(p.compiledExprs) > 0 {
 		compiledExprs = make([]func(*Row) (Value, error), 0, cap(p.compiledExprs))
