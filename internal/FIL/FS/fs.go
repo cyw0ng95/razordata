@@ -360,11 +360,15 @@ func (fm *FileManager) Close() error {
 		if err := unix.Close(value.(int)); err != nil && last == nil {
 			last = err
 		}
+		// REQ002057: delete entries during iteration instead of
+		// replacing the map with sync.Map{} — replacing the pointer
+		// while another goroutine calls Load/Store causes undefined
+		// behavior (the old map is still referenced by the caller).
+		fm.dirFDs.Delete(key)
 		return true
 	})
-	fm.dirFDs = sync.Map{}
 
-	fm.handles.Range(func(key, value any) bool {
+fm.handles.Range(func(key, value any) bool {
 		h := value.(*FileHandle)
 		h.mu.Lock()
 		if h.FD != -1 {
@@ -374,9 +378,9 @@ func (fm *FileManager) Close() error {
 			h.FD = -1
 		}
 		h.mu.Unlock()
+		// REQ002057: delete during iteration, same as dirFDs.
+		fm.handles.Delete(key)
 		return true
-	})
-	fm.handles = sync.Map{}
-
+})
 	return last
 }
