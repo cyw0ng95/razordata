@@ -1492,9 +1492,20 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 			}
 			if joinOp == nil {
 				if kind == OP.JoinKindInner && j.On != nil {
+					// REQ002106: route ON-clause equi-joins through
+					// VectorizedHashJoin for large tables. For small tables
+					// (< 1024 rows) keep HashCrossJoin (row-based, lazy
+					// probe) which avoids the batch overhead.
 					if lk, rk, ok := CO.ExtractSingleOnEquiKey(j.On, leftTbl, rightTbl); ok {
-						joinOp = OP.NewHashCrossJoin(current, rightScan, leftTbl, rightTbl, lk, rk)
+						if p.estimateRowCount(rightTbl, nil) >= 1024 {
+							joinOp = OP.NewHashJoin(current, rightScan, leftTbl, rightTbl, []string{lk}, []string{rk}, 0).WithKind(kind)
+						} else {
+							joinOp = OP.NewHashCrossJoin(current, rightScan, leftTbl, rightTbl, lk, rk)
+						}
 						if projectedCols != nil {
+							if hj, ok := joinOp.(*OP.HashJoin); ok {
+								hj.WithProjection(projectedCols)
+							}
 							if hcj, ok := joinOp.(*OP.HashCrossJoin); ok {
 								hcj.WithProjection(projectedCols)
 							}

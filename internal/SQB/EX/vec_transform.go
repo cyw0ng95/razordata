@@ -415,6 +415,14 @@ func resolveColumnIndex(child DT.Operator, colName string) (int, bool) {
 			return i, true
 		}
 	}
+	// REQ002106: try matching without the alias prefix. SeqScan columns
+	// may be prefixed (e.g. "b.age") while the join key is bare ("age").
+	dotCol := "." + colName
+	for i, name := range cols {
+		if len(name) > len(dotCol) && name[len(name)-len(dotCol):] == dotCol {
+			return i, true
+		}
+	}
 	return 0, false
 }
 
