@@ -285,7 +285,12 @@ func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []
 	}
 
 	storedSum := binary.LittleEndian.Uint32(tmp[DataLen-ChecksumLen:])
-	computedSum := crc32.ChecksumIEEE(tmp[:n])
+	// REQ002055: always compute CRC over the full block data range
+	// (DataLen-ChecksumLen), not over tmp[:n] (which is caller-requested
+	// size). WriteBlock writes the CRC over the full block, so ReadBlock
+	// must verify against the same range or a false-negative corruption
+	// detection occurs when read requests fewer bytes than written.
+	computedSum := crc32.ChecksumIEEE(tmp[:DataLen-ChecksumLen])
 	EC.BUG_ON(storedSum != computedSum, "df.ReadBlock: CRC mismatch block %d, stored=%08x computed=%08x", blockID, storedSum, computedSum)
 	if storedSum != computedSum {
 		return ErrCorrupt
@@ -316,7 +321,11 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 			poolBuf[i] = 0
 		}
 		copy(poolBuf, data)
-		sum := crc32.ChecksumIEEE(poolBuf[:n])
+		// REQ002055: compute CRC over the full block data range
+		// (DataLen-ChecksumLen), not just the caller-provided prefix.
+		// The zeroed suffix (lines above) is part of the stored block,
+		// so ReadBlock must verify against the same range.
+		sum := crc32.ChecksumIEEE(poolBuf[:DataLen-ChecksumLen])
 		binary.LittleEndian.PutUint32(poolBuf[DataLen-ChecksumLen:DataLen], sum)
 
 		written, err := d.writeAt(fd, poolBuf[:], int64(offset))
@@ -337,7 +346,9 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 		tmp[i] = 0
 	}
 	copy(tmp, data)
-	sum := crc32.ChecksumIEEE(tmp[:n])
+	// REQ002055: compute CRC over the full block data range, same as
+	// the direct-I/O path and ReadBlock.
+	sum := crc32.ChecksumIEEE(tmp[:DataLen-ChecksumLen])
 	binary.LittleEndian.PutUint32(tmp[DataLen-ChecksumLen:DataLen], sum)
 
 	written, err := d.writeAt(fd, tmp[:], int64(offset))
