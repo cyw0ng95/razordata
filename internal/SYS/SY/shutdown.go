@@ -12,8 +12,21 @@ import (
 	vl "github.com/cyw0ng95/razordata/internal/TXN/VL"
 )
 
+// REQ002049: package-level singleton signal channel to prevent
+// leaks when InstallSignalHandler is called multiple times.
+var (
+	sigCh   chan os.Signal
+	sigMu   sync.Mutex
+)
+
 func InstallSignalHandler(ctx context.Context, e *Engine) (stop func()) {
-	sigCh := make(chan os.Signal, 1)
+	sigMu.Lock()
+	// Close the old channel if this is a re-install.
+	if sigCh != nil {
+		signal.Stop(sigCh)
+	}
+	sigCh = make(chan os.Signal, 1)
+	sigMu.Unlock()
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	done := make(chan struct{})
 	var once sync.Once
@@ -29,7 +42,10 @@ func InstallSignalHandler(ctx context.Context, e *Engine) (stop func()) {
 	}()
 	return func() {
 		once.Do(func() {
+			sigMu.Lock()
 			signal.Stop(sigCh)
+			sigCh = nil
+			sigMu.Unlock()
 			close(done)
 		})
 	}
