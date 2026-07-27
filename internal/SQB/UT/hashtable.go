@@ -41,7 +41,13 @@ func NewHashTableWithCols(minCapacity uint32, numCols int) *HashTable {
 	if numCols < 1 {
 		numCols = 1
 	}
-	cap := nextPow2(max(minCapacity, 16))
+	// REQ002076: scale initial capacity to keep fill ratio ≤ 50%.
+	// Linear probing degrades non-linearly above 70% fill. The old
+	// code used nextPow2(minCapacity) giving 78% fill for 100 rows
+	// (cap=128, occ=100). Doubling the initial capacity to
+	// nextPow2(minCapacity*2) keeps fill ≤ 50%, reducing average
+	// probe distance from ~3.5 to ~1.5 and worst-case from ~15 to ~5.
+	cap := nextPow2(max(minCapacity*2, 16))
 	nwords := (cap + 63) / 64
 	return &HashTable{
 		Capacity:   cap,
