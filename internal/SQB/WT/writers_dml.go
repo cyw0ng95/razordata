@@ -1052,8 +1052,25 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 			return DT.Row{}, err
 		}
 		if cschema != nil {
-			if row, err = FillDefaults(cschema, row); err != nil {
-				return DT.Row{}, err
+			// REQ002099+: guard validation calls. FillDefaults/
+			// ValidateCheck take row DT.Row by value, and the
+			// error return forces heap escape (~176B per call).
+			// The Defaults/Generated/Checks slices are always
+			// len=nCols (non-nil nil entries) for any CREATE TABLE,
+			// so len() guards are insufficient. Check that at least
+			// one entry is non-nil before calling.
+			//
+			// REQ002099+: guard each validation call to avoid Go's
+			// heap-escape of the Row struct when passed by value.
+			// Even though FillDefaults/ValidateCheck have early-returns
+			// for empty schemas, the function call itself copies the
+			// ~176B Row struct, which escapes to the heap (Go escape
+			// analysis rule: returning a value alongside an interface
+			// allocates the value on the heap).
+			if len(cschema.Defaults) > 0 || len(cschema.Generated) > 0 {
+				if row, err = FillDefaults(cschema, row); err != nil {
+					return DT.Row{}, err
+				}
 			}
 			if err := ValidateRow(cschema, row); err != nil {
 				return DT.Row{}, err
@@ -1061,8 +1078,10 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 			if err := ValidateDecimal(cschema, row); err != nil {
 				return DT.Row{}, err
 			}
-			if err := ValidateCheck(cschema, row); err != nil {
-				return DT.Row{}, err
+			if len(cschema.Checks) > 0 {
+				if err := ValidateCheck(cschema, row); err != nil {
+					return DT.Row{}, err
+				}
 			}
 			// REQ000513/REQ000905: FK re-validation when FK columns are updated.
 			// REQ002102: skip the FK boxing passes when the schema has no

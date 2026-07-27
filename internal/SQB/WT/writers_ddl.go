@@ -29,20 +29,31 @@ func registerTableSchema(stmt *PS.CreateTable) ([]string, []bool, []PS.Expr, []L
 	}
 	cols := make([]string, len(stmt.Cols))
 	nullable := make([]bool, len(stmt.Cols))
-	defaults := make([]PS.Expr, len(stmt.Cols))
 	colTypes := make([]LX.TokenType, len(stmt.Cols))
 	precisions := make([]int, len(stmt.Cols))
 	scales := make([]int, len(stmt.Cols))
+	hasDefault := false
 	for i, col := range stmt.Cols {
 		cols[i] = col.Name
 		nullable[i] = col.Nullable
-		defaults[i] = col.Default
+		if col.Default != nil {
+			hasDefault = true
+		}
 		colTypes[i] = col.Type
 		precisions[i] = col.Precision
 		scales[i] = col.Scale
 	}
 	DT.Tables[stmt.Name] = []DT.Row{}
 	DT.Schemas[stmt.Name] = cols
+	// REQ002099: return nil for defaults when all are nil, so
+	// FillDefaults early-returns immediately without iterating.
+	if !hasDefault {
+		return cols, nullable, nil, colTypes, precisions, scales, nil
+	}
+	defaults := make([]PS.Expr, len(stmt.Cols))
+	for i, col := range stmt.Cols {
+		defaults[i] = col.Default
+	}
 	return cols, nullable, defaults, colTypes, precisions, scales, nil
 }
 
@@ -126,6 +137,16 @@ func buildFKConstraints(stmt *PS.CreateTable) []DT.ForeignKeyConstraint {
 // column definitions.
 // REQ000982: extracted from CreateTable.Next.
 func buildCheckConstraints(stmt *PS.CreateTable) []PS.Expr {
+	hasCheck := false
+	for _, col := range stmt.Cols {
+		if col.Check != nil {
+			hasCheck = true
+			break
+		}
+	}
+	if !hasCheck {
+		return nil
+	}
 	checks := make([]PS.Expr, 0, len(stmt.Cols))
 	for _, col := range stmt.Cols {
 		checks = append(checks, col.Check)
@@ -137,6 +158,16 @@ func buildCheckConstraints(stmt *PS.CreateTable) []PS.Expr {
 // INSERT/UPDATE path can materialize them.
 // REQ000982: extracted from CreateTable.Next.
 func buildGeneratedColumns(stmt *PS.CreateTable) []PS.Expr {
+	hasGen := false
+	for _, col := range stmt.Cols {
+		if !col.Virtual && col.Generated != nil {
+			hasGen = true
+			break
+		}
+	}
+	if !hasGen {
+		return nil
+	}
 	generated := make([]PS.Expr, len(stmt.Cols))
 	for i, col := range stmt.Cols {
 		if !col.Virtual && col.Generated != nil {
