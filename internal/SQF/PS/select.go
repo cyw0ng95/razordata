@@ -679,9 +679,10 @@ func (p *Parser) parseWith() (*WithStmt, error) {
 // compound SELECT (UNION/INTERSECT/EXCEPT). The parser's parseSelect
 // already handles compound operators via parseIntersectChain and the
 // union/except loop, so this just delegates. REQ000436.
+// REQ002052: use parseSelect instead of Parse — Parse resets the
+// parser state (paramIndex, pendingJoins, etc.) mid-parse, which
+// would corrupt the outer parse session for CTEs nested inside
+// compound statements.
 func (p *Parser) parseCteBody() (Stmt, error) {
-	if p.current.Type == LX.T_SELECT {
-		return p.parseSelect()
-	}
-	return p.Parse()
+	return p.parseSelect()
 }
