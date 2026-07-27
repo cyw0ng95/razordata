@@ -1593,6 +1593,13 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 	leftTbl := ""
 	joinedTables := map[string]bool{}
 	var current DT.Operator
+	// REQ002067: validate that at least one group was produced.
+	// If all joins were filtered (unsupported kind, etc.), groupOps
+	// is empty and current remains nil — return a descriptive error
+	// instead of a nil plan that silently crashes.
+	if len(groupOps) == 0 {
+		return nil
+	}
 	for i, gr := range groupOps {
 		if i == 0 {
 			current = gr.op
