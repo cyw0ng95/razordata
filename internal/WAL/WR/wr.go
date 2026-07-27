@@ -719,6 +719,10 @@ func (w *writer) flushDirect() error {
 var (
 	alignedBufPool   = make(map[int][]byte)
 	alignedBufPoolMu sync.Mutex
+	// REQ002048: cap the pool to prevent unbounded growth under
+	// variable-length record workloads. 64 entries covers the
+	// common page sizes and their multiples.
+	alignedBufPoolMax = 64
 )
 
 func getAlignedBuf(size int) []byte {
@@ -736,6 +740,13 @@ func getAlignedBuf(size int) []byte {
 
 func putAlignedBuf(b []byte) {
 	alignedBufPoolMu.Lock()
+	// REQ002048: evict the oldest entry when the pool exceeds the cap.
+	if len(alignedBufPool) >= alignedBufPoolMax {
+		for k := range alignedBufPool {
+			delete(alignedBufPool, k)
+			break
+		}
+	}
 	alignedBufPool[len(b)] = b
 	alignedBufPoolMu.Unlock()
 }
