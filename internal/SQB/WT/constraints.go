@@ -252,9 +252,16 @@ type UniqueLookupWithApply interface {
 // defined on the table. Returns a wrapped ErrConstraint on violation.
 // REQ000986: CHECK expressions are pre-compiled on first use and
 // cached in schema.CompiledChecks to avoid per-row AST re-evaluation.
+// REQ002101: early-return when no CHECK constraints are declared.
+// Without this guard, the bench UPDATE hot path still pays for a
+// `make([]func, 0)` slice-header alloc and a nil-slice range loop
+// on every ValidateCheck call.
 func ValidateCheck(schema *DT.StoreSchema, row DT.Row) error {
+	if len(schema.Checks) == 0 {
+		return nil
+	}
 	// Lazy-compile CHECK expressions on first call.
-	if schema.CompiledChecks == nil && len(schema.Checks) > 0 {
+	if schema.CompiledChecks == nil {
 		schema.CompiledChecks = make([]func(*DT.Row) (bool, error), len(schema.Checks))
 		for i, check := range schema.Checks {
 			if check == nil {

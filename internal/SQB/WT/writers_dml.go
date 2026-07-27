@@ -1065,8 +1065,17 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 				return DT.Row{}, err
 			}
 			// REQ000513/REQ000905: FK re-validation when FK columns are updated.
-			if DT.IsForeignKeysEnabled() {
-				if err := UT.ValidateForeignKeyUpdateInMemory(cschema, DT.ValueSliceToAny(snapshot.Data), DT.ValueSliceToAny(row.Data)); err != nil {
+			// REQ002102: skip the FK boxing passes when the schema has no
+			// FK declarations even if foreign_keys pragma is ON (the
+			// default). ValidateForeignKeyUpdateInMemory early-returns
+			// on empty ForeignKeys, but the previous code still paid for
+			// the two DT.ValueSliceToAny calls because Go evaluates
+			// function arguments eagerly. Schemas without FKs are the
+			// common case — guard before boxing.
+			if DT.IsForeignKeysEnabled() && len(cschema.ForeignKeys) > 0 {
+				oldVals := DT.ValueSliceToAny(snapshot.Data)
+				newVals := DT.ValueSliceToAny(row.Data)
+				if err := UT.ValidateForeignKeyUpdateInMemory(cschema, oldVals, newVals); err != nil {
 					return DT.Row{}, err
 				}
 			}
