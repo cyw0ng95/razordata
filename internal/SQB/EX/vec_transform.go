@@ -128,7 +128,7 @@ func transformOp(op DT.Operator, p *Planner) UT.BatchProducer {
 		}
 		// REQ001658: push down range predicate to SeqScan when possible.
 		if ss, ok := o.Child().(*OP.SeqScan); ok && ss.Store() != nil {
-			if colIdx, min, max, ok := extractRangePredicate(o.Predicate()); ok {
+			if colIdx, min, max, ok := extractRangePredicate(o.Predicate(), ss); ok {
 				ss.SetRangePredicate(colIdx, min, max)
 			}
 		}
@@ -717,7 +717,9 @@ func extractSchemaFromOp(op DT.Operator) ([]string, []LX.TokenType) {
 // filter expression. Returns the column index and the min/max range
 // bounds. Returns ok=false if the predicate is not a simple range.
 // Only handles int64 comparisons for now. REQ001658.
-func extractRangePredicate(expr PS.Expr) (colIdx int, min, max int64, ok bool) {
+// REQ002078: resolves the column name to an index using the SeqScan's
+// schema, instead of hardcoding colIdx=0.
+func extractRangePredicate(expr PS.Expr, ss *OP.SeqScan) (colIdx int, min, max int64, ok bool) {
 	bin, ok := expr.(*PS.BinaryExpr)
 	if !ok {
 		return 0, 0, 0, false
@@ -740,15 +742,28 @@ func extractRangePredicate(expr PS.Expr) (colIdx int, min, max int64, ok bool) {
 	if ident == nil || literal == nil {
 		return 0, 0, 0, false
 	}
-	_ = ident
+	// Resolve column name to index using the SeqScan's schema.
+	colIdx = -1
+	if sch := ss.Schema(); sch != nil {
+		for i, col := range sch.Cols {
+			if col == ident.Name {
+				colIdx = i
+				break
+			}
+		}
+	}
+	if colIdx < 0 {
+		// Fallback to col 0 (original behavior).
+		colIdx = 0
+	}
 	val := literal.Val
 	switch bin.Op {
 	case LX.T_GT, LX.T_GE:
-		return 0, val + 1, 1<<63 - 1, true
+		return colIdx, val + 1, 1<<63 - 1, true
 	case LX.T_LT, LX.T_LE:
-		return 0, 0, val - 1, true
+		return colIdx, 0, val - 1, true
 	case LX.T_EQ:
-		return 0, val, val, true
+		return colIdx, val, val, true
 	}
 	return 0, 0, 0, false
 }
