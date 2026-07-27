@@ -1,0 +1,178 @@
+package PX
+
+import (
+	"context"
+	"errors"
+	"sync"
+
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
+)
+
+// PipelineExecutor runs a PipelineSpec and delivers results.
+// It replaces the current execute flow (drainBatch/drainRows)
+// with a unified Pipeline execution path.
+//
+// Lifecycle:
+//   - Execute: drain pipeline into []DT.Row (for small results)
+//   - ExecuteStream: stream results via channel (for large results)
+//   - Reset: return to pre-execution state (for plan cache reuse)
+type PipelineExecutor struct {
+	spec *PipelineSpec
+	pipe *Pipeline
+	mu   sync.Mutex
+}
+
+// NewPipelineExecutor creates an executor from a spec.
+func NewPipelineExecutor(spec *PipelineSpec) *PipelineExecutor {
+	return &PipelineExecutor{spec: spec}
+}
+
+// Execute drains the pipeline and returns all rows.
+func (e *PipelineExecutor) Execute(ctx context.Context) ([]DT.Row, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	pipe, err := e.ensurePipeline(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return pipe.Execute(ctx)
+}
+
+// ExecuteStream returns a streaming iterator that reads from the
+// pipeline one batch at a time. The caller must call Close() on
+// the returned iterator when done.
+func (e *PipelineExecutor) ExecuteStream(ctx context.Context) (*PipelineStream, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	pipe, err := e.ensurePipeline(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &PipelineStream{
+		pipe: pipe,
+		ctx:  ctx,
+	}, nil
+}
+
+// Reset returns the pipeline to pre-execution state for cache reuse.
+func (e *PipelineExecutor) Reset(ctx context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.pipe == nil {
+		return nil
+	}
+	return e.pipe.Reset(ctx)
+}
+
+// Close releases all resources.
+func (e *PipelineExecutor) Close() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.pipe == nil {
+		return nil
+	}
+	return e.pipe.Close()
+}
+
+func (e *PipelineExecutor) ensurePipeline(ctx context.Context) (*Pipeline, error) {
+	if e.pipe == nil {
+		var err error
+		e.pipe, err = e.spec.NewRuntime()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return e.pipe, nil
+}
+
+// PipelineStream provides row-by-row streaming from a pipeline.
+// It reads batches from the pipeline and converts them to rows.
+type PipelineStream struct {
+	pipe     *Pipeline
+	ctx      context.Context
+	batch    *UT.Batch
+	buf      []PL.Value
+	rowPos   int
+	done     bool
+	closeMu  sync.Mutex
+	closed   bool
+}
+
+// Next returns the next row from the stream.
+// Returns (DT.Row{}, DT.ErrNoRows) at EOF.
+func (s *PipelineStream) Next() (DT.Row, error) {
+	if s.done {
+		return DT.Row{}, DT.ErrNoRows
+	}
+
+	for {
+		if s.batch == nil || s.rowPos >= s.batch.Size {
+			// Fetch next batch
+			if s.batch != nil {
+				if s.batch.Pooled {
+					s.batch.Put()
+				}
+				s.batch = nil
+			}
+			batch, err := s.pipe.root.NextBatch(s.ctx)
+			if err != nil {
+				return DT.Row{}, err
+			}
+			if batch == nil {
+				s.done = true
+				return DT.Row{}, DT.ErrNoRows
+			}
+			s.batch = batch
+			s.rowPos = 0
+		}
+
+		// Convert batch row to DT.Row
+		phys := s.rowPos
+		if s.batch.Sel != nil && s.rowPos < len(s.batch.Sel) {
+			phys = int(s.batch.Sel[s.rowPos])
+		}
+		row := batchRowToRow(s.batch, phys)
+		s.rowPos++
+		return row, nil
+	}
+}
+
+// Close stops the stream and releases resources.
+func (s *PipelineStream) Close() error {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	if s.batch != nil {
+		if s.batch.Pooled {
+			s.batch.Put()
+		}
+		s.batch = nil
+	}
+	return nil
+}
+
+// batchRowToRow converts a single row from a batch to a DT.Row.
+func batchRowToRow(batch *UT.Batch, phys int) DT.Row {
+	row := DT.Row{
+		Data: make([]DT.Value, len(batch.Cols)),
+	}
+	for c := range batch.Cols {
+		row.Data[c] = UT.ToValue(batch.Cols[c], phys)
+	}
+	return row
+}
+
+// Ensure PL.ErrNoRows is accessible.
+var ErrNoRows = DT.ErrNoRows
+
+// Ensure unused imports are valid.
+var _ = OP.ErrNoRows
+var _ = errors.New
