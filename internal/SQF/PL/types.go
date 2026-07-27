@@ -100,6 +100,13 @@ type Row struct {
 	// SeqScan, RowIndex is 0 but the store-path fallback in
 	// ReplaceBySnapshot handles those correctly via StoreKey.
 	RowIndex int
+	// REQ002104: DataStable is true when the row's Data slice is
+	// an independent copy (not aliasing the SeqScan's internal
+	// buffer or the in-memory table). Set by SeqScan when
+	// needsStableData is true. Filter.refillBatch checks this flag
+	// to skip the defensive deep-copy (28% of flat alloc_space on
+	// BenchmarkRazordata_Update).
+	DataStable bool
 }
 
 // Lookup returns the value at the given column name.

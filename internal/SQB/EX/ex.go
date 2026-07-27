@@ -1917,6 +1917,12 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 			}
 			scan = ssc
 		}
+		// REQ002104: mark the scan as needing stable data so the
+		// SeqScan deep-copies row Data and Filter.refillBatch can
+		// skip its defensive deep-copy (28% of flat alloc).
+		if ss, ok := scan.(*OP.SeqScan); ok {
+			ss.SetNeedsStableData(true)
+		}
 		filter := OP.NewFilter(scan, s.Where, nil)
 		// REQ000558: apply ORDER BY / LIMIT / OFFSET to the row
 		// selection before updating.
@@ -1969,6 +1975,9 @@ func (e *Executor) buildWriterOp(stmt PS.Stmt) (DT.Operator, error) {
 				return nil, err
 			}
 			scan = ssc
+		}
+		if ss, ok := scan.(*OP.SeqScan); ok {
+			ss.SetNeedsStableData(true)
 		}
 		filter := OP.NewFilter(scan, s.Where, nil)
 		// REQ000475: apply ORDER BY / LIMIT / OFFSET to the row

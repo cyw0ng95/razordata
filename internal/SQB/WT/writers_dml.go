@@ -1043,7 +1043,11 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 		// so the only redundant work is the Data copy itself. Acceptable
 		// for the safety guarantee; can be revisited if the batch path
 		// proves dominant in benchmarks.
-		row.Data = append([]DT.Value(nil), row.Data...)
+		// REQ002104: when the SeqScan has needsStableData set, the Data
+		// is already an independent copy — skip the redundant deep-copy.
+		if !row.DataStable {
+			row.Data = append([]DT.Value(nil), row.Data...)
+		}
 		if u.setColIdx != nil {
 			if err := ApplyUpdateFast(&row, u.set, u.params, u.setColIdx); err != nil {
 				return DT.Row{}, err

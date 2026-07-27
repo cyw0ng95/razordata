@@ -185,6 +185,11 @@ type SeqScan struct {
 	// Default true (safe for UPDATE/DELETE which read StoreKey via
 	// ExtractPKForUpdate).
 	needsStableKey bool
+	// REQ002104: needsStableData is set for UPDATE/DELETE paths so
+	// the SeqScan deep-copies the row Data into a stable buffer.
+	// Filter.refillBatch can then skip its defensive deep-copy
+	// (28% of flat alloc on BenchmarkRazordata_Update).
+	needsStableData bool
 
 	// REQ001042: batched context check counter.
 	ctxCheckCounter int
@@ -343,6 +348,16 @@ func (s *SeqScan) SetNeedsStableKey(v bool) { s.needsStableKey = v }
 // NeedsStableKey reports whether the scan makes an independent StoreKey
 // copy per row. REQ001667.
 func (s *SeqScan) NeedsStableKey() bool { return s.needsStableKey }
+
+// SetNeedsStableData marks that downstream operators will mutate the
+// row Data in-place, so the SeqScan must return an independent copy.
+// REQ002104: Filter.refillBatch checks this via row.DataStable to skip
+// its defensive deep-copy.
+func (s *SeqScan) SetNeedsStableData(v bool) { s.needsStableData = v }
+
+// NeedsStableData reports whether the scan makes an independent Data
+// copy per row. REQ002104.
+func (s *SeqScan) NeedsStableData() bool { return s.needsStableData }
 
 func NewSeqScan(table string) *SeqScan {
 	return &SeqScan{table: table, shallow: true, needsStableKey: true}
@@ -765,9 +780,13 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 		// Safe for read-only queries — source rows in DT.Tables[] are never
 		// mutated after INSERT, and downstream operators (Filter, Project,
 		// Join) read from Data but never write to it in-place.
-		if !s.shallow {
+		// REQ002104: when needsStableData is set (UPDATE/DELETE path),
+		// deep-copy Data even in shallow mode and mark DataStable so
+		// Filter.refillBatch can skip its defensive deep-copy.
+		if !s.shallow || s.needsStableData {
 			out.Data = getRowData(len(r.Data))
 			copy(out.Data, r.Data)
+			out.DataStable = true
 		}
 		// REQ001080: prune unused columns from the output row.
 		if s.usedCols != nil && !s.shallow {

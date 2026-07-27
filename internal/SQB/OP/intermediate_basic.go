@@ -783,8 +783,10 @@ func (f *Filter) refillBatch(ctx context.Context) error {
 		// select4.test L39784 reproduces this: 14 rows returned
 		// instead of 21, hash b752b9c6... vs expected
 		// 34325f84dd0efa600c0be4e8e0770bc3.
-		if r.Data != nil {
+		if r.Data != nil && !r.DataStable {
 			r.Data = append([]DT.Value(nil), r.Data...)
+		} else if r.DataStable {
+			// fast path: SeqScan already deep-copied Data, no need to clone
 		}
 		// REQ001583: deep-copy StoreKey — it aliases the SeqScan's
 		// internal iterator buffer which is only valid until the
