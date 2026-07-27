@@ -40,10 +40,12 @@ type HashCrossJoin struct {
 	// a shared colIndex for output rows.
 	leftRows   []pl.Row
 	probeBuilt bool // true after build() + materializeLeft() ran successfully
-	// Probe phase: pre-computed matches from materializeLeft.
-	// REQ000802+: eliminates on-the-fly probing and per-row
-	// Data allocations by building all matches upfront with a
-	// shared data buffer.
+	// Probe phase: lazy-match state. REQ002095 replaces the
+	// previous pre-computed matches approach (which allocated
+	// dataBuf + matches for ALL join results upfront, blowing
+	// up for LIMIT queries — 2.65 GB for 100×100 SelfJoin).
+	// Now we probe lazily, one match at a time, exactly like
+	// the crossOverflow path below.
 	matches    []pl.Row
 	matchPos   int
 	dataBuf    []pl.Value
@@ -131,19 +133,11 @@ func (j *HashCrossJoin) Next(ctx context.Context) (pl.Row, error) {
 			return pl.Row{}, err
 		}
 	}
-	if j.crossOverflow {
-		return j.nextCross(ctx)
-	}
-	if j.buckets == nil {
-		return pl.Row{}, ErrNoRows
-	}
-	// REQ000802+: return pre-computed matches from data buffer.
-	for j.matchPos < len(j.matches) {
-		m := j.matches[j.matchPos]
-		j.matchPos++
-		return m, nil
-	}
-	return pl.Row{}, ErrNoRows
+	// REQ002095: always use the lazy-probe path (nextCross). The
+	// pre-computed matches path was removed because it allocated
+	// dataBuf for ALL join results before the LIMIT operator could
+	// stop the pipeline — 2.65 GB for 100x100 SelfJoin with LIMIT 20.
+	return j.nextCross(ctx)
 }
 
 // materializeLeft reads all rows from the left side into leftRows
@@ -211,48 +205,27 @@ func (j *HashCrossJoin) materializeLeft(ctx context.Context) error {
 		j.rightRows[i].Cols = j.sharedCols[len(lCols):]
 		j.rightRows[i].ColIndex = j.sharedColIndex
 	}
-	// REQ000802+: pre-compute all matches with data buffer.
-	// Count total matches first.
+	// REQ002095: lazy probe — skip the pre-computation of all matches
+	// into dataBuf/matches. For LIMIT queries (the common case), the
+	// old code allocated dataBuf for all ~10K matches (2.65 GB) and
+	// matches slice (708 MB) before the LIMIT operator could stop the
+	// pipeline. Instead, initialize the lazy-probe state and let
+	// Next() → nextCross() emit one match at a time.
 	dataPerRow := len(lCols) + len(rCols)
-	var totalMatches int
-	for _, l := range j.leftRows {
-		keyVal, ok := lookupColumn(&l, j.leftTbl, j.leftKey)
-		if !ok || keyVal == nil {
-			continue
-		}
-		h := hashValue(j.hashSeed, keyVal)
-		matches := j.buckets[h]
-		totalMatches += len(matches)
-	}
-	// Pre-allocate contiguous data buffer.
 	j.dataPerRow = dataPerRow
-	j.dataBuf = make([]pl.Value, 0, totalMatches*dataPerRow)
-	j.matches = make([]pl.Row, 0, totalMatches)
-	j.matchPos = 0
+	j.crossLeftIdx = 0
+	j.crossRightIdx = 0
 
-	for _, l := range j.leftRows {
-		keyVal, ok := lookupColumn(&l, j.leftTbl, j.leftKey)
-		if !ok || keyVal == nil {
-			continue
-		}
-		h := hashValue(j.hashSeed, keyVal)
-		matches := j.buckets[h]
-		for _, rightIdx := range matches {
-			r := j.rightRows[rightIdx]
-			off := len(j.dataBuf)
-			// Carve non-overlapping sub-slice from dataBuf.
-			dataSlice := j.dataBuf[off : off : off+dataPerRow]
-			out := pl.Row{
-				Cols:     j.sharedCols,
-				Types:    j.sharedTypes,
-				Data:     dataSlice,
-				ColIndex: j.sharedColIndex,
-			}
-			out.Data = append(out.Data, l.Data...)
-			out.Data = append(out.Data, r.Data...)
-			j.dataBuf = append(j.dataBuf, out.Data...)
-			j.matches = append(j.matches, out)
-		}
+	// REQ002095: clear the right rows' ColIndex so that nextCross()
+	// can use lookupColumn on them. The sharedColIndex built above
+	// maps ALL columns (left+right) into shared-column indices, but
+	// the right rows' Data only has len(rCols) elements — the ColIndex
+	// would return out-of-bounds indices. Clearing ColIndex forces
+	// lookupColumn to fall back to the linear Cols scan, which works
+	// correctly because the right rows' Cols are set to the right-side
+	// portion of sharedCols.
+	for i := range j.rightRows {
+		j.rightRows[i].ColIndex = nil
 	}
 	return nil
 }
