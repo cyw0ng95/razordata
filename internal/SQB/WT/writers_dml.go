@@ -1018,10 +1018,31 @@ func (u *Update) Next(ctx context.Context) (DT.Row, error) {
 			}
 			return DT.Row{}, err
 		}
-		snapshot := DT.ShallowCloneRow(row)
-		// REQ000840: OP.SeqScan may return rows that share Data with the
-		// source table. Deep-copy Data before applyUpdate mutates it
-		// in-place, otherwise the source row is corrupted.
+		// REQ002097: capture old-row values into the arena for snapshot.
+		// SQB/OP.SeqScan uses shallow mode by default, so `row.Data` may
+		// alias the underlying DT.Tables row. SnapshotRowSingle copies
+		// the values into arena-owned slots so subsequent in-place
+		// mutation of `row.Data` does not corrupt our snapshot. This
+		// replaces the previous `DT.ShallowCloneRow(row)` allocation.
+		var snapshot DT.Row
+		if u.execCtx != nil {
+			if arena, ok := u.execCtx.RowArena.(*DT.RowArena); ok && arena != nil {
+				snapshot = arena.SnapshotRowSingle(row, len(row.Data))
+			} else {
+				snapshot = DT.ShallowCloneRow(row)
+			}
+		} else {
+			snapshot = DT.ShallowCloneRow(row)
+		}
+		// REQ000840: Filter's fallback path (predicate not compilable)
+		// returns the child's row directly without deep-copying Data.
+		// To avoid aliasing DT.Tables during in-place ApplyUpdate, deep-
+		// copy Data here. Filter.compiledBatch path already arranges for
+		// arena-backed Data, so this copies once more on that path —
+		// REQ002097's SnapshotRowSingle already provided the snapshot,
+		// so the only redundant work is the Data copy itself. Acceptable
+		// for the safety guarantee; can be revisited if the batch path
+		// proves dominant in benchmarks.
 		row.Data = append([]DT.Value(nil), row.Data...)
 		if u.setColIdx != nil {
 			if err := ApplyUpdateFast(&row, u.set, u.params, u.setColIdx); err != nil {

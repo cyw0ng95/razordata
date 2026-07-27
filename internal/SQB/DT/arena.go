@@ -525,3 +525,36 @@ func (a *RowArena) CloneRowSingle(r Row) Row {
 	cloned.Types = r.Types
 	return cloned
 }
+
+// SnapshotRowSingle borrows `nCols` slots from the arena slab and
+// copies the source row's Data into them. REQ002097: lets Update.Next
+// keep its `snapshot` (old-row values for AFTER UPDATE triggers,
+// ValidateForeignKeyUpdateInMemory, and CheckUnique self-exclusion)
+// inside the arena instead of calling `make([]Value,n)+copy`. The
+// returned Row shares Cols/Types/ColIndex with the source row. Caller
+// must guarantee `src.Data` is independent from the row that will be
+// mutated in-place.
+func (a *RowArena) SnapshotRowSingle(src Row, nCols int) Row {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if nCols <= 0 {
+		nCols = len(src.Data)
+	}
+	if nCols == 0 {
+		return Row{Cols: src.Cols, Types: src.Types, ColIndex: src.ColIndex}
+	}
+	needed := a.offset + nCols
+	if needed > a.slabCap {
+		a.growLocked(needed)
+	}
+	start := a.offset
+	a.offset += nCols
+	dst := a.slab[start : start+nCols : start+nCols]
+	copy(dst, src.Data)
+	return Row{
+		Cols:     src.Cols,
+		Types:    src.Types,
+		ColIndex: src.ColIndex,
+		Data:     dst,
+	}
+}
