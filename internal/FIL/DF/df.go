@@ -53,9 +53,7 @@ var bufPool = sync.Pool{
 		// address within the slice. This replaces the O(n) byte-scan
 		// loop (REQ000604).
 		base := uintptr(unsafe.Pointer(&data[0]))
-		alignMask := ^uintptr(4095)
 		alignOffset := (uintptr(4096) - (base & 4095)) & 4095
-		alignOffset = alignOffset & alignMask // handle base already aligned
 		if base&4095 != 0 {
 			alignOffset = 4096 - (base & 4095)
 		}
