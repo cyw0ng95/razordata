@@ -334,6 +334,72 @@ var projectDataBufPool = sync.Pool{
 	},
 }
 
+// REQ002022: retainedProjectDataBufs keeps a small set of Project data
+// buffers alive across GC cycles. sync.Pool clears on every GC, which
+// caused high miss rates for the 512-value buffers — they got collected
+// faster than they were refilled under GC pressure. The retained slice
+// holds up to retainedProjectDataBufCount buffers permanently; Get first
+// tries retained, then sync.Pool, then allocates. Put fills retained first,
+// then pool. Mirrors the REQ002014 pattern used for batchBufPool.
+var retainedProjectDataBufs []*[]Value
+var retainedProjectDataBufMu sync.Mutex
+
+const retainedProjectDataBufCount = 8
+
+// getProjectDataBuf gets a buffer from the pool, trying retained buffers
+// first (which survive GC), then sync.Pool, then allocating fresh.
+// REQ002022.
+func getProjectDataBuf() *[]Value {
+	retainedProjectDataBufMu.Lock()
+	if n := len(retainedProjectDataBufs); n > 0 {
+		b := retainedProjectDataBufs[n-1]
+		retainedProjectDataBufs = retainedProjectDataBufs[:n-1]
+		retainedProjectDataBufMu.Unlock()
+		*b = (*b)[:0]
+		return b
+	}
+	retainedProjectDataBufMu.Unlock()
+	if b, ok := projectDataBufPool.Get().(*[]Value); ok && b != nil {
+		*b = (*b)[:0]
+		return b
+	}
+	b := make([]Value, 0, projectDataBufChunkSize)
+	return &b
+}
+
+// putProjectDataBuf returns a buffer: fills retained first (up to cap),
+// then sync.Pool. Only buffers with cap >= projectDataBufChunkSize are
+// kept. REQ002022.
+func putProjectDataBuf(b *[]Value) {
+	if cap(*b) < projectDataBufChunkSize {
+		return
+	}
+	*b = (*b)[:0]
+	retainedProjectDataBufMu.Lock()
+	if len(retainedProjectDataBufs) < retainedProjectDataBufCount {
+		retainedProjectDataBufs = append(retainedProjectDataBufs, b)
+		retainedProjectDataBufMu.Unlock()
+		return
+	}
+	retainedProjectDataBufMu.Unlock()
+	projectDataBufPool.Put(b)
+}
+
+// WarmProjectDataPool pre-allocates n Project data buffers and places
+// them in the retained set to eliminate cold-start pool misses.
+// REQ002022.
+func WarmProjectDataPool(n int) {
+	if n <= 0 {
+		return
+	}
+	retainedProjectDataBufMu.Lock()
+	defer retainedProjectDataBufMu.Unlock()
+	for i := 0; i < n && len(retainedProjectDataBufs) < retainedProjectDataBufCount; i++ {
+		b := make([]Value, 0, projectDataBufChunkSize)
+		retainedProjectDataBufs = append(retainedProjectDataBufs, &b)
+	}
+}
+
 // projectDataBufChunkSize is the initial capacity (in values) of a
 // pooled Project.dataBuf. 512 values covers 64 rows × 8 cols which is
 // the modal Project output shape. REQ001091.
@@ -925,9 +991,10 @@ func (p *Project) ExecCtx() *pl.ExecContext { return p.execCtx }
 
 func NewProject(child Operator, cols []PS.Expr) *Project {
 	// REQ001091: acquire the data buffer from the pool so concurrent
-	// Projects share a backing array across queries. If the pool is
-	// empty or returns the wrong type, fall back to a fresh allocation.
-	dataBufPtr, _ := projectDataBufPool.Get().(*[]Value)
+	// Projects share a backing array across queries.
+	// REQ002022: use getProjectDataBuf which checks retained buffers
+	// first (GC-resistant), then sync.Pool, then allocates fresh.
+	dataBufPtr := getProjectDataBuf()
 	var dataBuf []Value
 	if dataBufPtr != nil {
 		dataBuf = (*dataBufPtr)[:0]
@@ -1131,9 +1198,11 @@ func (p *Project) Close() error {
 	// that grew to a meaningful size to avoid wasting pool slots
 	// on degenerate empty Projects. Reset length to 0 so the
 	// next acquirer starts from a clean slate.
+	// REQ002022: use putProjectDataBuf which fills retained set first
+	// (GC-resistant), then sync.Pool.
 	if cap(p.dataBuf) >= projectDataBufChunkSize {
 		buf := p.dataBuf[:0]
-		projectDataBufPool.Put(&buf)
+		putProjectDataBuf(&buf)
 	}
 	p.dataBuf = nil
 	p.dataPerRow = 0

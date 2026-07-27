@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"runtime"
 	"testing"
 	"unsafe"
 
@@ -258,6 +259,101 @@ func TestProject_FnArgBufPooled(t *testing.T) {
 		t.Fatalf("p2.Close: %v", err)
 	}
 	_ = capBefore
+}
+
+// TestProject_DataBufRetainedBuffers verifies REQ002022: the
+// retainedProjectDataBufs set survives GC, so getProjectDataBuf
+// returns a previously-seen buffer even after a GC cycle clears
+// sync.Pool.
+func TestProject_DataBufRetainedBuffers(t *testing.T) {
+	// Clear retained + pool for a clean slate.
+	retainedProjectDataBufMu.Lock()
+	retainedProjectDataBufs = nil
+	retainedProjectDataBufMu.Unlock()
+
+	// Warm the retained set with 4 buffers.
+	WarmProjectDataPool(4)
+
+	retainedProjectDataBufMu.Lock()
+	retainedCount := len(retainedProjectDataBufs)
+	retainedProjectDataBufMu.Unlock()
+	if retainedCount != 4 {
+		t.Fatalf("WarmProjectDataPool(4): retained count = %d, want 4", retainedCount)
+	}
+
+	// Force GC — sync.Pool is cleared, but retained buffers survive.
+	runtime.GC()
+
+	// getProjectDataBuf should still return buffers from the retained set
+	// even though sync.Pool was cleared by GC.
+	for i := 0; i < 4; i++ {
+		buf := getProjectDataBuf()
+		if buf == nil {
+			t.Fatalf("getProjectDataBuf #%d returned nil after GC", i)
+		}
+		if cap(*buf) < projectDataBufChunkSize {
+			t.Errorf("buffer #%d cap = %d, want >= %d", i, cap(*buf), projectDataBufChunkSize)
+		}
+		putProjectDataBuf(buf)
+	}
+}
+
+// TestProject_DataBufRetainedPutGet verifies REQ002022: putProjectDataBuf
+// fills the retained set first, and getProjectDataBuf drains from it.
+func TestProject_DataBufRetainedPutGet(t *testing.T) {
+	// Drain retained for a clean slate.
+	retainedProjectDataBufMu.Lock()
+	retainedProjectDataBufs = nil
+	retainedProjectDataBufMu.Unlock()
+
+	// Put a buffer — should go to retained first.
+	b := make([]Value, 0, projectDataBufChunkSize)
+	putProjectDataBuf(&b)
+
+	retainedProjectDataBufMu.Lock()
+	retainedCount := len(retainedProjectDataBufs)
+	retainedProjectDataBufMu.Unlock()
+	if retainedCount != 1 {
+		t.Fatalf("after Put, retained count = %d, want 1", retainedCount)
+	}
+
+	// Get should return the retained buffer.
+	got := getProjectDataBuf()
+	if got == nil {
+		t.Fatal("getProjectDataBuf returned nil")
+	}
+	if cap(*got) < projectDataBufChunkSize {
+		t.Errorf("got buffer cap = %d, want >= %d", cap(*got), projectDataBufChunkSize)
+	}
+	putProjectDataBuf(got)
+}
+
+// TestProject_DataBufWarmPool verifies REQ002022: WarmProjectDataPool
+// pre-allocates buffers into the retained set.
+func TestProject_DataBufWarmPool(t *testing.T) {
+	// Clear retained set.
+	retainedProjectDataBufMu.Lock()
+	retainedProjectDataBufs = nil
+	retainedProjectDataBufMu.Unlock()
+
+	// Warm with 4 buffers.
+	WarmProjectDataPool(4)
+
+	retainedProjectDataBufMu.Lock()
+	retainedCount := len(retainedProjectDataBufs)
+	retainedProjectDataBufMu.Unlock()
+	if retainedCount != 4 {
+		t.Errorf("after WarmProjectDataPool(4), retained count = %d, want 4", retainedCount)
+	}
+
+	// Warming more than cap should not exceed retainedProjectDataBufCount.
+	WarmProjectDataPool(retainedProjectDataBufCount + 10)
+	retainedProjectDataBufMu.Lock()
+	retainedCount = len(retainedProjectDataBufs)
+	retainedProjectDataBufMu.Unlock()
+	if retainedCount > retainedProjectDataBufCount {
+		t.Errorf("retained count = %d, want <= %d", retainedCount, retainedProjectDataBufCount)
+	}
 }
 
 // TestProject_CompiledExprsPooled verifies REQ001707: compiledExprs

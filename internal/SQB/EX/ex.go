@@ -411,6 +411,7 @@ func NewExecutor() *Executor {
 	e.initStmtCache(256)
 	e.initPlanCache(128)
 	OP.WarmFilterBatchPool(4)
+	OP.WarmProjectDataPool(4) // REQ002022: warm project data buffers
 	return e
 }
 
@@ -426,6 +427,7 @@ func NewExecutorWithPlanner(pl *Planner) *Executor {
 	e.initStmtCache(256)
 	e.initPlanCache(128)
 	OP.WarmFilterBatchPool(4)
+	OP.WarmProjectDataPool(4) // REQ002022: warm project data buffers
 	return e
 }
 
@@ -443,6 +445,7 @@ func NewExecutorWithEngine(store DT.Store) *Executor {
 	e.initPlanCache(128)
 	e.initTextPlanCache(1000)
 	OP.WarmFilterBatchPool(4)
+	OP.WarmProjectDataPool(4) // REQ002022: warm project data buffers
 	return e
 }
 
@@ -714,10 +717,10 @@ func (e *Executor) planWithCache(stmt PS.Stmt) (*pl.PlanResult, error) {
 			// is reusable. Without this, the second call to QueryAll for
 			// the same SQL returns 0 rows.
 			fresh := &pl.PlanResult{
-					Root:    AD.NewAdaptiveOp(cached.Root.(*AD.AdaptiveOp).Child(), key),
-					Cost:    cached.Cost,
-					MemoKey: key, // REQ002060: use current key, not stale cached.MemoKey
-				}
+				Root:    AD.NewAdaptiveOp(cached.Root.(*AD.AdaptiveOp).Child(), key),
+				Cost:    cached.Cost,
+				MemoKey: key, // REQ002060: use current key, not stale cached.MemoKey
+			}
 			replaceLiteralsOnTree(fresh.Root, params)
 			return fresh, nil
 		}
