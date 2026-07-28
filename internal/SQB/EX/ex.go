@@ -789,6 +789,12 @@ func (e *Executor) initPipelineBuilderEnabled() {
 		return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(vec))
 	}
 	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize)
+	// purePipelineFastPath is NOT set to true here. The pipeline fast
+	// path is opt-in via EnablePipelinePath() or EnablePurePipelineFastPath().
+	// Flipping it on by default exposes latent bugs in the vectorized
+	// path (e.g., aggregate MIN/MAX returns nil Data[0]) that are not
+	// yet fixed. Until all shadow mismatches are resolved (REQ002140),
+	// keep the default as legacy path.
 }
 
 // EnablePipelinePath activates the pipeline path for QueryAll and
