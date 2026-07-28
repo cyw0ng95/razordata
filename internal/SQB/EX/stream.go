@@ -257,7 +257,7 @@ func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*s
 // fall through to legacy. Panics are converted to fallback (returns false).
 // REQ002129/2132.
 func (e *Executor) queryStreamBuildPipeline(ctx context.Context, sql string, args []any) (*streamIterator, bool) {
-	if e.pipelineBuilder == nil || !e.purePipelineFastPath {
+	if !e.usePipelineFastPath() {
 		return nil, false
 	}
 	defer func() {
@@ -279,10 +279,8 @@ func (e *Executor) queryStreamBuildPipeline(ctx context.Context, sql string, arg
 	}
 	// Full-specialization check: any LegacyBatchStageSpec → legacy path.
 	// See queryAllBuildPipeline in ex.go for rationale.
-	for _, s := range spec.Stages {
-		if _, isLegacy := s.(*PX.LegacyBatchStageSpec); isLegacy {
-			return nil, false
-		}
+	if !specHasNoLegacyStages(spec) {
+		return nil, false
 	}
 	exec := PX.NewPipelineExecutor(spec)
 	exec.SetParams(args)
@@ -557,8 +555,9 @@ func (e *Executor) QueryStreamCompiled(ctx context.Context, cp *CompiledPlan, ar
 	}
 
 	// REQ002129/2130: pure-PX pipeline streaming path.
-	// purePipelineFastPath must be true to activate.
-	if cp.pipeSpec != nil && len(cp.pipeSpec.OutputCols) > 0 && e.purePipelineFastPath {
+	// Unified gate: usePipelineFastPath + no legacy stages.
+	if cp.pipeSpec != nil && len(cp.pipeSpec.OutputCols) > 0 &&
+		e.usePipelineFastPath() && specHasNoLegacyStages(cp.pipeSpec) {
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Warn("px.QueryStreamCompiled pipeline panic, falling back",

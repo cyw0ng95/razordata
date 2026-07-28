@@ -20,9 +20,9 @@ import (
 //   - ExecuteStream: stream results via channel (for large results)
 //   - Reset: return to pre-execution state (for plan cache reuse)
 type PipelineExecutor struct {
-	spec  *PipelineSpec
-	pipe  *Pipeline
-	mu    sync.Mutex
+	spec *PipelineSpec
+	pipe *Pipeline
+	mu   sync.Mutex
 	// REQ002136: per-execution state injected before first Execute.
 	params   []any
 	execCtx  *DT.ExecContext
@@ -84,6 +84,8 @@ func (e *PipelineExecutor) ExecuteWithArgs(ctx context.Context, args []any, plan
 // ExecuteStream returns a streaming iterator that reads from the
 // pipeline one batch at a time. The caller must call Close() on
 // the returned iterator when done.
+// REQ002133: caches Pipeline.execCtx into the PipelineStream so
+// streamed rows also get DT.WithExecContext applied.
 func (e *PipelineExecutor) ExecuteStream(ctx context.Context) (*PipelineStream, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -93,8 +95,9 @@ func (e *PipelineExecutor) ExecuteStream(ctx context.Context) (*PipelineStream, 
 		return nil, err
 	}
 	return &PipelineStream{
-		pipe: pipe,
-		ctx:  ctx,
+		pipe:    pipe,
+		ctx:     ctx,
+		execCtx: e.execCtx,
 	}, nil
 }
 
@@ -141,19 +144,24 @@ func (e *PipelineExecutor) ensurePipeline(ctx context.Context) (*Pipeline, error
 
 // PipelineStream provides row-by-row streaming from a pipeline.
 // It reads batches from the pipeline and converts them to rows.
+// REQ002133: carries execCtx for DT.WithExecContext row embedding.
 type PipelineStream struct {
-	pipe     *Pipeline
-	ctx      context.Context
-	batch    *UT.Batch
-	buf      []PL.Value
-	rowPos   int
-	done     bool
-	closeMu  sync.Mutex
-	closed   bool
+	pipe    *Pipeline
+	ctx     context.Context
+	batch   *UT.Batch
+	buf     []PL.Value
+	rowPos  int
+	done    bool
+	closeMu sync.Mutex
+	closed  bool
+	execCtx *DT.ExecContext // cached for fast-path check in Next()
 }
 
 // Next returns the next row from the stream.
 // Returns (DT.Row{}, DT.ErrNoRows) at EOF.
+// REQ002133: when pipeline has an execCtx, rows are embedded with it
+// (via DT.WithExecContext) so EV.EvalValue can find the Planner for
+// subqueries and EV functions can access the session context.
 func (s *PipelineStream) Next() (DT.Row, error) {
 	if s.done {
 		return DT.Row{}, DT.ErrNoRows
@@ -186,6 +194,9 @@ func (s *PipelineStream) Next() (DT.Row, error) {
 			phys = int(s.batch.Sel[s.rowPos])
 		}
 		row := batchRowToRow(s.batch, phys)
+		if s.execCtx != nil {
+			DT.WithExecContext(&row, s.execCtx)
+		}
 		s.rowPos++
 		return row, nil
 	}

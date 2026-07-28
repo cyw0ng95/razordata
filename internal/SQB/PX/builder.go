@@ -1040,11 +1040,28 @@ func (r *RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error
 		}
 		return nil, err
 	}
-	// Convert single row to batch
-	batch := UT.GetBatch(len(row.Data))
+	// Convert single row to batch.
+	// Preserve row.Cols (column names) so ToRowsShared downstream
+	// can reconstruct rows with correct column metadata. REQ002133:
+	// otherwise RowOperatorAsProducer→ToRowsShared returns nil rows
+	// because ToRowsShared short-circuits on empty ColNames.
+	n := len(row.Data)
+	batch := UT.GetBatch(n)
 	batch.Size = 1
+	if len(row.Cols) >= n {
+		for i := 0; i < n; i++ {
+			batch.Cols[i].Name = row.Cols[i]
+		}
+	} else {
+		// Some operators (e.g. expression-only SELECTs, subquery
+		// wrappers) may not populate row.Cols even when Data has
+		// values. ToRowsShared requires non-empty ColNames, so
+		// synthesize unique placeholder names.
+		for i := 0; i < n; i++ {
+			batch.Cols[i].Name = fmt.Sprintf("col%d", i)
+		}
+	}
 	for i, v := range row.Data {
-		batch.Cols[i].Name = ""
 		switch v.Kind {
 		case PL.KindInt:
 			batch.Cols[i].Data.Ints = []int64{v.I64}

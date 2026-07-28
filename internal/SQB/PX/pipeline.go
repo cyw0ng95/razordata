@@ -13,15 +13,19 @@ import (
 // PipelineSpec. It holds runtime state and is NOT safe for concurrent
 // use. Create via PipelineSpec.NewRuntime().
 type Pipeline struct {
-	spec   *PipelineSpec
-	stages []Stage
-	root   Stage
-	closed bool
+	spec    *PipelineSpec
+	stages  []Stage
+	root    Stage
+	closed  bool
+	execCtx *DT.ExecContext // per-execution context for row embedding
 }
 
 // Execute drains the root stage and collects all result rows.
 // The pipeline must not be closed. After Execute, call Reset to
 // re-execute or Close to release resources.
+// REQ002133: replaces drainBatch/drainBatchProducer — uses
+// RowArena from execCtx for allocation, embeds execCtx into each
+// row via DT.WithExecContext so EV can locate Planner for subqueries.
 func (p *Pipeline) Execute(ctx context.Context) ([]DT.Row, error) {
 	if p.closed {
 		return nil, errors.New("px: execute on closed pipeline")
@@ -39,6 +43,14 @@ func (p *Pipeline) Execute(ctx context.Context) ([]DT.Row, error) {
 		rowBufPool.Put(bufPtr)
 	}()
 
+	// REQ002012: cache RowArena pointer once — reduces per-row
+	// interface type-assertion overhead (~5% of total alloc bytes
+	// on aggregate-heavy queries when arena is available).
+	var arena *DT.RowArena
+	if p.execCtx != nil {
+		arena, _ = p.execCtx.RowArena.(*DT.RowArena)
+	}
+
 	for {
 		batch, err := p.root.NextBatch(ctx)
 		if err != nil {
@@ -51,10 +63,30 @@ func (p *Pipeline) Execute(ctx context.Context) ([]DT.Row, error) {
 		buf = newBuf
 		for i := range batchRows {
 			row := batchRows[i]
-			// Deep-copy Data since the shared buffer is reused across batches.
-			copied := make([]PL.Value, len(row.Data))
-			copy(copied, row.Data)
-			row.Data = copied
+			n := len(row.Data)
+			// REQ002012 + REQ001638: deep-copy Data because the
+			// shared buffer is reused across batches. Prefer RowArena
+			// allocation when available to eliminate per-row make+copy
+			// heap churn.
+			if arena != nil {
+				arenaRow := arena.AllocRow(n, nil)
+				copy(arenaRow.Data, row.Data)
+				arenaRow.Cols = row.Cols
+				arenaRow.Types = row.Types
+				arenaRow.ColIndex = row.ColIndex
+				row = arenaRow
+			} else if p.execCtx != nil {
+				copied := make([]PL.Value, n)
+				copy(copied, row.Data)
+				row.Data = copied
+			} else {
+				copied := make([]PL.Value, n)
+				copy(copied, row.Data)
+				row.Data = copied
+			}
+			if p.execCtx != nil {
+				DT.WithExecContext(&row, p.execCtx)
+			}
 			rows = append(rows, row)
 		}
 		if batch.Pooled {
@@ -138,8 +170,10 @@ func (p *Pipeline) PropagateParams(args []any, buf *[]any) {
 }
 
 // PropagateExecContext injects per-execution context into all stages
-// that implement ExecContextPropagator. REQ002136.
+// that implement ExecContextPropagator and caches it on the Pipeline
+// for row embedding in Execute. REQ002133/2136.
 func (p *Pipeline) PropagateExecContext(ec *DT.ExecContext) {
+	p.execCtx = ec
 	for _, s := range p.stages {
 		if ep, ok := s.(ExecContextPropagator); ok {
 			ep.PropagateExecContext(ec)

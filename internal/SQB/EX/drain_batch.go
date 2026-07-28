@@ -16,16 +16,13 @@ import (
 
 // rowBufPool pools the shared Value buffer for ToRowsShared.
 // REQ001638: eliminates per-row allocations in drainBatchProducer.
+// Retained for non-BatchProducer fallbacks; BatchProducer primary
+// path (drainPlanExecCtx) uses PipelineExecutor + PX rowBufPool.
 var rowBufPool = sync.Pool{
 	New: func() any {
 		buf := make([]pl.Value, 0, 1024*16) // 1024 rows × 16 cols
 		return &buf
 	},
-}
-
-// drainPlan drains all rows from a plan into a slice.
-func (e *Executor) drainPlan(ctx context.Context, plan *pl.PlanResult) ([]DT.Row, error) {
-	return drainBatch(ctx, plan.Root, nil)
 }
 
 // drainPlanExecCtx is defined in drain_batch_default.go (normal mode)
@@ -35,12 +32,8 @@ func (e *Executor) drainPlan(ctx context.Context, plan *pl.PlanResult) ([]DT.Row
 // REQ002133: builds a PipelineSpec wrapping the plan tree in
 // LegacyBatchStageSpec which invokes the SpecializeFunc at runtime.
 //
-// NOTE: this function is only reliable for DML (INSERT/UPDATE/DELETE)
-// where the operator is a single WT.Insert/Update/Delete. For SELECT
-// queries, the vectorized path (tryVectorizePlan) has known issues
-// with EXISTS subqueries, CASE WHEN, and other complex expressions.
-// drainPlanExecCtx uses drainBatch (legacy) for SELECT queries and
-// execDMLPipeline (which calls this function) for DML. REQ002143.
+// Used only by drain_batch_shadow.go (px_validate build tag) for
+// shadow-validation comparison and by execDMLPipeline for DML writers.
 func (e *Executor) drainPipeline(ctx context.Context, plan *pl.PlanResult) (rows []DT.Row, err error) {
 	if e.pipelineBuilder == nil {
 		return nil, errors.New("ex: pipeline not available")

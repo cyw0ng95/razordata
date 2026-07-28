@@ -244,18 +244,23 @@ type Executor struct {
 	// (e.g., DML-only executor without a store).
 	pipelineBuilder *PX.PipelineBuilder
 	// purePipelineFastPath gates BuildPipeline(sql)-based fast paths in
-	// QueryAll, QueryStream, Exec, CompilePlan, ExecCompiled. When false
-	// (default), these entry points fall back to the legacy parse→plan→
-	// drainBatch flow; BuildPipeline/CompilePlan still populate pipeSpec
-	// for callers that want it. This flag exists because the native PX
-	// Stage implementations (ProjectStage/FilterStage expressions) do
-	// not yet thread the EV.RowEvaluator execCtx into
-	// EV.EvalBatchExpr, causing scalar functions (ABS, UPPER, IFNULL,
-	// GROUP_CONCAT separator) to silently return 0/empty. Once PX
-	// expression evaluation passes a non-nil EV evaluator (and
-	// Executor tests pass with the fast path forced on), flip this to
-	// true by default. REQ002129.
-	purePipelineFastPath bool
+	// QueryAll, Query, QueryStream, Exec, CompilePlan, ExecCompiled,
+	// and drainPlanExecCtx. When false (default), these entry points
+	// fall back to the legacy parse→plan→drainBatch flow;
+	// BuildPipeline/CompilePlan still populate pipeSpec for callers that
+	// want it. This flag exists because the native PX Stage
+	// implementations (ProjectStage/FilterStage expressions) do not yet
+	// thread the EV.RowEvaluator execCtx into EV.EvalBatchExpr, causing
+	// scalar functions (ABS, UPPER, IFNULL, GROUP_CONCAT separator) to
+	// silently return 0/empty. Once PX expression evaluation passes a
+	// non-nil EV evaluator (and Executor tests pass with the fast path
+	// forced on), flip this to true by default. REQ002129.
+	//
+	// atomic.Bool for cross-goroutine correctness: EnablePurePipelineFastPath
+	// may be called concurrently with query execution (e.g., tests reset
+	// the flag, or a config PRAGMA toggles it mid-session). Load/Store
+	// provide acquire/release ordering.
+	purePipelineFastPath atomic.Bool
 	// pool is the shared WorkerPool for parallel operator execution.
 	// Created in NewExecutor and sized to GOMAXPROCS. Shared across
 	// ShallowCopy clones via pointer. Shut down in Close().
@@ -334,22 +339,22 @@ func (e *Executor) GetAttachedDBs() map[string]string {
 func (e *Executor) ShallowCopy() *Executor {
 	EC.WARN_ON(e.closed.Load(), "ShallowCopy on closed Executor")
 	e2 := &Executor{
-		planner:              e.planner,
-		store:                e.store,
-		stmtCache:            e.stmtCache,       // shared — thread-safe LRU with mutex
-		planCache:            e.planCache,       // shared — REQ001259: immutable after compilation
-		textPlanCache:        e.textPlanCache,   // shared — LRU with mutex
-		pipelineBuilder:      e.pipelineBuilder, // shared — PipelineBuilder is goroutine-safe
-		purePipelineFastPath: e.purePipelineFastPath,
-		txnDebugger:          UT.NewTxnDebugger(),
-		pool:                 e.pool, // shared — pool is thread-safe
-		maxMemoryPerQuery:    e.maxMemoryPerQuery,
-		joinBufferSize:       e.joinBufferSize,
-		maxResultRows:        e.maxResultRows,
-		rowArena:             e.rowArena, // shared — REQ001419: points to Engine's field
-		lastChanges:          e.lastChanges,
-		totalChanges:         e.totalChanges,
+		planner:           e.planner,
+		store:             e.store,
+		stmtCache:         e.stmtCache,       // shared — thread-safe LRU with mutex
+		planCache:         e.planCache,       // shared — REQ001259: immutable after compilation
+		textPlanCache:     e.textPlanCache,   // shared — LRU with mutex
+		pipelineBuilder:   e.pipelineBuilder, // shared — PipelineBuilder is goroutine-safe
+		txnDebugger:       UT.NewTxnDebugger(),
+		pool:              e.pool, // shared — pool is thread-safe
+		maxMemoryPerQuery: e.maxMemoryPerQuery,
+		joinBufferSize:    e.joinBufferSize,
+		maxResultRows:     e.maxResultRows,
+		rowArena:          e.rowArena, // shared — REQ001419: points to Engine's field
+		lastChanges:       e.lastChanges,
+		totalChanges:      e.totalChanges,
 	}
+	e2.purePipelineFastPath.Store(e.purePipelineFastPath.Load())
 	return e2
 }
 
@@ -794,31 +799,72 @@ func (e *Executor) initPipelineBuilderEnabled() {
 // EV.RowEvaluator is not needed for complex expressions).
 func (e *Executor) EnablePipelinePath() {
 	e.initPipelineBuilderEnabled()
-	e.purePipelineFastPath = true
+	e.purePipelineFastPath.Store(true)
 }
 
 // DisablePipelinePath deactivates the pipeline path. drainPlanExecCtx
 // falls back to drainBatch. REQ002141.
 func (e *Executor) DisablePipelinePath() {
 	e.pipelineBuilder = nil
-	e.purePipelineFastPath = false
+	e.purePipelineFastPath.Store(false)
 }
 
 // PurePipelineFastPath reports whether the BuildPipeline(sql)-based
-// fast paths are active in QueryAll, QueryStream, Exec, CompilePlan,
-// and ExecCompiled. REQ002129.
-func (e *Executor) PurePipelineFastPath() bool { return e.purePipelineFastPath }
+// fast paths are active in QueryAll, Query, QueryStream, Exec,
+// CompilePlan, ExecCompiled, and drainPlanExecCtx. REQ002129.
+func (e *Executor) PurePipelineFastPath() bool { return e.purePipelineFastPath.Load() }
 
 // EnablePurePipelineFastPath activates the BuildPipeline(sql)-based
 // fast paths independently of pipelineBuilder initialization. Used by
 // tests that want to exercise pure-PX execution without having to
 // re-initialize the pipeline builder. Idempotent. REQ002129.
-func (e *Executor) EnablePurePipelineFastPath() { e.purePipelineFastPath = true }
+func (e *Executor) EnablePurePipelineFastPath() { e.purePipelineFastPath.Store(true) }
 
 // DisablePurePipelineFastPath disables the fast paths. Safe for
 // concurrent use (single-write best-effort bool, no concurrent
 // executor invocation guaranteed by the caller convention). REQ002129.
-func (e *Executor) DisablePurePipelineFastPath() { e.purePipelineFastPath = false }
+func (e *Executor) DisablePurePipelineFastPath() { e.purePipelineFastPath.Store(false) }
+
+// usePipelineFastPath is the unified stage-selection gate for all EX
+// entry points. Returns true only when BOTH the pipeline builder was
+// initialized AND the pure-PX fast-path flag is currently active.
+//
+// Single source of truth — replaces the 7 duplicated
+// `e.pipelineBuilder != nil && e.purePipelineFastPath.Load()`
+// expressions spread across ex.go + stream.go. One call site = one
+// place to add future gating (e.g., per-stmt kind allowlist, panic
+// recovery, or per-user session overrides).
+//
+// Concurrency: purePipelineFastPath is atomic.Bool, so a concurrent
+// EnablePurePipelineFastPath call has acquire/release semantics — no
+// torn reads. pipelineBuilder is only ever set in NewExecutor (before
+// any concurrent callers) or DisablePipelinePath (which is an
+// explicit single-threaded config reset, same caller convention as
+// DisablePurePipelineFastPath).
+func (e *Executor) usePipelineFastPath() bool {
+	return e.pipelineBuilder != nil && e.purePipelineFastPath.Load()
+}
+
+// specHasNoLegacyStages reports whether a PipelineSpec contains
+// ONLY native StageSpecs (no LegacyBatchStageSpec fallback wrapper).
+// De-duplicates the 3 copies of this loop in Exec, queryAllBuildPipeline,
+// and ExecCompiled — ensuring the rejection criteria never drift.
+//
+// Why reject LegacyBatchStageSpec in the fast path: the legacy
+// wrapper invokes the plan-tree operator and its own EV.RowEvaluator
+// setup paths; if the pipeline ran the wrapper AND the legacy
+// drainBatch ran the same plan tree, we'd double-execute subqueries,
+// reset Aggregate internal state after a partial run, and lose
+// execCtx embedding for correlated subqueries. Early reject → the
+// legacy parse→plan→drainBatch path runs the tree once, correctly.
+func specHasNoLegacyStages(spec *PX.PipelineSpec) bool {
+	for _, s := range spec.Stages {
+		if _, isLegacy := s.(*PX.LegacyBatchStageSpec); isLegacy {
+			return false
+		}
+	}
+	return true
+}
 
 // BuildPipeline compiles SQL into a PipelineSpec using the unified
 // compile flow. Returns nil if the pipeline path is not available
@@ -1120,9 +1166,10 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	// parse+plan for warm cached SQL (BuildPipeline consults its own
 	// PipelineCache for sql+args-shape matches). Falls back to legacy
 	// path on any error/panic.
-	// purePipelineFastPath must be true to activate — native PX stages
-	// don't thread EV.RowEvaluator for scalar funcs yet.
-	if e.pipelineBuilder != nil && e.purePipelineFastPath {
+	//
+	// Unified gate via usePipelineFastPath() — same switching logic as
+	// QueryAll, QueryStream, CompilePlan, ExecCompiled.
+	if e.usePipelineFastPath() {
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Warn("px.Exec pipeline panic, falling back",
@@ -1131,33 +1178,23 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 		}()
 		spec, bErr := e.pipelineBuilder.Build(sql)
 		if bErr == nil && spec != nil && len(spec.Stages) > 0 &&
-			len(spec.OutputCols) > 0 && len(spec.OutputTypes) > 0 {
-			// Reject partial specialization (LegacyBatchStageSpec) —
-			// see queryAllBuildPipeline for rationale.
-			legacy := false
-			for _, s := range spec.Stages {
-				if _, isLegacy := s.(*PX.LegacyBatchStageSpec); isLegacy {
-					legacy = true
-					break
+			len(spec.OutputCols) > 0 && len(spec.OutputTypes) > 0 &&
+			specHasNoLegacyStages(spec) {
+			exec := PX.NewPipelineExecutor(spec)
+			defer exec.Close()
+			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
+			execCtx.RowArena = e.ensureArena()
+			rows, execErr := exec.ExecuteWithArgs(ctx, args, e.planner, execCtx)
+			if execErr == nil {
+				e.lastChanges = execCtx.LastChanges
+				e.totalChanges = execCtx.TotalChanges
+				affected := execCtx.LastChanges
+				if affected == 0 {
+					affected = int64(len(rows))
 				}
+				return Result{RowsAffected: affected}, nil
 			}
-			if !legacy {
-				exec := PX.NewPipelineExecutor(spec)
-				defer exec.Close()
-				execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
-				execCtx.RowArena = e.ensureArena()
-				rows, execErr := exec.ExecuteWithArgs(ctx, args, e.planner, execCtx)
-				if execErr == nil {
-					e.lastChanges = execCtx.LastChanges
-					e.totalChanges = execCtx.TotalChanges
-					affected := execCtx.LastChanges
-					if affected == 0 {
-						affected = int64(len(rows))
-					}
-					return Result{RowsAffected: affected}, nil
-				}
-				slog.Debug("px.Exec pipeline err, falling back", "err", execErr.Error())
-			}
+			slog.Debug("px.Exec pipeline err, falling back", "err", execErr.Error())
 		}
 	}
 
@@ -1329,6 +1366,36 @@ func hasReturning(stmt PS.Stmt) bool {
 }
 
 func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, error) {
+	// REQ002129: BuildPipeline fast path — try first. Query only needs
+	// OutputCols + OutputTypes metadata (it's a schema descriptor; actual
+	// rows are fetched via QueryStream/QueryAll by the driver). No drain
+	// needed. Unified gate via usePipelineFastPath() + no legacy stages.
+	if e.usePipelineFastPath() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Warn("px.Query pipeline panic, falling back",
+					"err", fmt.Sprintf("%v", r))
+			}
+		}()
+		spec, bErr := e.pipelineBuilder.Build(sql)
+		if bErr == nil && spec != nil && len(spec.OutputCols) > 0 &&
+			specHasNoLegacyStages(spec) {
+			// Propagate params/execCtx for consistent LastChanges state
+			// (CHANGES() semantics) even though no rows are drained.
+			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+			exec := PX.NewPipelineExecutor(spec)
+			exec.SetExecContext(execCtx)
+			exec.SetParams(args)
+			exec.SetPlanner(e.planner)
+			_ = exec.Close()
+			e.lastChanges = execCtx.LastChanges
+			e.totalChanges = execCtx.TotalChanges
+			return &Rows{
+				Cols:  append([]string(nil), spec.OutputCols...),
+				Types: append([]LX.TokenType(nil), spec.OutputTypes...),
+			}, nil
+		}
+	}
 	// REQ001480: textPlanCache fast-path — bypass parse/plan/NormalizeForMemo
 	// on cache hit. Mirrors QueryAll's fast-path at ex.go:1162-1172.
 	if e.textPlanCache != nil {
@@ -1557,7 +1624,7 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 // to fallback (returns false) so latent bugs don't crash production.
 // REQ002129/2132.
 func (e *Executor) queryAllBuildPipeline(ctx context.Context, sql string, args []any) ([]DT.Row, bool) {
-	if e.pipelineBuilder == nil || !e.purePipelineFastPath {
+	if !e.usePipelineFastPath() {
 		return nil, false
 	}
 	defer func() {
@@ -1588,10 +1655,8 @@ func (e *Executor) queryAllBuildPipeline(ctx context.Context, sql string, args [
 	// clauses. Reject here → legacy plan-tree loop handles it.
 	// REQ002129: don't double-run the operator tree (once via Build,
 	// then again via legacy drain) when not fully specialized.
-	for _, s := range spec.Stages {
-		if _, isLegacy := s.(*PX.LegacyBatchStageSpec); isLegacy {
-			return nil, false
-		}
+	if !specHasNoLegacyStages(spec) {
+		return nil, false
 	}
 	exec := PX.NewPipelineExecutor(spec)
 	defer exec.Close()
@@ -1772,10 +1837,10 @@ func (e *Executor) ExecCompiled(ctx context.Context, cp *CompiledPlan, args ...a
 	}
 
 	// REQ002129/2130: pure-PX PipelineSpec path (fast) — try first.
-	// purePipelineFastPath must be true to activate — native PX stages
-	// don't thread EV.RowEvaluator for scalar funcs yet.
+	// Unified gate via usePipelineFastPath() — matches Exec/QueryAll.
 	// Falls back on any error/panic/nil-spec to the legacy plan-tree.
-	if cp.pipeSpec != nil && e.purePipelineFastPath {
+	if cp.pipeSpec != nil && e.usePipelineFastPath() &&
+		specHasNoLegacyStages(cp.pipeSpec) {
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Warn("px.ExecCompiled pipeline panic, falling back",
