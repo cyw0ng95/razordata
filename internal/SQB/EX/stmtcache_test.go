@@ -189,7 +189,7 @@ func TestStmtCache_LRU_Eviction(t *testing.T) {
 	for i := 0; i <= maxSize; i++ {
 		ex.putCachedStmt(fmt.Sprintf("k%d", i), dummy)
 	}
-	if got := ex.stmtCache.lru.Len(); got != maxSize {
+	if got := len(ex.stmtCache.lru); got != maxSize {
 		t.Fatalf("expected %d entries after overflow, got %d", maxSize, got)
 	}
 	if ex.getCachedStmt("k0") != nil {
@@ -209,7 +209,7 @@ func TestStmtCache_LRU_Eviction(t *testing.T) {
 	if ex.getCachedStmt("k2") != nil {
 		t.Error("k2 (now LRU) should have been evicted instead of k1")
 	}
-	if got := ex.stmtCache.lru.Len(); got != maxSize {
+	if got := len(ex.stmtCache.lru); got != maxSize {
 		t.Errorf("expected %d entries after promote+insert, got %d", maxSize, got)
 	}
 }
@@ -348,7 +348,7 @@ func TestStmtCache_DDLInvalidates(t *testing.T) {
 
 	// Verify cache has the entry.
 	ex.stmtCache.mu.Lock()
-	hasEntry := ex.stmtCache.entries["SELECT id FROM t"] != nil
+	_, hasEntry := ex.stmtCache.entries["SELECT id FROM t"]
 	ex.stmtCache.mu.Unlock()
 	if !hasEntry {
 		t.Fatal("expected cache entry for first query")

@@ -1,7 +1,6 @@
 package EX
 
 import (
-	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -177,22 +176,21 @@ type textPlanEntry struct {
 // REQ001223: eliminates per-Executor stmtCache allocation (171 MB per query).
 // Initialized lazily on first NewExecutor call.
 var globalStmtCache = &stmtCache{
-	entries: make(map[string]*list.Element, 1024),
-	lru:     list.New(),
+	entries: make(map[string]int, 1024),
+	lru:     make([]*stmtCacheEntry, 0, 1024),
 	maxSize: 1024,
 }
 
 // stmtCache is a thread-safe LRU cache for parsed statements.
 // REQ001220: shared across ShallowCopy clones via pointer.
-// REQ001693: true O(1) LRU via container/list (map[string]*list.Element
-// + doubly-linked list). The previous design used a lastAccess counter
-// and a full O(N) map scan on every over-capacity eviction, which cost
-// 120ms / 16.4% of CPU in slt_good_0 (runtime.mapIterNext). MoveToFront
-// on get and PushFront + evictBack on put are both O(1) and allocation-free.
+// REQ001974: slice-indexed LRU replaces container/list to eliminate
+// 1.29M list.Element allocations. entries maps key → index in lru
+// slice. Move-to-front swaps the entry with lru[0] and updates the
+// index map for both swapped entries. O(1) amortized.
 type stmtCache struct {
 	mu      sync.Mutex
-	entries map[string]*list.Element
-	lru     *list.List
+	entries map[string]int
+	lru     []*stmtCacheEntry
 	maxSize int
 }
 
@@ -506,46 +504,68 @@ func (e *Executor) initStmtCache(maxSize int) {
 }
 
 // getCachedStmt looks up a cached parsed statement. Returns nil if not found.
-// REQ001693: O(1) — one map lookup + MoveToFront (pointer swaps, no alloc).
+// REQ001974: O(1) — one map lookup + swap-to-front (two index updates, no alloc).
 func (e *Executor) getCachedStmt(sql string) PS.Stmt {
 	e.stmtCache.mu.Lock()
 	defer e.stmtCache.mu.Unlock()
-	elem, ok := e.stmtCache.entries[sql]
+	idx, ok := e.stmtCache.entries[sql]
 	if !ok {
 		return nil
 	}
-	e.stmtCache.lru.MoveToFront(elem)
-	return elem.Value.(*stmtCacheEntry).stmt
+	e.stmtCache.moveToFront(idx)
+	return e.stmtCache.lru[0].stmt
 }
 
 // putCachedStmt stores a parsed statement in the cache.
-// REQ001693: O(1) insert + evictBack; replaces the previous O(N) map
-// scan that found the min-lastAccess entry on every over-capacity put.
+// REQ001974: O(1) insert + evictBack; replaces container/list.
 func (e *Executor) putCachedStmt(sql string, stmt PS.Stmt) {
 	e.stmtCache.mu.Lock()
 	defer e.stmtCache.mu.Unlock()
-	if elem, ok := e.stmtCache.entries[sql]; ok {
-		elem.Value.(*stmtCacheEntry).stmt = stmt
-		e.stmtCache.lru.MoveToFront(elem)
+	if idx, ok := e.stmtCache.entries[sql]; ok {
+		e.stmtCache.lru[idx].stmt = stmt
+		e.stmtCache.moveToFront(idx)
 		return
 	}
 	ent := &stmtCacheEntry{key: sql, stmt: stmt}
-	elem := e.stmtCache.lru.PushFront(ent)
-	e.stmtCache.entries[sql] = elem
-	for e.stmtCache.lru.Len() > e.stmtCache.maxSize {
+	// Prepend to front.
+	e.stmtCache.lru = append(e.stmtCache.lru, nil)
+	copy(e.stmtCache.lru[1:], e.stmtCache.lru)
+	e.stmtCache.lru[0] = ent
+	e.stmtCache.entries[sql] = 0
+	// Update indices for shifted entries.
+	for i := 1; i < len(e.stmtCache.lru); i++ {
+		e.stmtCache.entries[e.stmtCache.lru[i].key] = i
+	}
+	for len(e.stmtCache.lru) > e.stmtCache.maxSize {
 		e.stmtCache.evictBack()
+	}
+}
+
+// moveToFront moves the entry at idx to position 0. Caller must hold mu.
+func (c *stmtCache) moveToFront(idx int) {
+	if idx == 0 {
+		return
+	}
+	ent := c.lru[idx]
+	// Shift [0:idx] right by one.
+	copy(c.lru[1:idx+1], c.lru[0:idx])
+	c.lru[0] = ent
+	// Update indices for all moved entries including the one at front.
+	c.entries[ent.key] = 0
+	for i := 1; i <= idx; i++ {
+		c.entries[c.lru[i].key] = i
 	}
 }
 
 // evictBack removes the least-recently-used entry. Caller must hold mu.
 func (c *stmtCache) evictBack() {
-	elem := c.lru.Back()
-	if elem == nil {
+	if len(c.lru) == 0 {
 		return
 	}
-	ent := elem.Value.(*stmtCacheEntry)
-	c.lru.Remove(elem)
-	delete(c.entries, ent.key)
+	back := c.lru[len(c.lru)-1]
+	delete(c.entries, back.key)
+	c.lru[len(c.lru)-1] = nil // avoid memory leak
+	c.lru = c.lru[:len(c.lru)-1]
 }
 
 // clearStmtCache clears the statement cache. Used in tests.
@@ -555,8 +575,8 @@ func (e *Executor) clearStmtCache() {
 	// REQ001673: clear() preserves map capacity, avoiding the
 	// 17.45MB per-Reset alloc from make(map, 1024).
 	clear(e.stmtCache.entries)
-	// REQ001693: re-init the LRU list in place (no realloc).
-	e.stmtCache.lru.Init()
+	// REQ001974: re-init the LRU slice in place (no realloc).
+	e.stmtCache.lru = e.stmtCache.lru[:0]
 }
 
 // initPlanCache initializes the plan cache. Must be called before use.
@@ -2219,5 +2239,5 @@ func ResetGlobalStmtCache() {
 	globalStmtCache.mu.Lock()
 	defer globalStmtCache.mu.Unlock()
 	clear(globalStmtCache.entries)
-	globalStmtCache.lru.Init()
+	globalStmtCache.lru = globalStmtCache.lru[:0]
 }
