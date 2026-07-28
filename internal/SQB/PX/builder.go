@@ -37,6 +37,15 @@ type PipelineBuilder struct {
 	specialize SpecializeFunc
 }
 
+// ClearCache clears any entries in the builder's PipelineCache. Safe to
+// call on a nil builder or builder with no cache (no-op). REQ002132.
+func (b *PipelineBuilder) ClearCache() {
+	if b == nil || b.cache == nil {
+		return
+	}
+	b.cache.Clear()
+}
+
 // NewPipelineBuilder creates a builder with the given cache,
 // planner interface, and specialization function.
 func NewPipelineBuilder(cache *PipelineCache, planner PL.QueryPlanner, specialize SpecializeFunc) *PipelineBuilder {
@@ -113,6 +122,10 @@ func (b *PipelineBuilder) Build(sql string) (*PipelineSpec, error) {
 // specializePlan converts a row-based plan tree into a PipelineSpec.
 // It decomposes the plan tree into concrete StageSpecs where possible,
 // falling back to LegacyBatchStageSpec for unsupported operators.
+// NOTE: The presence of LegacyBatchStageSpec in the returned spec means
+// execution will fall back to plan-tree evaluation via RowOperatorAsProducer.
+// Callers that want a pure-PX pipeline (no LegacyBatch wrappers) must check
+// the returned stages themselves — e.g. in EX's queryAllBuildPipeline.
 func (b *PipelineBuilder) specializePlan(plan *PL.PlanResult, sql, memoKey string) (*PipelineSpec, error) {
 	stages, edges, rootIdx := decomposePlan(plan.Root, b.planner, b.specialize)
 
@@ -240,7 +253,12 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *OP.SeqScan:
 		return decomposeSeqScan(o, st)
 	case *OP.IndexScan:
-		return decomposeSeqScan(nil, st) // IndexScan → ScanStageSpec wrapping o
+		// IndexScan has different op wiring; can't extract the
+		// row-operator for a native ScanStageSpec without a schema.
+		// Fall back to LegacyBatchStageSpec → specializePlan errors
+		// → EX falls back to legacy plan-tree execution, which is
+		// still correct (planner produces IndexScan → legacy OP loop).
+		return decomposeFallback(o, st, planner, specialize)
 	case *OP.Filter:
 		return decomposeFilter(o, st, planner, specialize)
 	case *OP.Project:
@@ -523,6 +541,23 @@ func decomposeAggregate(agg *AG.Aggregate, st *decomposeState, planner PL.QueryP
 			spec, ok := resolveAggFunc(ae, childOut)
 			if !ok {
 				allResolved = false
+				break
+			}
+			// DISTINCT aggregates require a dedup stage that isn't yet
+			// implemented in the pure-PX pipeline; bail to legacy path.
+			if spec.Distinct {
+				allResolved = false
+				break
+			}
+			// GROUP_CONCAT / STRING_AGG have sep arg + concat semantics
+			// not yet fully implemented in the native AggregateStage
+			// accumulators; bail.
+			switch spec.Kind {
+			case MR.AggGroupConcat, MR.AggStringAgg:
+				allResolved = false
+				break
+			}
+			if !allResolved {
 				break
 			}
 			specs = append(specs, spec)

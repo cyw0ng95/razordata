@@ -59,6 +59,28 @@ func (e *PipelineExecutor) Execute(ctx context.Context) ([]DT.Row, error) {
 	return pipe.Execute(ctx)
 }
 
+// ExecuteWithArgs sets params/planner/execCtx and executes in a single call.
+// Shorthand for SetParams + SetPlanner + SetExecContext + Execute.
+// planner and execCtx may be nil. REQ002142.
+func (e *PipelineExecutor) ExecuteWithArgs(ctx context.Context, args []any, planner PL.QueryPlanner, execCtx *DT.ExecContext) ([]DT.Row, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(args) > 0 {
+		e.params = args
+	}
+	if planner != nil {
+		e.planner = planner
+	}
+	if execCtx != nil {
+		e.execCtx = execCtx
+	}
+	pipe, err := e.ensurePipeline(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return pipe.Execute(ctx)
+}
+
 // ExecuteStream returns a streaming iterator that reads from the
 // pipeline one batch at a time. The caller must call Close() on
 // the returned iterator when done.

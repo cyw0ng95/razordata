@@ -3,6 +3,8 @@ package EX
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"sync"
 
 	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
@@ -11,6 +13,7 @@ import (
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	PX "github.com/cyw0ng95/razordata/internal/SQB/PX"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
@@ -215,6 +218,15 @@ func extractColumnName(bin *PS.BinaryExpr) (string, bool) {
 }
 
 func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*streamIterator, error) {
+	// REQ002129/2132: pure BuildPipeline streaming path first.
+	// Produces streamIterator with pxStream set (lazy row-by-row pull
+	// directly from PipelineStream.Next without goroutine or channel).
+	// Any error/nil/empty spec/panic falls through to the legacy
+	// parse→plan→stream path below so correctness is never sacrificed.
+	if iter, ok := e.queryStreamBuildPipeline(ctx, sql, args); ok {
+		return iter, nil
+	}
+
 	// REQ000771: try the in-Executor cache before parsing. The
 	// ST.Stmt.Query hot path goes through here, and avoiding the
 	// parser pass on repeated queries reclaims the 12% CPU that
@@ -238,6 +250,88 @@ func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*s
 		}
 	}
 	return e.QueryStreamFromAST(ctx, stmt, args...)
+}
+
+// queryStreamBuildPipeline attempts the pure BuildPipeline streaming path
+// for QueryStream. Returns (iterator, true) on success, (nil, false) to
+// fall through to legacy. Panics are converted to fallback (returns false).
+// REQ002129/2132.
+func (e *Executor) queryStreamBuildPipeline(ctx context.Context, sql string, args []any) (*streamIterator, bool) {
+	if e.pipelineBuilder == nil || !e.purePipelineFastPath {
+		return nil, false
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Warn("px.QueryStream pipeline panic, falling back",
+				"err", fmt.Sprintf("%v", r),
+				"sql_len", len(sql))
+		}
+	}()
+	spec, err := e.pipelineBuilder.Build(sql)
+	if err != nil || spec == nil || len(spec.Stages) == 0 {
+		return nil, false
+	}
+	// Need output columns to expose Cols()/Types() — if pure PX path
+	// hasn't derived output schema yet, defer to legacy path (which
+	// fetches first row via Next() to discover schema).
+	if len(spec.OutputCols) == 0 {
+		return nil, false
+	}
+	// Full-specialization check: any LegacyBatchStageSpec → legacy path.
+	// See queryAllBuildPipeline in ex.go for rationale.
+	for _, s := range spec.Stages {
+		if _, isLegacy := s.(*PX.LegacyBatchStageSpec); isLegacy {
+			return nil, false
+		}
+	}
+	exec := PX.NewPipelineExecutor(spec)
+	exec.SetParams(args)
+	exec.SetPlanner(e.planner)
+	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	execCtx.RowArena = e.ensureArena()
+	exec.SetExecContext(execCtx)
+	ps, pErr := exec.ExecuteStream(ctx)
+	if pErr != nil {
+		_ = exec.Close()
+		slog.Debug("px.QueryStream ExecuteStream error, falling back",
+			"err", pErr.Error(),
+			"sql_len", len(sql))
+		return nil, false
+	}
+	// Read first row eagerly to distinguish "empty result" from
+	// "has rows" so the iterator behavior matches the legacy path
+	// (legacy does first-row fetch in QueryStreamFromAST to discover
+	// schema). If first row returns ErrNoRows we still return an
+	// empty iterator with correct cols/types set.
+	firstRow, firstErr := ps.Next()
+	if firstErr != nil && firstErr != DT.ErrNoRows {
+		_ = ps.Close()
+		_ = exec.Close()
+		return nil, false
+	}
+	// Build streamIterator backed by pxStream. If there was a first
+	// row before EOF, return it via rows/idx so the caller gets it.
+	iter := &streamIterator{
+		cols:   append([]string(nil), spec.OutputCols...),
+		types:  append([]LX.TokenType(nil), spec.OutputTypes...),
+		pxExec: exec,
+	}
+	if firstErr == DT.ErrNoRows {
+		// Empty: no more rows will arrive. Close stream eagerly,
+		// keep iterator empty so Next() returns ErrNoRows immediately.
+		iter.done = true
+		_ = ps.Close()
+	} else {
+		// First row is valid: serve it via single-row buffer, then
+		// continue pulling from pxStream for subsequent rows.
+		iter.rows = []DT.Row{firstRow}
+		iter.pxStream = ps
+	}
+	// Propagate LastChanges for CHANGES() / TOTAL_CHANGES() (no-op
+	// for pure SELECT; keeps DML semantics consistent).
+	e.lastChanges = execCtx.LastChanges
+	e.totalChanges = execCtx.TotalChanges
+	return iter, true
 }
 
 // QueryStreamFromAST runs a pre-parsed statement through the
@@ -448,12 +542,60 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 // QueryStreamCompiled runs a CompiledPlan through the streaming path,
 // skipping re-parsing and re-planning. Only supports SELECT/compound
 // statements (non-DML). REQ001422.
+// REQ002129/2130: when cp.pipeSpec is non-nil, uses pure-PX pipeline
+// streaming path (PipelineStream backed iterator) instead of legacy
+// plan-tree iterator. This avoids goroutine + channel overhead for
+// small-to-medium queries since PipelineStream.Next() pulls directly
+// without spawning a goroutine. Falls back to legacy if pipeSpec
+// is missing output columns, or if ExecuteStream/Next-1st-row errors.
 func (e *Executor) QueryStreamCompiled(ctx context.Context, cp *CompiledPlan, args ...any) (*streamIterator, error) {
 	if cp == nil {
 		return nil, errors.New("ex: QueryStreamCompiled: nil plan")
 	}
 	if cp.isDML {
 		return nil, errors.New("ex: QueryStreamCompiled: DML not supported for streaming")
+	}
+
+	// REQ002129/2130: pure-PX pipeline streaming path.
+	// purePipelineFastPath must be true to activate.
+	if cp.pipeSpec != nil && len(cp.pipeSpec.OutputCols) > 0 && e.purePipelineFastPath {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Warn("px.QueryStreamCompiled pipeline panic, falling back",
+					"err", fmt.Sprintf("%v", r))
+			}
+		}()
+		exec := PX.NewPipelineExecutor(cp.pipeSpec)
+		exec.SetParams(args)
+		exec.SetPlanner(e.planner)
+		execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+		execCtx.RowArena = e.ensureArena()
+		exec.SetExecContext(execCtx)
+		ps, pErr := exec.ExecuteStream(ctx)
+		if pErr == nil {
+			// Read first row eagerly: distinguish empty from non-empty,
+			// same as legacy path.
+			firstRow, firstErr := ps.Next()
+			if firstErr == nil || firstErr == DT.ErrNoRows {
+				cols := append([]string(nil), cp.pipeSpec.OutputCols...)
+				types := append([]LX.TokenType(nil), cp.pipeSpec.OutputTypes...)
+				iter := &streamIterator{cols: cols, types: types, pxExec: exec}
+				if firstErr == DT.ErrNoRows {
+					iter.done = true
+					_ = ps.Close()
+				} else {
+					iter.rows = []DT.Row{firstRow}
+					iter.pxStream = ps
+				}
+				e.lastChanges = execCtx.LastChanges
+				e.totalChanges = execCtx.TotalChanges
+				return iter, nil
+			}
+			_ = ps.Close()
+		}
+		_ = exec.Close()
+		slog.Debug("px.QueryStreamCompiled pipeline err, falling back", "err", fmt.Sprintf("%v %v", pErr, nil))
+		// Fall through to legacy path.
 	}
 
 	plan := cp.plan
@@ -603,6 +745,14 @@ type streamIterator struct {
 	lazyCtx     context.Context
 	lazyExecCtx *DT.ExecContext
 
+	// REQ002129/2132: pure-PX pipeline stream path. Lazily pulls from
+	// PipelineStream.Next() one row at a time. Cols/types come from
+	// PipelineSpec.OutputCols/OutputTypes directly (no first-row fetch
+	// needed, unlike the operator-tree path that requires a Next() call
+	// to discover schema). Set by queryStreamBuildPipeline.
+	pxStream *PX.PipelineStream
+	pxExec   *PX.PipelineExecutor
+
 	done bool
 	mu   sync.Mutex
 }
@@ -612,6 +762,23 @@ func (s *streamIterator) Types() []LX.TokenType { return s.types }
 func (s *streamIterator) Next() (DT.Row, error) {
 	if s == nil || s.done {
 		return DT.Row{}, DT.ErrNoRows
+	}
+	// Pure PX pipeline stream path (BuildPipeline → PipelineStream.Next).
+	// REQ002129/2132: no goroutine, no channel, no first-row schema
+	// fetch — cols/types are known from PipelineSpec.
+	if s.pxStream != nil {
+		r, err := s.pxStream.Next()
+		if err != nil {
+			if err == DT.ErrNoRows {
+				s.done = true
+				s.closePX()
+				return DT.Row{}, DT.ErrNoRows
+			}
+			s.done = true
+			s.closePX()
+			return DT.Row{}, err
+		}
+		return r, nil
 	}
 	// Lazy (operator-pull) path: stream without pre-buffering.
 	if s.lazyPlan != nil {
@@ -662,11 +829,26 @@ func (s *streamIterator) Next() (DT.Row, error) {
 	return r, nil
 }
 
+// closePX releases the PipelineStream + PipelineExecutor resources
+// associated with a pure-PX stream iterator. Safe to call multiple times.
+func (s *streamIterator) closePX() {
+	if s.pxStream != nil {
+		_ = s.pxStream.Close()
+		s.pxStream = nil
+	}
+	if s.pxExec != nil {
+		_ = s.pxExec.Close()
+		s.pxExec = nil
+	}
+}
+
 func (s *streamIterator) Close() error {
 	if s == nil {
 		return nil
 	}
 	s.done = true
+	// Close PX resources if the stream used the pure-PX path.
+	s.closePX()
 	if s.closer != nil {
 		return s.closer()
 	}

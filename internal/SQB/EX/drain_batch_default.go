@@ -10,11 +10,16 @@ import (
 )
 
 // drainPlanExecCtx drains all rows and threads execCtx through each row.
-// REQ002133: uses the legacy drainBatch path for SELECT queries.
-// REQ002142: DML queries use execDMLPipeline (separate path).
-// REQ002143: drainPipeline is not used for SELECT because the
-// vectorized path has known issues with some query shapes.
-// When the vectorized path matures, this can be switched back.
+// REQ002129/2132: try the pure-PX pipeline fast path first via
+// queryAllBuildPipeline-style cache → spec, but here we only have a
+// plan-tree (the caller already parsed + planned). For the transitional
+// bridge, we SKIP the tryVectorizePlan → LegacyBatchStageSpec path here
+// because it double-wraps the plan-tree in BatchToRowAdapters, which
+// silently drops execCtx wiring for complex operators (correlated subqueries,
+// DISTINCT aggregates, HAVING, GROUP_CONCAT with separator). Instead we
+// always drain the original operator tree via drainBatch — pure-PX fast
+// path is still taken in the outer QueryAll entry point, which calls
+// BuildPipeline(sql) directly (skips plan-tree construction entirely).
 func (e *Executor) drainPlanExecCtx(ctx context.Context, plan *pl.PlanResult, execCtx *DT.ExecContext) ([]DT.Row, error) {
 	return drainBatch(ctx, plan.Root, execCtx)
 }
