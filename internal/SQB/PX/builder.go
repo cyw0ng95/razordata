@@ -194,7 +194,7 @@ func (s *LegacyBatchStageSpec) NewRuntime() Stage {
 		// Fallback: wrap the row operator in a BatchToRowAdapter
 		// that produces one-row batches. This handles DML and other
 		// non-vectorizable operators.
-		producer = UT.NewBatchToRowAdapter(rowOperatorAsProducer{s.root})
+		producer = UT.NewBatchToRowAdapter(RowOperatorAsProducer{Op: s.root})
 	}
 	return &LegacyBatchStage{producer: producer}
 }
@@ -236,17 +236,18 @@ func (s *LegacyBatchStage) Close() error {
 	return s.producer.Close()
 }
 
-// --- rowOperatorAsProducer ---
+// --- RowOperatorAsProducer ---
 
-// rowOperatorAsProducer adapts a PL.Operator to produce
+// RowOperatorAsProducer adapts a PL.Operator to produce
 // single-row batches. This is the minimal adapter for
-// non-vectorizable operators (DML, etc.).
-type rowOperatorAsProducer struct {
-	op PL.Operator
+// non-vectorizable operators (DML, etc.). Exported for use
+// by the Executor's PipelineBuilder specialize function. REQ002132.
+type RowOperatorAsProducer struct {
+	Op PL.Operator
 }
 
-func (r rowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error) {
-	row, err := r.op.Next(ctx)
+func (r RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	row, err := r.Op.Next(ctx)
 	if err != nil {
 		if err == DT.ErrNoRows {
 			return nil, nil
@@ -275,6 +276,6 @@ func (r rowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error)
 	return batch, nil
 }
 
-func (r rowOperatorAsProducer) Close() error {
-	return r.op.Close()
+func (r RowOperatorAsProducer) Close() error {
+	return r.Op.Close()
 }

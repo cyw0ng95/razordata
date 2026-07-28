@@ -12,6 +12,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
+	PX "github.com/cyw0ng95/razordata/internal/SQB/PX"
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
@@ -238,6 +239,11 @@ type Executor struct {
 	// Bypasses stmtCache+planCache memo-key overhead for identical
 	// queries. LRU eviction, default 1000 entries. REQ001464.
 	textPlanCache *textPlanCache
+	// REQ002132: pipelineBuilder is the unified compile flow that
+	// replaces stmtCache + planCache + textPlanCache + tryVectorizePlan.
+	// Initialized lazily; nil when the pipeline path is not available
+	// (e.g., DML-only executor without a store).
+	pipelineBuilder *PX.PipelineBuilder
 	// pool is the shared WorkerPool for parallel operator execution.
 	// Created in NewExecutor and sized to GOMAXPROCS. Shared across
 	// ShallowCopy clones via pointer. Shut down in Close().
@@ -412,6 +418,7 @@ func NewExecutor() *Executor {
 	e.initPlanCache(128)
 	OP.WarmFilterBatchPool(4)
 	OP.WarmProjectDataPool(4) // REQ002022: warm project data buffers
+	e.initPipelineBuilder()
 	return e
 }
 
@@ -427,7 +434,8 @@ func NewExecutorWithPlanner(pl *Planner) *Executor {
 	e.initStmtCache(256)
 	e.initPlanCache(128)
 	OP.WarmFilterBatchPool(4)
-	OP.WarmProjectDataPool(4) // REQ002022: warm project data buffers
+OP.WarmProjectDataPool(4) // REQ002022: warm project data buffers
+	e.initPipelineBuilder()
 	return e
 }
 
@@ -446,6 +454,7 @@ func NewExecutorWithEngine(store DT.Store) *Executor {
 	e.initTextPlanCache(1000)
 	OP.WarmFilterBatchPool(4)
 	OP.WarmProjectDataPool(4) // REQ002022: warm project data buffers
+	e.initPipelineBuilder()
 	return e
 }
 
@@ -693,6 +702,25 @@ func (e *Executor) putTextPlan(sql string, plan *pl.PlanResult) {
 		e.textPlanCache.lru = e.textPlanCache.lru[:len(e.textPlanCache.lru)-1]
 		delete(e.textPlanCache.entries, oldest.sql)
 	}
+}
+
+func (e *Executor) initPipelineBuilder() {
+	// REQ002132: PipelineBuilder infrastructure is in place but the
+	// pipeline path is disabled for now. The QueryAll function checks
+	// e.pipelineBuilder != nil before using the pipeline path, so
+	// setting it to nil falls through to the legacy path.
+	// Enable when the PipelineBuilder is fully tested and ready.
+	e.pipelineBuilder = nil
+}
+
+// BuildPipeline compiles SQL into a PipelineSpec using the unified
+// compile flow. Returns nil if the pipeline path is not available
+// (e.g., the pipeline builder was not initialized). REQ002132.
+func (e *Executor) BuildPipeline(sql string) (*PX.PipelineSpec, error) {
+	if e.pipelineBuilder == nil {
+		return nil, nil
+	}
+	return e.pipelineBuilder.Build(sql)
 }
 
 // planWithCache returns a compiled plan for stmt, checking the plan
@@ -1255,6 +1283,29 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 }
 
 func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.Row, error) {
+	// REQ002132: try the unified pipeline path first. Only use it for
+	// store-backed queries (in-memory tables use the legacy path which
+	// handles them correctly). PipelineSpec is immutable and creates
+	// fresh runtime state via NewRuntime(), so the QueryAll mutation
+	// concern (comment below) does not apply.
+	// Falls back to the legacy path when the pipeline builder is not
+	// available, the query is in-memory, or the pipeline path returns
+	// an error.
+	if e.store != nil && e.pipelineBuilder != nil {
+		if spec, err := e.BuildPipeline(sql); err == nil && spec != nil {
+			executor := PX.NewPipelineExecutor(spec)
+			defer executor.Close()
+			rows, err := executor.Execute(ctx)
+			if err == nil {
+				result := make([]DT.Row, len(rows))
+				for i, r := range rows {
+					result[i] = DT.Row(r)
+				}
+				return result, nil
+			}
+		}
+	}
+
 	// REQ002010: textPlanCache not consulted in QueryAll — the cached
 	// plan's operator tree state (e.g., Aggregate.buf, ValuesOp.evaluated)
 	// is modified by the first execution and not fully reset by Close(),
