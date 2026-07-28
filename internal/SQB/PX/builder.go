@@ -126,10 +126,25 @@ func (b *PipelineBuilder) Build(sql string) (*PipelineSpec, error) {
 // execution will fall back to plan-tree evaluation via RowOperatorAsProducer.
 // Callers that want a pure-PX pipeline (no LegacyBatch wrappers) must check
 // the returned stages themselves — e.g. in EX's queryAllBuildPipeline.
+//
+// The root stage's output schema is taken from decomposePlan itself (which
+// tracks per-stage outputSchema bottom-up for col-index resolution). This
+// covers Join/Aggregate/Sort/FusedScan/Filter/Project/Limit/Offset/Distinct
+// and DML shapes that extractOutputSchema(plan.Root) used to miss. When the
+// decomposition returned empty schema (unsupported op → LegacyBatchStageSpec),
+// we fall back to extractOutputSchema on the root to derive at least the
+// column identities for the driver's Columns() method.
 func (b *PipelineBuilder) specializePlan(plan *PL.PlanResult, sql, memoKey string) (*PipelineSpec, error) {
-	stages, edges, rootIdx := decomposePlan(plan.Root, b.planner, b.specialize)
+	stages, edges, rootIdx, rootSchema := decomposePlan(plan.Root, b.planner, b.specialize)
 
-	cols, types := extractOutputSchema(plan.Root)
+	cols, types := rootSchema.names, rootSchema.types
+	if len(cols) == 0 {
+		// Fallback for LegacyBatchStageSpec roots (decomposeFallback → empty
+		// outputSchema). Extract from root op via the legacy walker so the
+		// driver's Columns() method still returns names for unsupported
+		// operator shapes (Window, Compound, non-planner native Op types).
+		cols, types = extractOutputSchema(plan.Root)
+	}
 
 	return &PipelineSpec{
 		Stages:      stages,
@@ -221,11 +236,14 @@ func (s *decomposeState) childOutput(childIdx int) outputSchema {
 }
 
 // decomposePlan walks the PL.Operator tree bottom-up and produces
-// StageSpecs + edges. Returns (rootIdx, stages, edges).
-// Operators without a dedicated PX stage are wrapped in LegacyBatchStageSpec.
-func decomposePlan(root DT.Operator, planner PL.QueryPlanner, specialize SpecializeFunc) ([]StageSpec, []EdgeSpec, int) {
+// StageSpecs + edges. Returns (stages, edges, rootIdx, rootSchema) where
+// rootSchema is the root stage's output column names and types (populated
+// by the per-type decompose step). Returns empty schema for unsupported
+// operators (callers must fall back to extractOutputSchema(plan.Root)
+// or legacy path).
+func decomposePlan(root DT.Operator, planner PL.QueryPlanner, specialize SpecializeFunc) ([]StageSpec, []EdgeSpec, int, outputSchema) {
 	if root == nil {
-		return nil, nil, 0
+		return nil, nil, 0, outputSchema{}
 	}
 
 	// Unwrap AdaptiveOp — the inner operator is the actual plan.
@@ -235,7 +253,11 @@ func decomposePlan(root DT.Operator, planner PL.QueryPlanner, specialize Special
 
 	state := &decomposeState{}
 	rootIdx := decomposeOp(root, state, planner, specialize)
-	return state.stages, state.edges, rootIdx
+	schema := outputSchema{}
+	if rootIdx >= 0 && rootIdx < len(state.stageOutput) {
+		schema = state.stageOutput[rootIdx]
+	}
+	return state.stages, state.edges, rootIdx, schema
 }
 
 // decomposeOp recursively decomposes a single operator into stages.
@@ -271,10 +293,45 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 		return decomposeOffset(o, st, planner, specialize)
 	case *OP.HashJoin:
 		return decomposeHashJoin(o, st, planner, specialize)
+	case *OP.Distinct:
+		return decomposeDistinct(o, st, planner, specialize)
 	case *AG.Aggregate:
 		return decomposeAggregate(o, st, planner, specialize)
 	case *AG.HashAggregate:
-		return decomposeAggregate(nil, st, planner, specialize) // HashAggregate via Aggregate
+		return decomposeHashAggregate(o, st, planner, specialize)
+	case *AG.WindowOperator:
+		// WindowStageSpec isn't implemented yet (REQ002128); fall back to
+		// LegacyBatchStageSpec but propagate the window's output column
+		// names (WindowOperator.Cols()) so the pipeline still carries
+		// OutputCols metadata → fast path can use it instead of bailing.
+		cols := o.Cols()
+		schema := outputSchema{}
+		if len(cols) > 0 {
+			schema.names = append([]string(nil), cols...)
+			schema.types = make([]LX.TokenType, len(cols))
+			for i := range cols {
+				schema.types[i] = LX.T_TEXT
+			}
+		}
+		return st.addStage(&LegacyBatchStageSpec{
+			Root:       o,
+			Planner:    planner,
+			Specialize: specialize,
+		}, schema)
+	case *OP.CompoundOp:
+		// CompoundStageSpec not yet implemented (REQ002128); fall back but
+		// propagate left-child's output schema (UNION/EXCEPT/INTERSECT all
+		// have shape compatible with left child per planner).
+		childIdx := decomposeOp(o.LeftChild(), st, planner, specialize)
+		leftSchema := st.childOutput(childIdx)
+		if !leftSchema.resolved() {
+			leftSchema.names, leftSchema.types = extractOutputSchema(o.LeftChild())
+		}
+		return st.addStage(&LegacyBatchStageSpec{
+			Root:       o,
+			Planner:    planner,
+			Specialize: specialize,
+		}, leftSchema)
 	case *WT.Insert:
 		return decomposeDML(&InsertStageSpec{Insert: o}, st)
 	case *WT.Update:
@@ -485,6 +542,12 @@ func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlann
 // When all group columns and aggregate arguments resolve to child output
 // indices, builds native AggregateStageSpec with the UnifiedAccumulatorSpec
 // array. Otherwise falls back to LegacyBatchStageSpec.
+// decomposeAggregate emits a native AggregateStageSpec when the child's
+// output schema can resolve all group-by column indices AND all aggregate
+// function arguments. Falls back to LegacyBatchStageSpec otherwise, but
+// ALWAYS populates the output schema (GroupCols + Aggs names) so the
+// pipeline carries OutputCols metadata — this is essential for the
+// BuildPipeline fast-path gate (len(OutputCols) > 0) to trip.
 func decomposeAggregate(agg *AG.Aggregate, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	var childIdx int
 	var childOut outputSchema
@@ -492,7 +555,8 @@ func decomposeAggregate(agg *AG.Aggregate, st *decomposeState, planner PL.QueryP
 		childIdx = decomposeOp(agg.Child(), st, planner, specialize)
 		childOut = st.childOutput(childIdx)
 	} else {
-		// HashAggregate (no children known agg) — delegate to legacy.
+		// nil agg shouldn't happen post-refactor (caller uses
+		// decomposeHashAggregate instead). Defensive: empty stage.
 		childIdx = st.addStage(&LegacyBatchStageSpec{
 			Root:       nil,
 			Planner:    planner,
@@ -566,16 +630,38 @@ func decomposeAggregate(agg *AG.Aggregate, st *decomposeState, planner PL.QueryP
 		allResolved = false
 	}
 
-	// Compute the aggregate's output schema: groupCols + agg names
-	aggNames := make([]string, 0, len(groupCols)+len(specs))
-	aggTypes := make([]LX.TokenType, 0, len(groupCols)+len(specs))
+	// Compute the aggregate's output schema: groupExprs (by name) + aggExprs
+	// (by name, either resolved kind display name or raw exprName). Even
+	// when allResolved=false and we fall back to LegacyBatchStageSpec, the
+	// caller still needs OutputCols metadata (so the fast-path len check in
+	// EX doesn't bail to the legacy parse→plan loop). Hence we build
+	// aggOut unconditionally from expressions, not just resolved specs.
+	aggNames := make([]string, 0, len(groupExprs)+len(aggExprs))
+	aggTypes := make([]LX.TokenType, 0, len(groupExprs)+len(aggExprs))
 	for _, g := range groupExprs {
 		aggNames = append(aggNames, exprName(g))
 		aggTypes = append(aggTypes, LX.T_INT_KW)
 	}
-	for _, spec := range specs {
-		aggNames = append(aggNames, aggFuncDisplayName(spec.Kind))
-		aggTypes = append(aggTypes, aggFuncReturnType(spec.Kind))
+	// For unresolved expressions (no matching PS.AggregateFunc, or child
+	// schema unknown) fall back to exprName. For resolved ones prefer the
+	// accumulator's known display/kind name.
+	resolvedIdx := 0
+	for i, ae := range aggExprs {
+		_ = i
+		var name string
+		var typ LX.TokenType
+		if allResolved && resolvedIdx < len(specs) {
+			name = aggFuncDisplayName(specs[resolvedIdx].Kind)
+			typ = aggFuncReturnType(specs[resolvedIdx].Kind)
+			resolvedIdx++
+		} else {
+			name = exprName(ae)
+			typ = LX.T_TEXT
+			// Only advance resolvedIdx when allResolved — otherwise specs
+			// may be empty due to early bail in resolve loop above.
+		}
+		aggNames = append(aggNames, name)
+		aggTypes = append(aggTypes, typ)
 	}
 	aggOut := outputSchema{names: aggNames, types: aggTypes}
 
@@ -592,7 +678,10 @@ func decomposeAggregate(agg *AG.Aggregate, st *decomposeState, planner PL.QueryP
 		st.addEdge(aggIdx, childIdx, SingleChild)
 		return aggIdx
 	}
-	// Fallback.
+	// Fallback. Even when the native StageSpec can't execute, we attach
+	// aggOut so the root's output schema is known → BuildPipeline fast
+	// path's len(OutputCols)>0 check still passes for this shape, and
+	// pipeline execution falls back through LegacyBatchStageSpec.
 	aggIdx := st.addStage(&LegacyBatchStageSpec{
 		Root:       agg,
 		Planner:    planner,
@@ -600,6 +689,63 @@ func decomposeAggregate(agg *AG.Aggregate, st *decomposeState, planner PL.QueryP
 	}, aggOut)
 	st.addEdge(aggIdx, childIdx, SingleChild)
 	return aggIdx
+}
+
+// decomposeHashAggregate mirrors decomposeAggregate but for HashAggregate.
+// Output schema derivation (GroupCols + Aggs) is identical; the native
+// HashJoinStageSpec isn't implemented yet (REQ002143) so it always falls
+// through to LegacyBatchStageSpec with a populated output schema.
+func decomposeHashAggregate(agg *AG.HashAggregate, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	childIdx := decomposeOp(agg.Child(), st, planner, specialize)
+
+	groupExprs := agg.GroupCols()
+	aggExprs := agg.Aggs()
+
+	names := make([]string, 0, len(groupExprs)+len(aggExprs))
+	types := make([]LX.TokenType, 0, len(groupExprs)+len(aggExprs))
+	for _, g := range groupExprs {
+		names = append(names, exprName(g))
+		types = append(types, LX.T_INT_KW)
+	}
+	for _, ae := range aggExprs {
+		names = append(names, exprName(ae))
+		types = append(types, LX.T_TEXT)
+	}
+	out := outputSchema{names: names, types: types}
+
+	// Native HashAggregateStageSpec is REQ002143 scope (decomposePlan
+	// native stages). For now fall back to LegacyBatchStageSpec so
+	// the operator tree still runs correctly — but the output schema
+	// is populated, so PipelineSpec.OutputCols is non-empty →
+	// BuildPipeline fast path stays active.
+	aggIdx := st.addStage(&LegacyBatchStageSpec{
+		Root:       agg,
+		Planner:    planner,
+		Specialize: specialize,
+	}, out)
+	st.addEdge(aggIdx, childIdx, SingleChild)
+	return aggIdx
+}
+
+// decomposeDistinct wraps a Distinct operator in LegacyBatchStageSpec for
+// now (DistinctStageSpec exists but requires column-index resolution against
+// the child schema — REQ002143 for the native emit). It always propagates
+// the child's output schema unchanged so OutputCols metadata survives the
+// round-trip through the pipeline.
+func decomposeDistinct(d *OP.Distinct, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	childIdx := decomposeOp(d.Child(), st, planner, specialize)
+	schema := st.childOutput(childIdx)
+	if !schema.resolved() {
+		// Child's decomposition didn't know its schema (e.g. SeqScan with
+		// an unknown StoreSchema); fall back to extractOutputSchema via
+		// the legacy walker.
+		schema.names, schema.types = extractOutputSchema(d.Child())
+	}
+	return st.addStage(&LegacyBatchStageSpec{
+		Root:       d,
+		Planner:    planner,
+		Specialize: specialize,
+	}, schema)
 }
 
 // resolveAggFunc parses an aggregate function expression (e.g. SUM(col),
@@ -863,6 +1009,12 @@ func selectTables(s *PS.Select) string {
 // extractOutputSchema returns the output column names and types
 // from a row-based operator tree. Walks the root operator's schema
 // to determine the result columns for the pipeline output.
+//
+// NOTE: This function is the fallback when decomposePlan couldn't
+// resolve the output schema (i.e. the root is an unsupported op
+// wrapped in LegacyBatchStageSpec). Prefer the decomposition's own
+// rootSchema return value — it's populated bottom-up for every
+// native stage shape and covers cases the legacy walker misses.
 func extractOutputSchema(root DT.Operator) ([]string, []LX.TokenType) {
 	if root == nil {
 		return nil, nil
@@ -875,6 +1027,18 @@ func extractOutputSchema(root DT.Operator) ([]string, []LX.TokenType) {
 
 	switch o := root.(type) {
 	case *OP.SeqScan:
+		schema := o.Schema()
+		if schema != nil && len(schema.Cols) > 0 {
+			names := make([]string, len(schema.Cols))
+			types := make([]LX.TokenType, len(schema.Cols))
+			copy(names, schema.Cols)
+			if len(schema.ColTypes) > 0 {
+				copy(types, schema.ColTypes)
+			}
+			return names, types
+		}
+		return nil, nil
+	case *OP.IndexScan:
 		schema := o.Schema()
 		if schema != nil && len(schema.Cols) > 0 {
 			names := make([]string, len(schema.Cols))
@@ -903,26 +1067,116 @@ func extractOutputSchema(root DT.Operator) ([]string, []LX.TokenType) {
 		return extractOutputSchema(o.Child())
 	case *OP.Offset:
 		return extractOutputSchema(o.Child())
+	case *OP.Distinct:
+		return extractOutputSchema(o.Child())
+	case *OP.HashJoin:
+		// HashJoin merges left + right output schemas. When sharedCols
+		// is non-empty (equi-join column deduplication set by the
+		// planner), we use that instead of a naive concat because the
+		// runtime uses sharedCols (plus sharedTypes) as the output
+		// shape for deduplicated projections (matches USING-col semantics
+		// in SQL).
+		if len(o.SharedCols()) > 0 {
+			names := append([]string(nil), o.SharedCols()...)
+			types := append([]LX.TokenType(nil), o.SharedTypes()...)
+			// Append remaining non-shared cols from each side in order.
+			lNames, lTypes := extractOutputSchema(o.LeftChild())
+			rNames, rTypes := extractOutputSchema(o.RightChild())
+			shared := make(map[string]struct{}, len(names))
+			for _, n := range names {
+				shared[n] = struct{}{}
+			}
+			for i, n := range lNames {
+				if _, dup := shared[n]; dup {
+					continue
+				}
+				shared[n] = struct{}{}
+				names = append(names, n)
+				if i < len(lTypes) {
+					types = append(types, lTypes[i])
+				} else {
+					types = append(types, LX.T_TEXT)
+				}
+			}
+			for i, n := range rNames {
+				if _, dup := shared[n]; dup {
+					continue
+				}
+				shared[n] = struct{}{}
+				names = append(names, n)
+				if i < len(rTypes) {
+					types = append(types, rTypes[i])
+				} else {
+					types = append(types, LX.T_TEXT)
+				}
+			}
+			return names, types
+		}
+		lNames, lTypes := extractOutputSchema(o.LeftChild())
+		rNames, rTypes := extractOutputSchema(o.RightChild())
+		if len(lNames) == 0 && len(rNames) == 0 {
+			return nil, nil
+		}
+		names := make([]string, 0, len(lNames)+len(rNames))
+		names = append(names, lNames...)
+		names = append(names, rNames...)
+		types := make([]LX.TokenType, 0, len(lTypes)+len(rTypes))
+		types = append(types, lTypes...)
+		types = append(types, rTypes...)
+		// Defensive: pad types so len matches names (one of the sides
+		// may have returned names but unknown types, common for
+		// projections with runtime-discovered types).
+		for len(types) < len(names) {
+			types = append(types, LX.T_TEXT)
+		}
+		return names, types
+	case *OP.CompoundOp:
+		// UNION ALL / UNION / EXCEPT / INTERSECT — the compound
+		// operator produces a result with the same shape as the
+		// left child (both sides must be compatible per planner).
+		return extractOutputSchema(o.LeftChild())
 	case *AG.Aggregate:
-		return extractAggOutput(o)
+		return extractAggOutput(o.GroupCols(), o.Aggs())
 	case *AG.HashAggregate:
-		return extractAggOutput(nil)
+		return extractAggOutput(o.GroupCols(), o.Aggs())
+	case *AG.WindowOperator:
+		cols := o.Cols()
+		if len(cols) == 0 {
+			return nil, nil
+		}
+		names := make([]string, len(cols))
+		types := make([]LX.TokenType, len(cols))
+		copy(names, cols)
+		for i := range names {
+			types[i] = LX.T_TEXT // window funcs have runtime types
+		}
+		return names, types
 	default:
 		return nil, nil
 	}
 }
 
 // extractAggOutput extracts output columns from an aggregate operator.
-func extractAggOutput(agg *AG.Aggregate) ([]string, []LX.TokenType) {
-	if agg == nil {
+// Aggregation output is always: [GroupCols in order] + [Agg funcs in order].
+// Group names come from the expression (Ident.Name for bare columns, Alias
+// for aliased exprs, "expr" for complex exprs). Agg func names come from
+// exprName too (typically "agg0", "agg1" if planner assigned aliases).
+// Types are placeholder INT_KW for groups; AGG() runtime determines true
+// types via ValueKind inspection.
+func extractAggOutput(groupCols []PS.Expr, aggFns []PS.Expr) ([]string, []LX.TokenType) {
+	total := len(groupCols) + len(aggFns)
+	if total == 0 {
 		return nil, nil
 	}
-	groupCols := agg.GroupCols()
-	names := make([]string, 0, len(groupCols)+4) // +4 for common agg funcs
-	types := make([]LX.TokenType, 0, len(groupCols)+4)
+	names := make([]string, 0, total)
+	types := make([]LX.TokenType, 0, total)
 	for _, gc := range groupCols {
 		names = append(names, exprName(gc))
 		types = append(types, LX.T_INT_KW)
+	}
+	for _, af := range aggFns {
+		names = append(names, exprName(af))
+		types = append(types, LX.T_TEXT)
 	}
 	return names, types
 }

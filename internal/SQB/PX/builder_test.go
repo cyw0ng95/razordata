@@ -111,7 +111,7 @@ func (p *simpleProducer) Close() error { return nil }
 // --- decomposePlan tests ---
 
 func TestDecomposePlan_NilRoot(t *testing.T) {
-	stages, edges, rootIdx := decomposePlan(nil, nil, nil)
+	stages, edges, rootIdx, _ := decomposePlan(nil, nil, nil)
 	if len(stages) != 0 {
 		t.Fatalf("expected 0 stages, got %d", len(stages))
 	}
@@ -125,7 +125,7 @@ func TestDecomposePlan_NilRoot(t *testing.T) {
 
 func TestDecomposePlan_SeqScan(t *testing.T) {
 	ss := OP.NewSeqScan("t1")
-	stages, edges, rootIdx := decomposePlan(ss, nil, nil)
+	stages, edges, rootIdx, _ := decomposePlan(ss, nil, nil)
 
 	if len(stages) != 1 {
 		t.Fatalf("expected 1 stage, got %d", len(stages))
@@ -150,7 +150,7 @@ func TestDecomposePlan_FilterSeqScan(t *testing.T) {
 	}
 	filter := OP.NewFilter(ss, pred, nil)
 
-	stages, edges, rootIdx := decomposePlan(filter, nil, nil)
+	stages, edges, rootIdx, _ := decomposePlan(filter, nil, nil)
 
 	if len(stages) != 2 {
 		t.Fatalf("expected 2 stages, got %d", len(stages))
@@ -190,7 +190,7 @@ func TestDecomposePlan_ProjectFilterSeqScan(t *testing.T) {
 		&PS.Ident{Name: "b"},
 	})
 
-	stages, edges, rootIdx := decomposePlan(proj, nil, nil)
+	stages, edges, rootIdx, _ := decomposePlan(proj, nil, nil)
 
 	if len(stages) != 3 {
 		t.Fatalf("expected 3 stages, got %d", len(stages))
@@ -228,7 +228,7 @@ func TestDecomposePlan_LimitOffset(t *testing.T) {
 	limit := OP.NewLimit(ss, 10)
 	offset := OP.NewOffset(limit, 5)
 
-	stages, edges, rootIdx := decomposePlan(offset, nil, nil)
+	stages, edges, rootIdx, _ := decomposePlan(offset, nil, nil)
 
 	if len(stages) != 3 {
 		t.Fatalf("expected 3 stages, got %d", len(stages))
@@ -258,7 +258,7 @@ func TestDecomposePlan_FallbackToLegacy(t *testing.T) {
 	ss := OP.NewSeqScan("t1")
 	sort := OP.NewSort(ss, nil)
 
-	stages, _, rootIdx := decomposePlan(sort, nil, nil)
+	stages, _, rootIdx, _ := decomposePlan(sort, nil, nil)
 
 	if len(stages) != 2 {
 		t.Fatalf("expected 2 stages, got %d", len(stages))
@@ -281,7 +281,7 @@ func TestDecomposePlan_UnwrapAdaptiveOp(t *testing.T) {
 	ss := OP.NewSeqScan("t1")
 	aop := AD.NewAdaptiveOp(ss, "test-hash")
 
-	stages, _, rootIdx := decomposePlan(aop, nil, nil)
+	stages, _, rootIdx, _ := decomposePlan(aop, nil, nil)
 
 	// AdaptiveOp should be unwrapped, producing ScanStageSpec
 	if len(stages) != 1 {
@@ -305,7 +305,7 @@ func TestDecomposePlan_PipelineIntegration(t *testing.T) {
 	}
 	filter := OP.NewFilter(ss, pred, nil)
 
-	stages, edges, rootIdx := decomposePlan(filter, nil, nil)
+	stages, edges, rootIdx, _ := decomposePlan(filter, nil, nil)
 	spec := &PipelineSpec{
 		Stages:  stages,
 		Edges:   edges,
@@ -397,4 +397,165 @@ func TestExtractOutputSchema_Limit(t *testing.T) {
 	_ = cols
 	_ = types
 	// Limit passes through child schema
+}
+
+// TestDecomposePlan_OutputSchema is the REQ002139 table-driven test for
+// per-shape output schema derivation. decomposePlan now returns (stages,
+// edges, rootIdx, rootSchema) as the 4th return; this test verifies the
+// rootSchema.names is populated for every supported operator shape, not
+// just SeqScan. Previously specializePlan threw away the decomposition's
+// per-stage outputSchema and re-derived it via extractOutputSchema(root),
+// which returned nil for HashJoin, HashAggregate, Distinct, Compound,
+// FusedScan, DML, etc. — blocking the BuildPipeline fast path because
+// spec.OutputCols was empty.
+func TestDecomposePlan_OutputSchema(t *testing.T) {
+	newProjectedScan := func(tbl string, colNames []string) DT.Operator {
+		ss := OP.NewSeqScan(tbl)
+		exprs := make([]PS.Expr, 0, len(colNames))
+		for _, n := range colNames {
+			exprs = append(exprs, &PS.Ident{Name: n})
+		}
+		return OP.NewProject(ss, exprs)
+	}
+
+	cases := []struct {
+		name       string
+		root       func() DT.Operator
+		wantCols   []string // non-nil slice -> must match exactly; nil -> must be len > 0
+		wantLenMin int      // when wantCols == nil, minimum len of names
+	}{
+		{
+			name:     "NilRoot",
+			root:     func() DT.Operator { return nil },
+			wantCols: nil, // must be empty
+		},
+		{
+			name: "ProjectIdentity",
+			root: func() DT.Operator {
+				return newProjectedScan("t1", []string{"id", "name", "age"})
+			},
+			wantCols: []string{"id", "name", "age"},
+		},
+		{
+			name: "FilterOfProject",
+			root: func() DT.Operator {
+				proj := newProjectedScan("t1", []string{"id", "name"})
+				return OP.NewFilter(proj, &PS.BinaryExpr{
+					Op: LX.T_GT, Left: &PS.Ident{Name: "id"},
+					Right: &PS.NumberLiteral{Val: 0},
+				}, nil)
+			},
+			wantCols: []string{"id", "name"},
+		},
+		{
+			name: "LimitOfProject",
+			root: func() DT.Operator {
+				proj := newProjectedScan("t1", []string{"a", "b", "c"})
+				return OP.NewLimit(proj, 5)
+			},
+			wantCols: []string{"a", "b", "c"},
+		},
+		{
+			name: "OffsetOfLimitOfProject",
+			root: func() DT.Operator {
+				proj := newProjectedScan("t1", []string{"x"})
+				lim := OP.NewLimit(proj, 10)
+				return OP.NewOffset(lim, 2)
+			},
+			wantCols: []string{"x"},
+		},
+		{
+			name: "DistinctOfProject",
+			root: func() DT.Operator {
+				proj := newProjectedScan("t1", []string{"id", "val"})
+				return OP.NewDistinct(proj)
+			},
+			wantCols: []string{"id", "val"},
+		},
+		{
+			name: "FusedScanCandidate (Limit→Project→Filter→SeqScan)",
+			root: func() DT.Operator {
+				ss := OP.NewSeqScan("t1")
+				filt := OP.NewFilter(ss, &PS.BinaryExpr{
+					Op: LX.T_NE, Left: &PS.Ident{Name: "s"}, Right: &PS.StringLiteral{Val: ""},
+				}, nil)
+				proj := OP.NewProject(filt, []PS.Expr{
+					&PS.Ident{Name: "k"},
+					&PS.AliasedExpr{Expr: &PS.Ident{Name: "s"}, Alias: "s2"},
+				})
+				return OP.NewLimit(proj, 20)
+			},
+			wantCols: []string{"k", "s2"},
+		},
+		{
+			name: "AggregateWithGroupAndAggExprs",
+			root: func() DT.Operator {
+				ss := OP.NewSeqScan("t1")
+				// Planner would normally attach concrete aggregates; use
+				// Ident placeholders to simulate the expression slots.
+				return AG.NewAggregate(ss,
+					[]PS.Expr{&PS.Ident{Name: "g1"}, &PS.Ident{Name: "g2"}},
+					[]PS.Expr{
+						&PS.AliasedExpr{Expr: &PS.Ident{Name: "v"}, Alias: "s"},
+						&PS.AliasedExpr{Expr: &PS.Ident{Name: "w"}, Alias: "c"},
+					},
+				)
+			},
+			wantCols: []string{"g1", "g2", "s", "c"},
+		},
+		{
+			name: "AggregateScalar (no groups)",
+			root: func() DT.Operator {
+				ss := OP.NewSeqScan("t1")
+				return AG.NewAggregate(ss, nil,
+					[]PS.Expr{&PS.AliasedExpr{Expr: &PS.Ident{Name: "x"}, Alias: "a"}})
+			},
+			wantCols: []string{"a"},
+		},
+		{
+			name: "HashAggregateWithGroupsAndAggs",
+			root: func() DT.Operator {
+				ss := OP.NewSeqScan("t1")
+				return AG.NewHashAggregate(ss,
+					[]PS.Expr{&PS.Ident{Name: "dept"}},
+					[]PS.Expr{
+						&PS.AliasedExpr{Expr: &PS.Ident{Name: "sal"}, Alias: "total"},
+					},
+				)
+			},
+			wantCols: []string{"dept", "total"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := tc.root()
+			_, _, _, schema := decomposePlan(root, nil, nil)
+			got := schema.names
+			if tc.wantCols == nil {
+				if root == nil {
+					if len(got) != 0 {
+						t.Fatalf("expected empty schema for nil root, got %v", got)
+					}
+					return
+				}
+				if len(got) == 0 {
+					t.Fatalf("expected non-empty schema, got empty")
+				}
+				if tc.wantLenMin > 0 && len(got) < tc.wantLenMin {
+					t.Fatalf("expected >=%d cols, got %d: %v", tc.wantLenMin, len(got), got)
+				}
+				return
+			}
+			if len(got) != len(tc.wantCols) {
+				t.Fatalf("expected %d cols %v, got %d %v",
+					len(tc.wantCols), tc.wantCols, len(got), got)
+			}
+			for i, c := range tc.wantCols {
+				if got[i] != c {
+					t.Fatalf("col[%d]: expected %q, got %q (all=%v)", i, c, got[i], got)
+				}
+			}
+		})
+	}
 }
