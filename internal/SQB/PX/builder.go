@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
-	"github.com/cyw0ng95/razordata/internal/SQB/OP"
+	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	MR "github.com/cyw0ng95/razordata/internal/SQB/MR"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -129,22 +130,81 @@ func (b *PipelineBuilder) specializePlan(plan *PL.PlanResult, sql, memoKey strin
 	}, nil
 }
 
-// decomposeState accumulates stages and edges during plan decomposition.
-type decomposeState struct {
-	stages []StageSpec
-	edges  []EdgeSpec
+// outputSchema describes a stage's output columns — names and rough type.
+// Used during decomposition to resolve expression names to column indices
+// for Sort/Aggregate/HashJoin. Slots are populated bottom-up; a nil slice
+// means the child schema is unknown (we'll fall back to LegacyBatchStageSpec).
+type outputSchema struct {
+	names []string
+	types []LX.TokenType
 }
 
-// addStage appends a stage and returns its index.
-func (s *decomposeState) addStage(spec StageSpec) int {
+// resolved returns true if schema names are populated.
+func (s outputSchema) resolved() bool { return len(s.names) > 0 }
+
+// findCol returns the index of column name, or -1 if not present.
+// Case-insensitive (matches SQL identifier semantics, consistent with
+// how the planner populates Ident.Name from the FROM list).
+func (s outputSchema) findCol(name string) int {
+	for i, n := range s.names {
+		if equalFold(n, name) {
+			return i
+		}
+	}
+	return -1
+}
+
+// equalFold is a local case-insensitive string match to avoid pulling
+// in strings package.
+func equalFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		ca, cb := a[i], b[i]
+		if ca >= 'A' && ca <= 'Z' {
+			ca += 32
+		}
+		if cb >= 'A' && cb <= 'Z' {
+			cb += 32
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
+}
+
+// decomposeState accumulates stages, edges, and per-stage output
+// schemas during plan decomposition. REQ002124: per-stage outputSchema
+// lets us resolve Ident expressions to integer column indices for
+// native StageSpec construction.
+type decomposeState struct {
+	stages      []StageSpec
+	edges       []EdgeSpec
+	stageOutput []outputSchema // parallel with stages
+}
+
+// addStage appends a stage and records its output schema (known or empty).
+// Returns the stage index.
+func (s *decomposeState) addStage(spec StageSpec, out outputSchema) int {
 	idx := len(s.stages)
 	s.stages = append(s.stages, spec)
+	s.stageOutput = append(s.stageOutput, out)
 	return idx
 }
 
 // addEdge records a parent→child wiring.
 func (s *decomposeState) addEdge(from int, to int, side ChildSide) {
 	s.edges = append(s.edges, EdgeSpec{From: from, To: to, Side: side})
+}
+
+// childOutput returns the output schema for a stage's child (by index).
+func (s *decomposeState) childOutput(childIdx int) outputSchema {
+	if childIdx < 0 || childIdx >= len(s.stageOutput) {
+		return outputSchema{}
+	}
+	return s.stageOutput[childIdx]
 }
 
 // decomposePlan walks the PL.Operator tree bottom-up and produces
@@ -167,7 +227,15 @@ func decomposePlan(root DT.Operator, planner PL.QueryPlanner, specialize Special
 
 // decomposeOp recursively decomposes a single operator into stages.
 // Returns the index of the stage that produces output for this operator.
+// First, it checks for the FusedScan candidate pattern (Limit → Project → Filter → SeqScan)
+// to emit a single FusedScanStageSpec (REQ002124).
 func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	// FusedScan detection: try Limit→Project→Filter→SeqScan before the
+	// default per-type dispatch. If the pattern matches we create a single stage
+	// and skip the nested child decomposition.
+	if idx, ok := tryDecomposeFusedScan(op, st, planner, specialize); ok {
+		return idx
+	}
 	switch o := op.(type) {
 	case *OP.SeqScan:
 		return decomposeSeqScan(o, st)
@@ -190,112 +258,545 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *AG.HashAggregate:
 		return decomposeAggregate(nil, st, planner, specialize) // HashAggregate via Aggregate
 	case *WT.Insert:
-		return st.addStage(&InsertStageSpec{Insert: o})
+		return decomposeDML(&InsertStageSpec{Insert: o}, st)
 	case *WT.Update:
-		return st.addStage(&UpdateStageSpec{Update: o})
+		return decomposeDML(&UpdateStageSpec{Update: o}, st)
 	case *WT.Delete:
-		return st.addStage(&DeleteStageSpec{Delete: o})
+		return decomposeDML(&DeleteStageSpec{Delete: o}, st)
 	default:
 		return decomposeFallback(op, st, planner, specialize)
 	}
 }
 
 // decomposeSeqScan creates a ScanStageSpec for a SeqScan or IndexScan.
+// Output schema comes from the scan's StoreSchema (Cols + ColTypes) if known,
+// populated by the planner via Schema() method on OP.SeqScan.
 func decomposeSeqScan(ss *OP.SeqScan, st *decomposeState) int {
-	// Capture the scan operator for the producer closure.
 	var op DT.Operator = ss
+	var out outputSchema
+	if ss != nil {
+		if sch := ss.Schema(); sch != nil && len(sch.Cols) > 0 {
+			n := len(sch.Cols)
+			names := make([]string, n)
+			types := make([]LX.TokenType, n)
+			copy(names, sch.Cols)
+			if len(sch.ColTypes) > 0 {
+				copy(types, sch.ColTypes)
+			}
+			out = outputSchema{names: names, types: types}
+		}
+	}
 	return st.addStage(&ScanStageSpec{
 		NewProducer: func() UT.BatchProducer {
 			return NewRowOperatorAsProducer(op)
 		},
-	})
+	}, out)
 }
 
-// decomposeFilter creates FilterStageSpec with a child edge.
+// decomposeFilter creates FilterStageSpec with a child edge. Output
+// Filter preserves its child's schema unchanged.
 func decomposeFilter(f *OP.Filter, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	childIdx := decomposeOp(f.Child(), st, planner, specialize)
-	filterIdx := st.addStage(&FilterStageSpec{Pred: f.Predicate()})
+	childOut := st.childOutput(childIdx)
+	filterIdx := st.addStage(&FilterStageSpec{Pred: f.Predicate()}, childOut)
 	st.addEdge(filterIdx, childIdx, SingleChild)
 	return filterIdx
 }
 
-// decomposeProject creates ProjectStageSpec with a child edge.
+// decomposeProject creates ProjectStageSpec with a child edge. Output
+// schema is derived from the projected expressions' display names.
 func decomposeProject(p *OP.Project, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	childIdx := decomposeOp(p.Child(), st, planner, specialize)
-	projectIdx := st.addStage(&ProjectStageSpec{Exprs: p.Cols()})
+	exprs := p.Cols()
+	n := len(exprs)
+	names := make([]string, n)
+	types := make([]LX.TokenType, n)
+	for i, e := range exprs {
+		names[i] = exprName(e)
+		types[i] = LX.T_TEXT
+	}
+	projectOut := outputSchema{names: names, types: types}
+	projectIdx := st.addStage(&ProjectStageSpec{Exprs: exprs}, projectOut)
 	st.addEdge(projectIdx, childIdx, SingleChild)
 	return projectIdx
 }
 
-// decomposeSort wraps Sort in LegacyBatchStageSpec because PX SortStageSpec
-// requires column indices while PL.Sort uses expressions — converting them
-// requires the child's output schema which is not available at decomposition time.
+// decomposeSort native SortStageSpec — emits SortCols / Desc arrays
+// populated from the child's output schema. REQ002124.
+//
+// When the child schema is available (each OrderItem.Expr resolve to all Ident
+// whose names exist in the child's output columns) we build the sort column
+// indices directly. Otherwise fall back to LegacyBatchStageSpec (rare and
+// the legacy vectorized path, which is still correct but can be slow.
 func decomposeSort(s *OP.Sort, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	childIdx := decomposeOp(s.Child(), st, planner, specialize)
+	childOut := st.childOutput(childIdx)
+	keys := s.Keys()
+	if childOut.resolved() {
+		sortCols := make([]int, 0, len(keys))
+		desc := make([]bool, 0, len(keys))
+		allResolved := true
+		for _, k := range keys {
+			idx := -1
+			switch e := k.Expr.(type) {
+			case *PS.Ident:
+				idx = childOut.findCol(e.Name)
+				if idx == -1 && e.SlotIdx >= 0 {
+					idx = e.SlotIdx
+				}
+			}
+			if idx == -1 {
+				allResolved = false
+				break
+			}
+			sortCols = append(sortCols, idx)
+			desc = append(desc, k.Desc)
+		}
+		if allResolved && len(sortCols) > 0 {
+			sortIdx := st.addStage(&SortStageSpec{
+				SortCols: sortCols,
+				Desc:     desc,
+			}, childOut)
+			st.addEdge(sortIdx, childIdx, SingleChild)
+			return sortIdx
+		}
+	}
+	// Fallback: couldn't resolve all keys. Wrap in legacy.
 	sortIdx := st.addStage(&LegacyBatchStageSpec{
 		Root:       s,
 		Planner:    planner,
 		Specialize: specialize,
-	})
+	}, childOut)
 	st.addEdge(sortIdx, childIdx, SingleChild)
 	return sortIdx
 }
 
-// decomposeLimit creates LimitStageSpec with a child edge.
+// decomposeLimit creates LimitStageSpec. Child schema passes through unchanged.
 func decomposeLimit(l *OP.Limit, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	childIdx := decomposeOp(l.Child(), st, planner, specialize)
-	limitIdx := st.addStage(&LimitStageSpec{Limit: l.LimitValue()})
+	childOut := st.childOutput(childIdx)
+	limitIdx := st.addStage(&LimitStageSpec{Limit: l.LimitValue()}, childOut)
 	st.addEdge(limitIdx, childIdx, SingleChild)
 	return limitIdx
 }
 
-// decomposeOffset creates OffsetStageSpec with a child edge.
+// decomposeOffset creates OffsetStageSpec. Child schema passes through unchanged.
 func decomposeOffset(o *OP.Offset, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	childIdx := decomposeOp(o.Child(), st, planner, specialize)
-	offsetIdx := st.addStage(&OffsetStageSpec{Offset: o.OffsetValue()})
+	childOut := st.childOutput(childIdx)
+	offsetIdx := st.addStage(&OffsetStageSpec{Offset: o.OffsetValue()}, childOut)
 	st.addEdge(offsetIdx, childIdx, SingleChild)
 	return offsetIdx
 }
 
-// decomposeHashJoin wraps HashJoin in LegacyBatchStageSpec because PX HashJoinStageSpec
-// uses column indices while PL.HashJoin uses key names — converting requires schema.
+// decomposeHashJoin native HashJoinStageSpec. Resolves left/right key
+// names against left/right child schemas. Falls back to LegacyBatchStageSpec
+// if names not resolvable. REQ002124.
 func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	leftIdx := decomposeOp(h.LeftChild(), st, planner, specialize)
 	rightIdx := decomposeOp(h.RightChild(), st, planner, specialize)
+	leftOut := st.childOutput(leftIdx)
+	rightOut := st.childOutput(rightIdx)
+	leftKeys := h.LeftKeys()
+	rightKeys := h.RightKeys()
+
+	probeKeys := make([]int, 0, len(leftKeys))
+	buildKeys := make([]int, 0, len(rightKeys))
+	allResolved := len(leftKeys) == len(rightKeys) && len(leftKeys) > 0
+	if allResolved {
+		for i := range leftKeys {
+			li := leftOut.findCol(leftKeys[i])
+			ri := rightOut.findCol(rightKeys[i])
+			if li == -1 || ri == -1 {
+				allResolved = false
+				break
+			}
+			probeKeys = append(probeKeys, li)
+			buildKeys = append(buildKeys, ri)
+		}
+	}
+
+	var joinOut outputSchema
+	if leftOut.resolved() && rightOut.resolved() {
+		n1, n2 := len(leftOut.names), len(rightOut.names)
+		names := make([]string, 0, n1+n2)
+		types := make([]LX.TokenType, 0, n1+n2)
+		names = append(names, leftOut.names...)
+		types = append(types, leftOut.types...)
+		names = append(names, rightOut.names...)
+		types = append(types, rightOut.types...)
+		joinOut = outputSchema{names: names, types: types}
+	}
+	if allResolved {
+		// Map OP.JoinKind (string) → PX.JoinKind (uint8 enum).
+		var jk JoinKind
+		switch h.Kind() {
+		case OP.JoinKindLeft:
+			jk = JoinKindLeft
+		case OP.JoinKindRight:
+			jk = JoinKindRight
+		case OP.JoinKindFull:
+			jk = JoinKindFull
+		default:
+			jk = JoinKindInner
+		}
+		joinIdx := st.addStage(&HashJoinStageSpec{
+			BuildKeys: buildKeys,
+			ProbeKeys: probeKeys,
+			Kind:      jk,
+		}, joinOut)
+		st.addEdge(joinIdx, leftIdx, LeftChild)
+		st.addEdge(joinIdx, rightIdx, RightChild)
+		return joinIdx
+	}
+	// Fallback: couldn't resolve all keys
 	joinIdx := st.addStage(&LegacyBatchStageSpec{
 		Root:       h,
 		Planner:    planner,
 		Specialize: specialize,
-	})
+	}, joinOut)
 	st.addEdge(joinIdx, leftIdx, LeftChild)
 	st.addEdge(joinIdx, rightIdx, RightChild)
 	return joinIdx
 }
 
-// decomposeAggregate creates AggregateStageSpec with a child edge.
+// decomposeAggregate native AggregateStageSpec. Resolves group column
+// groupCols) and extracts aggregate func specs (col indices from agg
+// expressions. REQ002124.
+//
+// When all group columns and aggregate arguments resolve to child output
+// indices, builds native AggregateStageSpec with the UnifiedAccumulatorSpec
+// array. Otherwise falls back to LegacyBatchStageSpec.
 func decomposeAggregate(agg *AG.Aggregate, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	var childIdx int
+	var childOut outputSchema
 	if agg != nil {
 		childIdx = decomposeOp(agg.Child(), st, planner, specialize)
+		childOut = st.childOutput(childIdx)
 	} else {
+		// HashAggregate (no children known agg) — delegate to legacy.
 		childIdx = st.addStage(&LegacyBatchStageSpec{
 			Root:       nil,
 			Planner:    planner,
 			Specialize: specialize,
-		})
+		}, outputSchema{})
 	}
-	aggIdx := st.addStage(&AggregateStageSpec{})
+
+	// If agg = HashAggregate fallback to legacy via empty spec.
+	if agg == nil {
+		aggIdx := st.addStage(&AggregateStageSpec{}, outputSchema{})
+		st.addEdge(aggIdx, childIdx, SingleChild)
+		return aggIdx
+	}
+
+	groupExprs := agg.GroupCols()
+	aggExprs := agg.Aggs()
+
+	groupCols := make([]int, 0, len(groupExprs))
+	specs := make([]MR.AccumulatorSpec, 0, len(aggExprs))
+	allResolved := true
+
+	// Resolve group cols
+	if childOut.resolved() {
+		for _, g := range groupExprs {
+			idx := -1
+			switch e := g.(type) {
+			case *PS.Ident:
+				idx = childOut.findCol(e.Name)
+				if idx == -1 && e.SlotIdx >= 0 {
+					idx = e.SlotIdx
+				}
+			}
+			if idx == -1 {
+				allResolved = false
+				break
+			}
+			groupCols = append(groupCols, idx)
+		}
+	} else if len(groupExprs) > 0 {
+		allResolved = false
+	}
+
+	// Resolve aggregate functions
+	if allResolved && childOut.resolved() {
+		for _, ae := range aggExprs {
+			spec, ok := resolveAggFunc(ae, childOut)
+			if !ok {
+				allResolved = false
+				break
+			}
+			specs = append(specs, spec)
+		}
+	} else {
+		allResolved = false
+	}
+
+	// Compute the aggregate's output schema: groupCols + agg names
+	aggNames := make([]string, 0, len(groupCols)+len(specs))
+	aggTypes := make([]LX.TokenType, 0, len(groupCols)+len(specs))
+	for _, g := range groupExprs {
+		aggNames = append(aggNames, exprName(g))
+		aggTypes = append(aggTypes, LX.T_INT_KW)
+	}
+	for _, spec := range specs {
+		aggNames = append(aggNames, aggFuncDisplayName(spec.Kind))
+		aggTypes = append(aggTypes, aggFuncReturnType(spec.Kind))
+	}
+	aggOut := outputSchema{names: aggNames, types: aggTypes}
+
+	if allResolved {
+		keyCols := groupCols
+		if len(keyCols) == 0 {
+			keyCols = nil
+		}
+		aggIdx := st.addStage(&AggregateStageSpec{
+			Specs:     specs,
+			GroupCols: groupCols,
+			KeyCols:   keyCols,
+		}, aggOut)
+		st.addEdge(aggIdx, childIdx, SingleChild)
+		return aggIdx
+	}
+	// Fallback.
+	aggIdx := st.addStage(&LegacyBatchStageSpec{
+		Root:       agg,
+		Planner:    planner,
+		Specialize: specialize,
+	}, aggOut)
 	st.addEdge(aggIdx, childIdx, SingleChild)
 	return aggIdx
 }
 
+// resolveAggFunc parses an aggregate function expression (e.g. SUM(col),
+// COUNT(DISTINCT col), GROUP_CONCAT(x, ',')) and returns an
+// MR.AccumulatorSpec with child column index + flags. Child's output
+// schema is used to resolve argument column names. Second return is ok=false
+// if child column couldn't be resolved or function is unsupported.
+func resolveAggFunc(expr PS.Expr, childOut outputSchema) (MR.AccumulatorSpec, bool) {
+	fn, ok := expr.(*PS.AggregateFunc)
+	if !ok {
+		return MR.AccumulatorSpec{}, false
+	}
+	var col int = -1
+	if fn.Arg != nil {
+		switch a := fn.Arg.(type) {
+		case *PS.Ident:
+			col = childOut.findCol(a.Name)
+			if col == -1 && a.SlotIdx >= 0 {
+				col = a.SlotIdx
+			}
+		case *PS.StarExpr:
+			// COUNT(*) — col remains -1
+		}
+	}
+	kind, ok := aggKindByName(fn.Name)
+	if !ok {
+		return MR.AccumulatorSpec{}, false
+	}
+	// col = -1 is valid only for COUNT (counts rows regardless of arg)
+	if col == -1 && kind != MR.AggCount {
+		return MR.AccumulatorSpec{}, false
+	}
+	var separator string
+	if fn.Separator != nil {
+		if s, ok := fn.Separator.(*PS.StringLiteral); ok {
+			separator = s.Val
+		}
+	}
+	return MR.AccumulatorSpec{
+		Kind:      kind,
+		Col:       col,
+		Separator: separator,
+		Distinct:  fn.Distinct,
+	}, true
+}
+
+// aggKindByName maps a SQL aggregate function name (case-insensitive)
+// to an MR.AccumKind. The second return is false if unrecognized.
+func aggKindByName(name string) (MR.AccumKind, bool) {
+	switch {
+	case equalFold(name, "count"):
+		return MR.AggCount, true
+	case equalFold(name, "sum"):
+		return MR.AggSum, true
+	case equalFold(name, "min"):
+		return MR.AggMin, true
+	case equalFold(name, "max"):
+		return MR.AggMax, true
+	case equalFold(name, "avg"):
+		return MR.AggAvg, true
+	case equalFold(name, "group_concat"):
+		return MR.AggGroupConcat, true
+	case equalFold(name, "string_agg"):
+		return MR.AggStringAgg, true
+	}
+	return 0, false
+}
+
+// aggFuncDisplayName returns the column display name for an aggregate
+// function kind used in aggregate output schema.
+func aggFuncDisplayName(k MR.AccumKind) string {
+	switch k {
+	case MR.AggCount:
+		return "count(*)"
+	case MR.AggSum:
+		return "sum(expr)"
+	case MR.AggMin:
+		return "min(expr)"
+	case MR.AggMax:
+		return "max(expr)"
+	case MR.AggAvg:
+		return "avg(expr)"
+	case MR.AggGroupConcat:
+		return "group_concat(expr)"
+	case MR.AggStringAgg:
+		return "string_agg(expr)"
+	}
+	return "agg"
+}
+
+// aggFuncReturnType returns a rough result column type.
+func aggFuncReturnType(k MR.AccumKind) LX.TokenType {
+	switch k {
+	case MR.AggCount:
+		return LX.T_INT_KW
+	case MR.AggMin, MR.AggMax:
+		return LX.T_NULL // actual type determined at runtime
+	case MR.AggAvg, MR.AggSum:
+		return LX.T_FLOAT_KW // conservative guess
+	case MR.AggGroupConcat, MR.AggStringAgg:
+		return LX.T_TEXT
+	}
+	return LX.T_TEXT
+}
+
+// decomposeDML creates a DML StageSpec (Insert/Update/Delete). Output
+// schema is empty (DML outputs no result cols unless RETURNING — caller
+// handles that at the executor layer.
+func decomposeDML(spec StageSpec, st *decomposeState) int {
+	return st.addStage(spec, outputSchema{})
+}
+
 // decomposeFallback wraps the operator in a LegacyBatchStageSpec.
+// Output schema empty (will fallbacks treat it unknown).
 func decomposeFallback(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	return st.addStage(&LegacyBatchStageSpec{
 		Root:       op,
 		Planner:    planner,
 		Specialize: specialize,
-	})
+	}, outputSchema{})
+}
+
+// tryDecomposeFusedScan is the fusedScan candidate detection.
+// Pattern: Limit? → Project? → Filter? → (SeqScan / IndexScan)
+// Emits single FusedScanStageSpec.
+// Returns (stageIdx, true) if fused, else (0, false).
+// REQ002124 — same eligibility as vec_transform.go:tryFusedBatchScan.
+func tryDecomposeFusedScan(op DT.Operator, st *decomposeState, _ PL.QueryPlanner, _ SpecializeFunc) (int, bool) {
+	var limitOp *OP.Limit
+	var projectOp *OP.Project
+	var filterOp *OP.Filter
+	var seqScan *OP.SeqScan
+	cur := op
+	if l, ok := cur.(*OP.Limit); ok {
+		limitOp = l
+		cur = l.Child()
+	}
+	if cur == nil {
+		return 0, false
+	}
+	if proj, ok := cur.(*OP.Project); ok {
+		projectOp = proj
+		cur = proj.Child()
+	}
+	if cur == nil {
+		return 0, false
+	}
+	if filt, ok := cur.(*OP.Filter); ok {
+		filterOp = filt
+		cur = filt.Child()
+	}
+	if cur == nil {
+		return 0, false
+	}
+	ss, ok := cur.(*OP.SeqScan)
+	if !ok {
+		return 0, false
+	}
+	seqScan = ss
+	// FusedScan requires a populated scan schema. vec_transform.go's
+	// tryFusedBatchScan runs only on planner-built trees where SeqScan
+	// schemas are always populated (Cols, ColTypes, store-backed). This
+	// guard also prevents fusion on shallow test-only scans
+	// (OP.NewSeqScan("t1") with sch==nil), keeping test expectations for
+	// separate stages intact.
+	sch := ss.Schema()
+	if sch == nil || len(sch.Cols) == 0 {
+		return 0, false
+	}
+	// At least Filter, Project, or Limit must be present.
+	if projectOp == nil && filterOp == nil && limitOp == nil {
+		return 0, false
+	}
+	// Build scan output schema from SeqScan's StoreSchema.
+	n := len(sch.Cols)
+	names := make([]string, n)
+	types := make([]LX.TokenType, n)
+	copy(names, sch.Cols)
+	if len(sch.ColTypes) > 0 {
+		copy(types, sch.ColTypes)
+	}
+	scanOut := outputSchema{names: names, types: types}
+
+	var pred PS.Expr
+	if filterOp != nil {
+		pred = filterOp.Predicate()
+	}
+	var exprs []PS.Expr
+	var fusedNames []string
+	if projectOp != nil {
+		exprs = projectOp.Cols()
+		fusedNames = make([]string, len(exprs))
+		for i, e := range exprs {
+			fusedNames[i] = exprName(e)
+		}
+	} else if scanOut.resolved() {
+		fusedNames = scanOut.names
+	}
+
+	var limit int64 = -1
+	if limitOp != nil {
+		limit = limitOp.LimitValue()
+	}
+
+	// Build output schema for the fused stage: project names if project,
+	// else scan names.
+	var fusedOut outputSchema
+	if len(fusedNames) > 0 {
+		outNames := make([]string, len(fusedNames))
+		copy(outNames, fusedNames)
+		fusedTypes := make([]LX.TokenType, len(outNames))
+		if projectOp != nil {
+			for i := range outNames {
+				fusedTypes[i] = LX.T_TEXT
+			}
+		} else if scanOut.resolved() {
+			copy(fusedTypes, scanOut.types)
+		}
+		fusedOut = outputSchema{names: outNames, types: fusedTypes}
+	}
+
+	scanOp := seqScan
+	fusedIdx := st.addStage(&FusedScanStageSpec{
+		SourceFactory: func() UT.BatchProducer {
+			return NewRowOperatorAsProducer(scanOp)
+		},
+		Pred:  pred,
+		Exprs: exprs,
+		Names: fusedNames,
+		Limit: limit,
+	}, fusedOut)
+	return fusedIdx, true
 }
 
 // encodeMemoKey produces a parameterized cache key from a parsed
