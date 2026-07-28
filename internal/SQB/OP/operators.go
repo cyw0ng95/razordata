@@ -155,6 +155,8 @@ type SeqScan struct {
 	// to avoid per-row allocation in prefixRowCols.
 	prefixedCols     []string
 	prefixedColIndex map[string]int
+	// REQ002020: reusable temp map for WithUsedCols index computation.
+	tmpColIdx map[string]int
 
 	// REQ000790: index usage tracking for diagnostics.
 	iu *DT.IndexUsage
@@ -321,8 +323,20 @@ func (s *SeqScan) WithAlias(alias string) *SeqScan {
 	// Pre-compute prefixed column names from the schema.
 	if s.schema != nil {
 		prefix := alias + "."
-		s.prefixedCols = make([]string, len(s.schema.Cols))
-		s.prefixedColIndex = make(map[string]int, len(s.schema.Cols)*2)
+		n := len(s.schema.Cols)
+		// REQ002019: reuse existing prefixedCols slice if capacity
+		// is sufficient, avoiding per-call make([]string, n) allocs.
+		if cap(s.prefixedCols) >= n {
+			s.prefixedCols = s.prefixedCols[:n]
+		} else {
+			s.prefixedCols = make([]string, n)
+		}
+		// REQ002019: reuse existing map by clearing instead of realloc.
+		if s.prefixedColIndex == nil {
+			s.prefixedColIndex = make(map[string]int, n*2)
+		} else {
+			clear(s.prefixedColIndex)
+		}
 		for i, c := range s.schema.Cols {
 			pc := prefix + c
 			s.prefixedCols[i] = pc
@@ -405,30 +419,58 @@ func (s *SeqScan) WithPointLookup(col string, values []any) *SeqScan {
 // REQ001080.
 func (s *SeqScan) WithUsedCols(cols []string) *SeqScan {
 	s.usedCols = cols
-	s.usedColSet = make(map[string]bool, len(cols))
+	n := len(cols)
+	// REQ002020: reuse existing usedColSet by clearing instead of realloc.
+	if s.usedColSet == nil {
+		s.usedColSet = make(map[string]bool, n)
+	} else {
+		clear(s.usedColSet)
+	}
 	for _, c := range cols {
 		s.usedColSet[c] = true
 	}
-	// REQ001421: pre-allocate prune buffers at plan time to avoid
-	// per-row make([]Value, N) in the hot path. The index map
-	// is rebuilt each call (~10ns for small maps), but the slice
-	// backing arrays are pre-sized.
-	s.pruneBufCols = make([]string, 0, len(cols))
-	s.pruneBufTypes = make([]LX.TokenType, 0, len(cols))
-	s.pruneBufData = make([]Value, 0, len(cols))
-	s.pruneBufIndex = make(map[string]int, len(cols)*2)
+	// REQ002020: reuse existing prune buffers if capacity is sufficient.
+	if cap(s.pruneBufCols) >= n {
+		s.pruneBufCols = s.pruneBufCols[:0]
+	} else {
+		s.pruneBufCols = make([]string, 0, n)
+	}
+	if cap(s.pruneBufTypes) >= n {
+		s.pruneBufTypes = s.pruneBufTypes[:0]
+	} else {
+		s.pruneBufTypes = make([]LX.TokenType, 0, n)
+	}
+	if cap(s.pruneBufData) >= n {
+		s.pruneBufData = s.pruneBufData[:0]
+	} else {
+		s.pruneBufData = make([]Value, 0, n)
+	}
+	// REQ002020: reuse existing pruneBufIndex by clearing instead of realloc.
+	if s.pruneBufIndex == nil {
+		s.pruneBufIndex = make(map[string]int, n*2)
+	} else {
+		clear(s.pruneBufIndex)
+	}
 	// REQ001434: pre-compute the indices into the schema for
-	// fast column-aware decoding. decodeRowBuffered consults
-	// this to skip non-wanted columns during the byte-stream
-	// parse instead of decoding them and pruning them later.
+	// fast column-aware decoding.
 	if s.schema != nil {
-		s.usedColIdx = make([]int, 0, len(cols))
-		colIdx := make(map[string]int, len(s.schema.Cols))
+		// REQ002020: reuse temp colIdx map.
+		if s.tmpColIdx == nil {
+			s.tmpColIdx = make(map[string]int, len(s.schema.Cols))
+		} else {
+			clear(s.tmpColIdx)
+		}
 		for i, c := range s.schema.Cols {
-			colIdx[c] = i
+			s.tmpColIdx[c] = i
+		}
+		// REQ002020: reuse existing usedColIdx slice.
+		if cap(s.usedColIdx) >= n {
+			s.usedColIdx = s.usedColIdx[:0]
+		} else {
+			s.usedColIdx = make([]int, 0, n)
 		}
 		for _, c := range cols {
-			if i, ok := colIdx[c]; ok {
+			if i, ok := s.tmpColIdx[c]; ok {
 				s.usedColIdx = append(s.usedColIdx, i)
 			}
 		}
@@ -660,8 +702,17 @@ func (s *SeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			} else {
 				prefix := s.alias + "."
 				n := len(row.Cols)
-				s.prefixedCols = make([]string, n)
-				s.prefixedColIndex = make(map[string]int, n*2)
+				// REQ002019: reuse existing slices/maps.
+				if cap(s.prefixedCols) >= n {
+					s.prefixedCols = s.prefixedCols[:n]
+				} else {
+					s.prefixedCols = make([]string, n)
+				}
+				if s.prefixedColIndex == nil {
+					s.prefixedColIndex = make(map[string]int, n*2)
+				} else {
+					clear(s.prefixedColIndex)
+				}
 				for i, c := range row.Cols {
 					pc := prefix + c
 					s.prefixedCols[i] = pc
@@ -819,8 +870,17 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 			// REQ001569: compute once, not per-row.
 			prefix := s.alias + "."
 			n := len(out.Cols)
-			s.prefixedCols = make([]string, n)
-			s.prefixedColIndex = make(map[string]int, n*2)
+			// REQ002019: reuse existing slices/maps.
+			if cap(s.prefixedCols) >= n {
+				s.prefixedCols = s.prefixedCols[:n]
+			} else {
+				s.prefixedCols = make([]string, n)
+			}
+			if s.prefixedColIndex == nil {
+				s.prefixedColIndex = make(map[string]int, n*2)
+			} else {
+				clear(s.prefixedColIndex)
+			}
 			for i, c := range out.Cols {
 				pc := prefix + c
 				s.prefixedCols[i] = pc
@@ -929,8 +989,17 @@ func (s *SeqScan) nextFromStore(ctx context.Context) (Row, error) {
 			} else {
 				prefix := s.alias + "."
 				n := len(row.Cols)
-				s.prefixedCols = make([]string, n)
-				s.prefixedColIndex = make(map[string]int, n*2)
+				// REQ002019: reuse existing slices/maps.
+				if cap(s.prefixedCols) >= n {
+					s.prefixedCols = s.prefixedCols[:n]
+				} else {
+					s.prefixedCols = make([]string, n)
+				}
+				if s.prefixedColIndex == nil {
+					s.prefixedColIndex = make(map[string]int, n*2)
+				} else {
+					clear(s.prefixedColIndex)
+				}
 				for i, c := range row.Cols {
 					pc := prefix + c
 					s.prefixedCols[i] = pc

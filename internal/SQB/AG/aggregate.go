@@ -51,6 +51,13 @@ type Aggregate struct {
 	// expression is evaluated against a row containing group keys and
 	// all aggregates (named by lookup key).
 	having PS.Expr
+	// REQ002027: flat buffer for group key values to avoid per-group
+	// make([]Value, len(cols)) allocations. Each group key is a
+	// sub-slice carved from this buffer.
+	groupKeyBuf []Value
+	// REQ002021: reusable flat Value buffer for batch.ToRowsShared
+	// to avoid per-row make([]Value, N) in scalar and GROUP BY paths.
+	toRowsBuf []Value
 }
 
 func NewAggregate(child Operator, groupCols, aggs []PS.Expr) *Aggregate {
@@ -395,8 +402,9 @@ func (a *Aggregate) tryStreamingScalarAggregate(ctx context.Context) (bool, Row,
 					// batch and remaining batches. The caller's fallback
 					// path will then use the pre-populated scalarRowBuf
 					// instead of re-draining from the child.
-					rows := batch.ToRows()
-					a.scalarRowBuf = append(a.scalarRowBuf[:0], rows...)
+					var toRows []PL.Row
+					toRows, a.toRowsBuf = batch.ToRowsShared(a.toRowsBuf)
+					a.scalarRowBuf = append(a.scalarRowBuf[:0], toRows...)
 					if batch.Pooled {
 						batch.Put()
 					}
@@ -587,8 +595,9 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 				if batch == nil {
 					break
 				}
-				rows := batch.ToRows()
-				a.scalarRowBuf = append(a.scalarRowBuf, rows...)
+				var toRows []PL.Row
+				toRows, a.toRowsBuf = batch.ToRowsShared(a.toRowsBuf)
+				a.scalarRowBuf = append(a.scalarRowBuf, toRows...)
 				if batch.Pooled {
 					batch.Put()
 				}
@@ -678,9 +687,10 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 			if batch == nil {
 				break
 			}
-			rows := batch.ToRows()
-			for i := range rows {
-				key, err := evalGroupKey(a.groupCols, &rows[i], a.params)
+			var toRows []PL.Row
+			toRows, a.toRowsBuf = batch.ToRowsShared(a.toRowsBuf)
+			for i := range toRows {
+				key, err := evalGroupKey(&a.groupKeyBuf, a.groupCols, &toRows[i], a.params)
 				if err != nil {
 					if batch.Pooled {
 						batch.Put()
@@ -689,10 +699,10 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 				}
 				ks := groupKeyString(key)
 				if idx, ok := groupIndex[ks]; ok {
-					groups[idx].rows = append(groups[idx].rows, rows[i])
+					groups[idx].rows = append(groups[idx].rows, toRows[i])
 				} else {
 					groupIndex[ks] = len(groups)
-					groups = append(groups, groupBucket{key: key, rows: []Row{rows[i]}})
+					groups = append(groups, groupBucket{key: key, rows: []Row{toRows[i]}})
 				}
 			}
 			if batch.Pooled {
@@ -711,7 +721,7 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 				}
 				return err
 			}
-			key, err := evalGroupKey(a.groupCols, &row, a.params)
+			key, err := evalGroupKey(&a.groupKeyBuf, a.groupCols, &row, a.params)
 			if err != nil {
 				return err
 			}
@@ -874,11 +884,23 @@ func (a *Aggregate) materialize(ctx context.Context) error {
 	return nil
 }
 
-func evalGroupKey(cols []PS.Expr, row *Row, params []any) ([]Value, error) {
+func evalGroupKey(flatBuf *[]Value, cols []PS.Expr, row *Row, params []any) ([]Value, error) {
 	if len(cols) == 0 {
 		return nil, nil
 	}
-	out := make([]Value, len(cols))
+	n := len(cols)
+	// REQ002027: bump-allocate from flat buffer. Each key is a
+	// sub-slice backed by the shared flat buffer, so we avoid
+	// per-key make([]Value, n) while keeping keys independent.
+	var off int
+	if cap(*flatBuf)-len(*flatBuf) < n {
+		*flatBuf = make([]Value, max(n*64, 128))
+		off = 0
+	} else {
+		off = len(*flatBuf)
+	}
+	*flatBuf = (*flatBuf)[:off+n]
+	out := (*flatBuf)[off : off+n : off+n]
 	for i, c := range cols {
 		v, err := EV.EvalValue(c, row, params)
 		if err != nil {

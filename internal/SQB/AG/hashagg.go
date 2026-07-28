@@ -25,6 +25,8 @@ type HashAggregate struct {
 	pos        int
 	params     []any
 	expandStar bool
+	// REQ002027: flat buffer for group key values.
+	groupKeyBuf []Value
 }
 
 func NewHashAggregate(child Operator, groupCols, aggs []PS.Expr) *HashAggregate {
@@ -89,7 +91,7 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 			}
 			return err
 		}
-		key, err := evalGroupKey(a.groupCols, &row, a.params)
+		key, err := evalGroupKey(&a.groupKeyBuf, a.groupCols, &row, a.params)
 		if err != nil {
 			return err
 		}
@@ -117,7 +119,7 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 			}
 			copy(out.Cols, firstRow.Cols)
 			copy(out.Data, firstRow.Data)
-			keyVals, _ := evalGroupKey(a.groupCols, &firstRow, a.params)
+			keyVals, _ := evalGroupKey(&a.groupKeyBuf, a.groupCols, &firstRow, a.params)
 			for i, gc := range a.groupCols {
 				name := groupColName(gc)
 				for j, c := range out.Cols {
@@ -129,7 +131,7 @@ func (a *HashAggregate) materialize(ctx context.Context) error {
 			}
 		} else {
 			key := rows[0]
-			keyVals, _ := evalGroupKey(a.groupCols, &key, a.params)
+			keyVals, _ := evalGroupKey(&a.groupKeyBuf, a.groupCols, &key, a.params)
 			out = Row{}
 			for i, gc := range a.groupCols {
 				out.Cols = append(out.Cols, groupColName(gc))
