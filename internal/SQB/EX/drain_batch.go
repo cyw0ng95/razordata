@@ -47,16 +47,24 @@ func (e *Executor) drainPipeline(ctx context.Context, plan *pl.PlanResult) ([]DT
 	if e.pipelineBuilder == nil {
 		return nil, errors.New("ex: pipeline not available")
 	}
+	// Vectorize the plan tree. tryVectorizePlan returns a DT.Operator
+	// that may be a BatchProducer (e.g., BatchToRowAdapter wrapping
+	// VectorizedSeqScan). Use it directly as the Specialize result to
+	// avoid double-wrapping through RowOperatorAsProducer.
+	vec := tryVectorizePlan(plan.Root, e.planner)
 	spec := &PX.PipelineSpec{
 		RootIdx: 0,
-	}
-	// Vectorize the plan tree before wrapping in LegacyBatchStageSpec.
-	vec := tryVectorizePlan(plan.Root, e.planner)
-	spec.Stages = []PX.StageSpec{
-		&PX.LegacyBatchStageSpec{
-			Root:       vec,
-			Planner:    e.planner,
-			Specialize: nil,
+		Stages: []PX.StageSpec{
+			&PX.LegacyBatchStageSpec{
+				Root:    vec,
+				Planner: e.planner,
+				Specialize: func(root DT.Operator, _ pl.QueryPlanner) UT.BatchProducer {
+					if bp, ok := root.(UT.BatchProducer); ok {
+						return bp
+					}
+					return UT.NewBatchToRowAdapter(PX.RowOperatorAsProducer{Op: root})
+				},
+			},
 		},
 	}
 	executor := PX.NewPipelineExecutor(spec)

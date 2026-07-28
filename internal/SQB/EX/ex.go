@@ -1294,28 +1294,11 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 }
 
 func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.Row, error) {
-	// REQ002132: try the unified pipeline path first. Only use it for
-	// store-backed queries (in-memory tables use the legacy path which
-	// handles them correctly). PipelineSpec is immutable and creates
-	// fresh runtime state via NewRuntime(), so the QueryAll mutation
-	// concern (comment below) does not apply.
-	// Falls back to the legacy path when the pipeline builder is not
-	// available, the query is in-memory, or the pipeline path returns
-	// an error.
-	if e.store != nil && e.pipelineBuilder != nil {
-		if spec, err := e.BuildPipeline(sql); err == nil && spec != nil {
-			executor := PX.NewPipelineExecutor(spec)
-			defer executor.Close()
-			rows, err := executor.Execute(ctx)
-			if err == nil {
-				result := make([]DT.Row, len(rows))
-				for i, r := range rows {
-					result[i] = DT.Row(r)
-				}
-				return result, nil
-			}
-		}
-	}
+	// REQ002132: the QueryAll pipeline path (BuildPipeline) re-parses
+	// and re-plans from SQL text, skipping propagateParams/planner/execCtx
+	// initialization. It is disabled for now — the pipeline path is
+	// exercised via drainPlanExecCtx → drainPipeline, which operates on
+	// the already-initialized plan tree.
 
 	// REQ002010: textPlanCache not consulted in QueryAll — the cached
 	// plan's operator tree state (e.g., Aggregate.buf, ValuesOp.evaluated)
