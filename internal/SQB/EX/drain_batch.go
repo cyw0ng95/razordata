@@ -26,20 +26,8 @@ func (e *Executor) drainPlan(ctx context.Context, plan *pl.PlanResult) ([]DT.Row
 	return drainBatch(ctx, plan.Root, nil)
 }
 
-// drainPlanExecCtx drains all rows and threads execCtx through each row.
-// REQ002133: when the pipeline path is available, uses PipelineExecutor
-// instead of the legacy drainBatch path.
-func (e *Executor) drainPlanExecCtx(ctx context.Context, plan *pl.PlanResult, execCtx *DT.ExecContext) ([]DT.Row, error) {
-	// Try the pipeline path first when available.
-	if e.pipelineBuilder != nil {
-		rows, err := e.drainPipeline(ctx, plan)
-		if err == nil {
-			return rows, nil
-		}
-	}
-	// Fall back to the legacy drain path.
-	return drainBatch(ctx, plan.Root, execCtx)
-}
+// drainPlanExecCtx is defined in drain_batch_default.go (normal mode)
+// and drain_batch_shadow.go (build tag px_validate mode). REQ002140.
 
 // drainPipeline drains a plan through the PipelineExecutor.
 // REQ002133.
@@ -179,4 +167,65 @@ func drainPlanRows(ctx context.Context, root pl.Operator, execCtx *DT.ExecContex
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+// CompareRows compares two []DT.Row slices for shadow validation.
+// REQ002140. Returns the count of mismatches.
+// Both slices may be nil/empty (treated as equal).
+// Per-row comparison uses Data values directly to avoid issues with
+// RowEqual's Cols-length check when Cols is nil.
+func CompareRows(pipeline, legacy []DT.Row) int {
+	if len(pipeline) != len(legacy) {
+		// Row count mismatch counts as 1 mismatch.
+		return 1 + absDiff(len(pipeline), len(legacy))
+	}
+	mismatches := 0
+	for i := range pipeline {
+		if !rowsDataEqual(pipeline[i], legacy[i]) {
+			mismatches++
+		}
+	}
+	return mismatches
+}
+
+// rowsDataEqual compares two rows by their Data values only.
+// More robust than DT.RowEqual which requires matching Cols length.
+func rowsDataEqual(a, b DT.Row) bool {
+	if len(a.Data) != len(b.Data) {
+		return false
+	}
+	for i := range a.Data {
+		if !valueEqual(a.Data[i], b.Data[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// valueEqual compares two DT.Value instances.
+func valueEqual(a, b DT.Value) bool {
+	if a.Kind != b.Kind {
+		return false
+	}
+	switch a.Kind {
+	case DT.KindInt:
+		return a.I64 == b.I64
+	case DT.KindFloat:
+		return a.F64 == b.F64
+	case DT.KindText, DT.KindBlob:
+		return a.S == b.S
+	case DT.KindBool:
+		return a.Bo == b.Bo
+	case DT.KindNull:
+		return true
+	default:
+		return false
+	}
+}
+
+func absDiff(a, b int) int {
+	if a > b {
+		return a - b
+	}
+	return b - a
 }

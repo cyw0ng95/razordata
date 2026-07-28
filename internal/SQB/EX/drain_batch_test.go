@@ -231,3 +231,82 @@ func BenchmarkDrain_Prealloc_NoGrowslice(b *testing.B) {
 		}
 	}
 }
+
+// --- CompareRows tests (REQ002140 shadow validation) ---
+
+func TestCompareRows_BothEmpty(t *testing.T) {
+	mismatches := CompareRows(nil, nil)
+	if mismatches != 0 {
+		t.Fatalf("expected 0 mismatches, got %d", mismatches)
+	}
+}
+
+func TestCompareRows_BothNonEmptyEqual(t *testing.T) {
+	a := []DT.Row{
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 1}}},
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 2}}},
+	}
+	b := []DT.Row{
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 1}}},
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 2}}},
+	}
+	mismatches := CompareRows(a, b)
+	if mismatches != 0 {
+		t.Fatalf("expected 0 mismatches, got %d", mismatches)
+	}
+}
+
+func TestCompareRows_CountDiffers(t *testing.T) {
+	a := []DT.Row{
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 1}}},
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 2}}},
+	}
+	b := []DT.Row{
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 1}}},
+	}
+	mismatches := CompareRows(a, b)
+	if mismatches != 2 {
+		t.Fatalf("expected 2 mismatches (1 + abs diff), got %d", mismatches)
+	}
+}
+
+func TestCompareRows_ValueDiffers(t *testing.T) {
+	a := []DT.Row{
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 1}}},
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 2}}},
+	}
+	b := []DT.Row{
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 1}}},
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 99}}},
+	}
+	mismatches := CompareRows(a, b)
+	if mismatches != 1 {
+		t.Fatalf("expected 1 mismatch, got %d", mismatches)
+	}
+}
+
+func TestCompareRows_MultipleMismatches(t *testing.T) {
+	a := []DT.Row{
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 1}}},
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 2}}},
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 3}}},
+	}
+	b := []DT.Row{
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 1}}},
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 99}}},
+		{Data: []DT.Value{{Kind: DT.KindInt, I64: 88}}},
+	}
+	mismatches := CompareRows(a, b)
+	if mismatches != 2 {
+		t.Fatalf("expected 2 mismatches, got %d", mismatches)
+	}
+}
+
+func TestCompareRows_EmptyVsNonEmpty(t *testing.T) {
+	a := []DT.Row{}
+	b := []DT.Row{{Data: []DT.Value{{Kind: DT.KindInt, I64: 1}}}}
+	mismatches := CompareRows(a, b)
+	if mismatches == 0 {
+		t.Fatalf("expected mismatch for length diff, got 0")
+	}
+}
