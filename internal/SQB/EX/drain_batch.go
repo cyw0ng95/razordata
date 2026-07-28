@@ -7,6 +7,7 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	PX "github.com/cyw0ng95/razordata/internal/SQB/PX"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
@@ -26,8 +27,41 @@ func (e *Executor) drainPlan(ctx context.Context, plan *pl.PlanResult) ([]DT.Row
 }
 
 // drainPlanExecCtx drains all rows and threads execCtx through each row.
+// REQ002133: when the pipeline path is available, uses PipelineExecutor
+// instead of the legacy drainBatch path.
 func (e *Executor) drainPlanExecCtx(ctx context.Context, plan *pl.PlanResult, execCtx *DT.ExecContext) ([]DT.Row, error) {
+	// Try the pipeline path first when available.
+	if e.pipelineBuilder != nil {
+		rows, err := e.drainPipeline(ctx, plan)
+		if err == nil {
+			return rows, nil
+		}
+	}
+	// Fall back to the legacy drain path.
 	return drainBatch(ctx, plan.Root, execCtx)
+}
+
+// drainPipeline drains a plan through the PipelineExecutor.
+// REQ002133.
+func (e *Executor) drainPipeline(ctx context.Context, plan *pl.PlanResult) ([]DT.Row, error) {
+	if e.pipelineBuilder == nil {
+		return nil, errors.New("ex: pipeline not available")
+	}
+	spec := &PX.PipelineSpec{
+		RootIdx: 0,
+	}
+	// Use the plan's operator tree as a legacy batch stage.
+	root := plan.Root
+	spec.Stages = []PX.StageSpec{
+		&PX.LegacyBatchStageSpec{
+			Root:       root,
+			Planner:    e.planner,
+			Specialize: nil, // use the default BatchToRowAdapter path
+		},
+	}
+	executor := PX.NewPipelineExecutor(spec)
+	defer executor.Close()
+	return executor.Execute(ctx)
 }
 
 // drainBatch drains an operator into []DT.Row. If the root implements

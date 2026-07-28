@@ -12,7 +12,7 @@ import (
 func TestLegacyBatchStageSpec_NewRuntime(t *testing.T) {
 	batches := []*UT.Batch{makeIntBatch([]int64{1, 2, 3})}
 	spec := &LegacyBatchStageSpec{
-		specialize: func(_ DT.Operator, _ PL.QueryPlanner) UT.BatchProducer {
+		Specialize: func(_ DT.Operator, _ PL.QueryPlanner) UT.BatchProducer {
 			return &simpleProducer{batches: batches}
 		},
 	}

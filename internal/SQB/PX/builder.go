@@ -111,9 +111,9 @@ func (b *PipelineBuilder) Build(sql string) (*PipelineSpec, error) {
 // Later REQs (002124-002127) will add concrete StageSpec types.
 func (b *PipelineBuilder) specializePlan(plan *PL.PlanResult, sql, memoKey string) (*PipelineSpec, error) {
 	stageSpec := &LegacyBatchStageSpec{
-		root:       plan.Root,
-		planner:    b.planner,
-		specialize: b.specialize,
+		Root:       plan.Root,
+		Planner:    b.planner,
+		Specialize: b.specialize,
 	}
 
 	cols, types := extractOutputSchema(plan.Root)
@@ -177,9 +177,9 @@ func extractOutputSchema(root DT.Operator) ([]string, []LX.TokenType) {
 // operator. Concrete StageSpec types (AggregateStageSpec,
 // SortStageSpec, etc.) replace this in later REQs.
 type LegacyBatchStageSpec struct {
-	root       DT.Operator
-	planner    PL.QueryPlanner
-	specialize SpecializeFunc
+	Root       DT.Operator
+	Planner    PL.QueryPlanner
+	Specialize SpecializeFunc
 }
 
 // NewRuntime creates a fresh LegacyBatchStage by calling the
@@ -187,14 +187,11 @@ type LegacyBatchStageSpec struct {
 // BatchProducer, then wrapping it.
 func (s *LegacyBatchStageSpec) NewRuntime() Stage {
 	var producer UT.BatchProducer
-	if s.specialize != nil {
-		producer = s.specialize(s.root, s.planner)
+	if s.Specialize != nil {
+		producer = s.Specialize(s.Root, s.Planner)
 	}
 	if producer == nil {
-		// Fallback: wrap the row operator in a BatchToRowAdapter
-		// that produces one-row batches. This handles DML and other
-		// non-vectorizable operators.
-		producer = UT.NewBatchToRowAdapter(RowOperatorAsProducer{Op: s.root})
+		producer = UT.NewBatchToRowAdapter(RowOperatorAsProducer{Op: s.Root})
 	}
 	return &LegacyBatchStage{producer: producer}
 }
