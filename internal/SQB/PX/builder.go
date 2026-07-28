@@ -300,38 +300,9 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *AG.HashAggregate:
 		return decomposeHashAggregate(o, st, planner, specialize)
 	case *AG.WindowOperator:
-		// WindowStageSpec isn't implemented yet (REQ002128); fall back to
-		// LegacyBatchStageSpec but propagate the window's output column
-		// names (WindowOperator.Cols()) so the pipeline still carries
-		// OutputCols metadata → fast path can use it instead of bailing.
-		cols := o.Cols()
-		schema := outputSchema{}
-		if len(cols) > 0 {
-			schema.names = append([]string(nil), cols...)
-			schema.types = make([]LX.TokenType, len(cols))
-			for i := range cols {
-				schema.types[i] = LX.T_TEXT
-			}
-		}
-		return st.addStage(&LegacyBatchStageSpec{
-			Root:       o,
-			Planner:    planner,
-			Specialize: specialize,
-		}, schema)
+		return decomposeWindow(o, st)
 	case *OP.CompoundOp:
-		// CompoundStageSpec not yet implemented (REQ002128); fall back but
-		// propagate left-child's output schema (UNION/EXCEPT/INTERSECT all
-		// have shape compatible with left child per planner).
-		childIdx := decomposeOp(o.LeftChild(), st, planner, specialize)
-		leftSchema := st.childOutput(childIdx)
-		if !leftSchema.resolved() {
-			leftSchema.names, leftSchema.types = extractOutputSchema(o.LeftChild())
-		}
-		return st.addStage(&LegacyBatchStageSpec{
-			Root:       o,
-			Planner:    planner,
-			Specialize: specialize,
-		}, leftSchema)
+		return decomposeCompound(o, st, planner, specialize)
 	case *WT.Insert:
 		return decomposeDML(&InsertStageSpec{Insert: o}, st)
 	case *WT.Update:
@@ -746,6 +717,40 @@ func decomposeDistinct(d *OP.Distinct, st *decomposeState, planner PL.QueryPlann
 		Planner:    planner,
 		Specialize: specialize,
 	}, schema)
+}
+
+// decomposeWindow creates a native WindowStageSpec. Output schema
+// comes from the child stage's output plus the window function name
+// (the function's result is appended as a new column). REQ002128.
+func decomposeWindow(w *AG.WindowOperator, st *decomposeState) int {
+	childIdx := decomposeOp(w.Input(), st, nil, nil)
+	childOut := st.childOutput(childIdx)
+	out := childOut
+	out.names = append([]string(nil), childOut.names...)
+	out.types = append([]LX.TokenType(nil), childOut.types...)
+	out.names = append(out.names, w.FuncName())
+	out.types = append(out.types, LX.T_INT_KW)
+	idx := st.addStage(&WindowStageSpec{
+		Spec:     w.Spec(),
+		FuncName: w.FuncName(),
+		Args:     w.Args(),
+		Cols:     w.Cols(),
+	}, out)
+	st.addEdge(idx, childIdx, SingleChild)
+	return idx
+}
+
+// decomposeCompound creates a native CompoundStageSpec for set operations
+// (UNION, UNION ALL, INTERSECT, EXCEPT). Output schema is taken from the
+// left child. REQ002128.
+func decomposeCompound(c *OP.CompoundOp, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	leftIdx := decomposeOp(c.LeftChild(), st, planner, specialize)
+	rightIdx := decomposeOp(c.RightChild(), st, planner, specialize)
+	leftOut := st.childOutput(leftIdx)
+	idx := st.addStage(&CompoundStageSpec{Op: c.CompoundOpType()}, leftOut)
+	st.addEdge(idx, leftIdx, LeftChild)
+	st.addEdge(idx, rightIdx, RightChild)
+	return idx
 }
 
 // resolveAggFunc parses an aggregate function expression (e.g. SUM(col),
