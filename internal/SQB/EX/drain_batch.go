@@ -50,13 +50,13 @@ func (e *Executor) drainPipeline(ctx context.Context, plan *pl.PlanResult) ([]DT
 	spec := &PX.PipelineSpec{
 		RootIdx: 0,
 	}
-	// Use the plan's operator tree as a legacy batch stage.
-	root := plan.Root
+	// Vectorize the plan tree before wrapping in LegacyBatchStageSpec.
+	vec := tryVectorizePlan(plan.Root, e.planner)
 	spec.Stages = []PX.StageSpec{
 		&PX.LegacyBatchStageSpec{
-			Root:       root,
+			Root:       vec,
 			Planner:    e.planner,
-			Specialize: nil, // use the default BatchToRowAdapter path
+			Specialize: nil,
 		},
 	}
 	executor := PX.NewPipelineExecutor(spec)
