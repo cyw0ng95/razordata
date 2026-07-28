@@ -11,7 +11,9 @@ import (
 	"context"
 	"errors"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
 // ErrResetNotSupported is returned by Stage.Reset() when the stage
@@ -106,4 +108,20 @@ type ChildSetter interface {
 // parameter values without modifying the cached spec.
 type ParamPropagator interface {
 	PropagateParams(args []any, buf *[]any)
+}
+
+// ExecContextPropagator is an optional interface that Stages implement
+// to receive per-execution context (Planner, TxWriter, RowArena, etc.).
+// This is called after NewRuntime() and PropagateParams so the stage
+// can access execution-level state that is not part of the cached spec.
+// REQ002136.
+type ExecContextPropagator interface {
+	PropagateExecContext(ec *DT.ExecContext)
+}
+
+// PlannerPropagator is an optional interface that Stages implement
+// to receive the query planner for on-the-fly subquery compilation
+// during execution. REQ002136.
+type PlannerPropagator interface {
+	PropagatePlanner(p PL.QueryPlanner)
 }

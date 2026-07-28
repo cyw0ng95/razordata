@@ -137,6 +137,26 @@ func (p *Pipeline) PropagateParams(args []any, buf *[]any) {
 	}
 }
 
+// PropagateExecContext injects per-execution context into all stages
+// that implement ExecContextPropagator. REQ002136.
+func (p *Pipeline) PropagateExecContext(ec *DT.ExecContext) {
+	for _, s := range p.stages {
+		if ep, ok := s.(ExecContextPropagator); ok {
+			ep.PropagateExecContext(ec)
+		}
+	}
+}
+
+// PropagatePlanner injects the query planner into all stages that
+// implement PlannerPropagator. REQ002136.
+func (p *Pipeline) PropagatePlanner(pl PL.QueryPlanner) {
+	for _, s := range p.stages {
+		if pp, ok := s.(PlannerPropagator); ok {
+			pp.PropagatePlanner(pl)
+		}
+	}
+}
+
 // rowBufPool pools the shared Value buffer for batch→row conversion.
 // Matches the pattern in EX/drain_batch.go.
 var rowBufPool = sync.Pool{

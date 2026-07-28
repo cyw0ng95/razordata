@@ -20,15 +20,32 @@ import (
 //   - ExecuteStream: stream results via channel (for large results)
 //   - Reset: return to pre-execution state (for plan cache reuse)
 type PipelineExecutor struct {
-	spec *PipelineSpec
-	pipe *Pipeline
-	mu   sync.Mutex
+	spec  *PipelineSpec
+	pipe  *Pipeline
+	mu    sync.Mutex
+	// REQ002136: per-execution state injected before first Execute.
+	params   []any
+	execCtx  *DT.ExecContext
+	planner  PL.QueryPlanner
+	paramBuf []any
 }
 
 // NewPipelineExecutor creates an executor from a spec.
 func NewPipelineExecutor(spec *PipelineSpec) *PipelineExecutor {
 	return &PipelineExecutor{spec: spec}
 }
+
+// SetParams stores parameter values for propagation into stages
+// on the first Execute/ExecuteStream call. REQ002136.
+func (e *PipelineExecutor) SetParams(args []any) { e.params = args }
+
+// SetExecContext stores the execution context for propagation into
+// stages on the first Execute/ExecuteStream call. REQ002136.
+func (e *PipelineExecutor) SetExecContext(ec *DT.ExecContext) { e.execCtx = ec }
+
+// SetPlanner stores the query planner for propagation into stages
+// on the first Execute/ExecuteStream call. REQ002136.
+func (e *PipelineExecutor) SetPlanner(p PL.QueryPlanner) { e.planner = p }
 
 // Execute drains the pipeline and returns all rows.
 func (e *PipelineExecutor) Execute(ctx context.Context) ([]DT.Row, error) {
@@ -85,6 +102,16 @@ func (e *PipelineExecutor) ensurePipeline(ctx context.Context) (*Pipeline, error
 		e.pipe, err = e.spec.NewRuntime()
 		if err != nil {
 			return nil, err
+		}
+		// REQ002136: propagate per-execution state into stages.
+		if len(e.params) > 0 {
+			e.pipe.PropagateParams(e.params, &e.paramBuf)
+		}
+		if e.planner != nil {
+			e.pipe.PropagatePlanner(e.planner)
+		}
+		if e.execCtx != nil {
+			e.pipe.PropagateExecContext(e.execCtx)
 		}
 	}
 	return e.pipe, nil
