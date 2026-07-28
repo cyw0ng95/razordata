@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/AG"
+	"github.com/cyw0ng95/razordata/internal/SQB/AD"
+	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -106,28 +109,186 @@ func (b *PipelineBuilder) Build(sql string) (*PipelineSpec, error) {
 }
 
 // specializePlan converts a row-based plan tree into a PipelineSpec.
-// For REQ002123, this creates a single-stage PipelineSpec wrapping
-// the current tryVectorizePlan result via LegacyBatchStageSpec.
-// Later REQs (002124-002127) will add concrete StageSpec types.
+// It decomposes the plan tree into concrete StageSpecs where possible,
+// falling back to LegacyBatchStageSpec for unsupported operators.
 func (b *PipelineBuilder) specializePlan(plan *PL.PlanResult, sql, memoKey string) (*PipelineSpec, error) {
-	stageSpec := &LegacyBatchStageSpec{
-		Root:       plan.Root,
-		Planner:    b.planner,
-		Specialize: b.specialize,
-	}
+	stages, edges, rootIdx := decomposePlan(plan.Root, b.planner, b.specialize)
 
 	cols, types := extractOutputSchema(plan.Root)
 
 	return &PipelineSpec{
-		Stages:      []StageSpec{stageSpec},
-		Edges:       nil, // single stage, no edges
-		RootIdx:     0,
+		Stages:      stages,
+		Edges:       edges,
+		RootIdx:     rootIdx,
 		OutputCols:  cols,
 		OutputTypes: types,
 		Cost:        plan.Cost,
 		MemoKey:     memoKey,
 		SQLText:     sql,
 	}, nil
+}
+
+// decomposeState accumulates stages and edges during plan decomposition.
+type decomposeState struct {
+	stages []StageSpec
+	edges  []EdgeSpec
+}
+
+// addStage appends a stage and returns its index.
+func (s *decomposeState) addStage(spec StageSpec) int {
+	idx := len(s.stages)
+	s.stages = append(s.stages, spec)
+	return idx
+}
+
+// addEdge records a parent→child wiring.
+func (s *decomposeState) addEdge(from int, to int, side ChildSide) {
+	s.edges = append(s.edges, EdgeSpec{From: from, To: to, Side: side})
+}
+
+// decomposePlan walks the PL.Operator tree bottom-up and produces
+// StageSpecs + edges. Returns (rootIdx, stages, edges).
+// Operators without a dedicated PX stage are wrapped in LegacyBatchStageSpec.
+func decomposePlan(root DT.Operator, planner PL.QueryPlanner, specialize SpecializeFunc) ([]StageSpec, []EdgeSpec, int) {
+	if root == nil {
+		return nil, nil, 0
+	}
+
+	// Unwrap AdaptiveOp — the inner operator is the actual plan.
+	if aop, ok := root.(*AD.AdaptiveOp); ok {
+		root = aop.Inner
+	}
+
+	state := &decomposeState{}
+	rootIdx := decomposeOp(root, state, planner, specialize)
+	return state.stages, state.edges, rootIdx
+}
+
+// decomposeOp recursively decomposes a single operator into stages.
+// Returns the index of the stage that produces output for this operator.
+func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	switch o := op.(type) {
+	case *OP.SeqScan:
+		return decomposeSeqScan(o, st)
+	case *OP.IndexScan:
+		return decomposeSeqScan(nil, st) // IndexScan → ScanStageSpec wrapping o
+	case *OP.Filter:
+		return decomposeFilter(o, st, planner, specialize)
+	case *OP.Project:
+		return decomposeProject(o, st, planner, specialize)
+	case *OP.Sort:
+		return decomposeSort(o, st, planner, specialize)
+	case *OP.Limit:
+		return decomposeLimit(o, st, planner, specialize)
+	case *OP.Offset:
+		return decomposeOffset(o, st, planner, specialize)
+	case *OP.HashJoin:
+		return decomposeHashJoin(o, st, planner, specialize)
+	case *AG.Aggregate:
+		return decomposeAggregate(o, st, planner, specialize)
+	case *AG.HashAggregate:
+		return decomposeAggregate(nil, st, planner, specialize) // HashAggregate via Aggregate
+	default:
+		return decomposeFallback(op, st, planner, specialize)
+	}
+}
+
+// decomposeSeqScan creates a ScanStageSpec for a SeqScan or IndexScan.
+func decomposeSeqScan(ss *OP.SeqScan, st *decomposeState) int {
+	// Capture the scan operator for the producer closure.
+	var op DT.Operator = ss
+	return st.addStage(&ScanStageSpec{
+		NewProducer: func() UT.BatchProducer {
+			return RowOperatorAsProducer{Op: op}
+		},
+	})
+}
+
+// decomposeFilter creates FilterStageSpec with a child edge.
+func decomposeFilter(f *OP.Filter, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	childIdx := decomposeOp(f.Child(), st, planner, specialize)
+	filterIdx := st.addStage(&FilterStageSpec{Pred: f.Predicate()})
+	st.addEdge(filterIdx, childIdx, SingleChild)
+	return filterIdx
+}
+
+// decomposeProject creates ProjectStageSpec with a child edge.
+func decomposeProject(p *OP.Project, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	childIdx := decomposeOp(p.Child(), st, planner, specialize)
+	projectIdx := st.addStage(&ProjectStageSpec{Exprs: p.Cols()})
+	st.addEdge(projectIdx, childIdx, SingleChild)
+	return projectIdx
+}
+
+// decomposeSort wraps Sort in LegacyBatchStageSpec because PX SortStageSpec
+// requires column indices while PL.Sort uses expressions — converting them
+// requires the child's output schema which is not available at decomposition time.
+func decomposeSort(s *OP.Sort, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	childIdx := decomposeOp(s.Child(), st, planner, specialize)
+	sortIdx := st.addStage(&LegacyBatchStageSpec{
+		Root:       s,
+		Planner:    planner,
+		Specialize: specialize,
+	})
+	st.addEdge(sortIdx, childIdx, SingleChild)
+	return sortIdx
+}
+
+// decomposeLimit creates LimitStageSpec with a child edge.
+func decomposeLimit(l *OP.Limit, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	childIdx := decomposeOp(l.Child(), st, planner, specialize)
+	limitIdx := st.addStage(&LimitStageSpec{Limit: l.LimitValue()})
+	st.addEdge(limitIdx, childIdx, SingleChild)
+	return limitIdx
+}
+
+// decomposeOffset creates OffsetStageSpec with a child edge.
+func decomposeOffset(o *OP.Offset, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	childIdx := decomposeOp(o.Child(), st, planner, specialize)
+	offsetIdx := st.addStage(&OffsetStageSpec{Offset: o.OffsetValue()})
+	st.addEdge(offsetIdx, childIdx, SingleChild)
+	return offsetIdx
+}
+
+// decomposeHashJoin wraps HashJoin in LegacyBatchStageSpec because PX HashJoinStageSpec
+// uses column indices while PL.HashJoin uses key names — converting requires schema.
+func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	leftIdx := decomposeOp(h.LeftChild(), st, planner, specialize)
+	rightIdx := decomposeOp(h.RightChild(), st, planner, specialize)
+	joinIdx := st.addStage(&LegacyBatchStageSpec{
+		Root:       h,
+		Planner:    planner,
+		Specialize: specialize,
+	})
+	st.addEdge(joinIdx, leftIdx, LeftChild)
+	st.addEdge(joinIdx, rightIdx, RightChild)
+	return joinIdx
+}
+
+// decomposeAggregate creates AggregateStageSpec with a child edge.
+func decomposeAggregate(agg *AG.Aggregate, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	var childIdx int
+	if agg != nil {
+		childIdx = decomposeOp(agg.Child(), st, planner, specialize)
+	} else {
+		childIdx = st.addStage(&LegacyBatchStageSpec{
+			Root:       nil,
+			Planner:    planner,
+			Specialize: specialize,
+		})
+	}
+	aggIdx := st.addStage(&AggregateStageSpec{})
+	st.addEdge(aggIdx, childIdx, SingleChild)
+	return aggIdx
+}
+
+// decomposeFallback wraps the operator in a LegacyBatchStageSpec.
+func decomposeFallback(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	return st.addStage(&LegacyBatchStageSpec{
+		Root:       op,
+		Planner:    planner,
+		Specialize: specialize,
+	})
 }
 
 // encodeMemoKey produces a parameterized cache key from a parsed
@@ -157,12 +318,87 @@ func selectTables(s *PS.Select) string {
 }
 
 // extractOutputSchema returns the output column names and types
-// from a row-based operator tree. For now, returns empty slices
-// since schema extraction requires walking the operator tree.
-// Full schema extraction is implemented in REQ002124 (specialize).
+// from a row-based operator tree. Walks the root operator's schema
+// to determine the result columns for the pipeline output.
 func extractOutputSchema(root DT.Operator) ([]string, []LX.TokenType) {
-	// TODO(REQ002124): full schema extraction from plan tree
-	return nil, nil
+	if root == nil {
+		return nil, nil
+	}
+
+	// Unwrap AdaptiveOp.
+	if aop, ok := root.(*AD.AdaptiveOp); ok {
+		root = aop.Inner
+	}
+
+	switch o := root.(type) {
+	case *OP.SeqScan:
+		schema := o.Schema()
+		if schema != nil && len(schema.Cols) > 0 {
+			names := make([]string, len(schema.Cols))
+			types := make([]LX.TokenType, len(schema.Cols))
+			copy(names, schema.Cols)
+			if len(schema.ColTypes) > 0 {
+				copy(types, schema.ColTypes)
+			}
+			return names, types
+		}
+		return nil, nil
+	case *OP.Filter:
+		return extractOutputSchema(o.Child())
+	case *OP.Project:
+		exprs := o.Cols()
+		names := make([]string, len(exprs))
+		types := make([]LX.TokenType, len(exprs))
+		for i, e := range exprs {
+			names[i] = exprName(e)
+			types[i] = LX.T_TEXT // default; actual type resolved at runtime
+		}
+		return names, types
+	case *OP.Sort:
+		return extractOutputSchema(o.Child())
+	case *OP.Limit:
+		return extractOutputSchema(o.Child())
+	case *OP.Offset:
+		return extractOutputSchema(o.Child())
+	case *AG.Aggregate:
+		return extractAggOutput(o)
+	case *AG.HashAggregate:
+		return extractAggOutput(nil)
+	default:
+		return nil, nil
+	}
+}
+
+// extractAggOutput extracts output columns from an aggregate operator.
+func extractAggOutput(agg *AG.Aggregate) ([]string, []LX.TokenType) {
+	if agg == nil {
+		return nil, nil
+	}
+	groupCols := agg.GroupCols()
+	names := make([]string, 0, len(groupCols)+4) // +4 for common agg funcs
+	types := make([]LX.TokenType, 0, len(groupCols)+4)
+	for _, gc := range groupCols {
+		names = append(names, exprName(gc))
+		types = append(types, LX.T_INT_KW)
+	}
+	return names, types
+}
+
+// exprName returns a display name for a projection expression.
+func exprName(e PS.Expr) string {
+	if e == nil {
+		return ""
+	}
+	switch expr := e.(type) {
+	case *PS.Ident:
+		return expr.Name
+	case *PS.AliasedExpr:
+		return expr.Alias
+	case *PS.StarExpr:
+		return "*"
+	default:
+		return "expr"
+	}
 }
 
 // --- LegacyBatchStageSpec (bridge) ---
