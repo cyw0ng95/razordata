@@ -593,6 +593,20 @@ func (r *Runner) runStraightThrough(ctx context.Context, records []Record) Stats
 			if err := r.driver.Exec(ctx, rec.SQL); err == nil {
 				passed++
 			} else {
+				// REQ002063: fast-fail on timeout in straight-through mode.
+				if isContextDeadlineExceeded(err) {
+					failed++
+					r.stats.FailureContext = append(r.stats.FailureContext, FailureContext{
+						Line: rec.Line, Kind: rec.Kind, SQL: rec.SQL,
+						Diag: fmt.Sprintf("exec error: %v", err),
+					})
+					r.haltOnTimeout = true
+					remaining := len(records) - i - 1
+					if remaining > 0 {
+						skipped += remaining
+					}
+					break
+				}
 				switch r.classifier.Classify(err) {
 				case VerdictSkipped:
 					skipped++
@@ -624,6 +638,20 @@ func (r *Runner) runStraightThrough(ctx context.Context, records []Record) Stats
 				rs, err = r.driver.Query(ctx, rec.SQL)
 			}
 			if err != nil {
+				// REQ002063: fast-fail on timeout in straight-through mode.
+				if isContextDeadlineExceeded(err) {
+					failed++
+					r.stats.FailureContext = append(r.stats.FailureContext, FailureContext{
+						Line: rec.Line, Kind: rec.Kind, SQL: rec.SQL,
+						Diag: fmt.Sprintf("query error: %v", err),
+					})
+					r.haltOnTimeout = true
+					remaining := len(records) - i - 1
+					if remaining > 0 {
+						skipped += remaining
+					}
+					break
+				}
 				switch r.classifier.Classify(err) {
 				case VerdictSkipped:
 					skipped++

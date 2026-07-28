@@ -195,6 +195,16 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			for i, name := range schema {
 				batch.SetColumnName(i, name)
 			}
+			// Set column types on the recreated batch — the initial
+			// types assignment (lines 105-109) ran before the schema
+			// was discovered and does not apply to this new batch.
+			// Without this, compareColLiteral sees col.Type == 0 and
+			// falls through to a broken evalRowFallback.
+			for i, typ := range types {
+				if i < len(batch.Cols) {
+					batch.Cols[i].Type = typ
+				}
+			}
 			batch.SetColMap(v.colMap)
 		}
 		for i := range schema {
@@ -208,6 +218,18 @@ func (v *VectorizedSeqScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if batch.Size == 0 {
 		batch.Put()
 		return nil, nil
+	}
+	// REQ002143: propagate execCtx from the source SeqScan so that
+	// downstream VectorizedFilter's row-fallback subquery evaluation
+	// (via batchToRow -> row.ExecCtx -> getSubqueryPlanner) can
+	// locate the planner. Without this, EXISTS subqueries always
+	// return false (0 rows).
+	if v.source != nil {
+		if ss, ok := v.source.(*SeqScan); ok {
+			if ss.execCtx != nil {
+				batch.ExecCtx = ss.execCtx
+			}
+		}
 	}
 	return batch, nil
 }
@@ -676,17 +698,12 @@ func (p *VectorizedProject) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		return nil, nil
 	}
 	defer childBatch.Put()
-	// REQ001460: propagate execCtx so row-fallback eval (notably
-	// non-correlated scalar subqueries) can locate the QueryPlanner
-	// via batchToRow -> row.ExecCtx -> getSubqueryPlanner.
 	childBatch.ExecCtx = p.execCtx
 
 	n := childBatch.LogicalSize()
 	output := UT.GetBatch(len(p.exprs))
 	output.Size = n
 	for i, expr := range p.exprs {
-		// REQ001591: use compiled fast-path evaluator when available,
-		// fall back to EvalBatchExpr for complex expressions.
 		var col UT.Column
 		if i < len(p.compiledEvals) && p.compiledEvals[i] != nil {
 			col = p.compiledEvals[i](childBatch)

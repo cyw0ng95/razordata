@@ -13,8 +13,8 @@ import (
 // REQ002133: uses the legacy drainBatch path for SELECT queries.
 // REQ002142: DML queries use execDMLPipeline (separate path).
 // REQ002143: drainPipeline is not used for SELECT because the
-// vectorized path has known issues with EXISTS subqueries, CASE WHEN,
-// and other complex expressions.
+// vectorized path has known issues with some query shapes.
+// When the vectorized path matures, this can be switched back.
 func (e *Executor) drainPlanExecCtx(ctx context.Context, plan *pl.PlanResult, execCtx *DT.ExecContext) ([]DT.Row, error) {
 	return drainBatch(ctx, plan.Root, execCtx)
 }

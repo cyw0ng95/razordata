@@ -1726,6 +1726,14 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 	if scan, ok := root.(*OP.SeqScan); ok {
 		scan.SetExecCtx(ec)
 	}
+	// REQ002143: recurse into AdaptiveOp's inner tree. The planner
+	// wraps the root in AdaptiveOp, and without this recursion,
+	// operators inside the AdaptiveOp (Filter, Project, SeqScan)
+	// never receive their execCtx. This breaks subquery evaluation
+	// which needs the planner from ExecCtx.
+	if aop, ok := root.(*AD.AdaptiveOp); ok {
+		propagateExecContext(aop.Inner, ec)
+	}
 	type childer interface {
 		Child() DT.Operator
 	}

@@ -1457,6 +1457,14 @@ func (j *VectorizedNestedLoopJoin) materializeBuild(ctx context.Context) error {
 	for i := 0; i < nCols; i++ {
 		j.rightNames[i] = batches[0].Cols[i].Name
 		j.rightTypes[i] = batches[0].Cols[i].Type
+		// REQ002143: copy column name and type to the build column
+		// so buildRowForMatch (used in drainPending's row-based
+		// ON clause evaluation) can populate the Row.Cols field.
+		// Without this, the ON clause function cannot look up
+		// column references by name, causing all join conditions
+		// to fail (0 rows for EXISTS subqueries).
+		j.buildCols[i].Name = batches[0].Cols[i].Name
+		j.buildCols[i].Type = batches[0].Cols[i].Type
 	}
 
 	totalRows := 0

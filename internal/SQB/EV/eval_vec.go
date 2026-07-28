@@ -1960,7 +1960,7 @@ func evalCaseBatchExpr(caseExpr *PS.CaseExpr, batch *UT.Batch, params []any) UT.
 			if batch.Sel != nil && i < len(batch.Sel) {
 				phys = int(batch.Sel[i])
 			}
-			if phys < len(condCol.Data.Ints) && condCol.Data.Ints[phys] != 0 {
+			if phys < len(condCol.Data.Bools) && condCol.Data.Bools[phys] {
 				matchedWhen[i] = wi
 			}
 		}
