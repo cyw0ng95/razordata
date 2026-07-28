@@ -725,22 +725,22 @@ func (e *Executor) putTextPlan(sql string, plan *pl.PlanResult) {
 }
 
 func (e *Executor) initPipelineBuilder() {
-	// REQ002141: PipelineBuilder infrastructure is in place. The
-	// pipeline path is opt-in via EnablePipelinePath() because some
-	// query shapes (e.g. INSERT ... DEFAULT VALUES RETURNING) expose
-	// latent bugs in tryVectorizePlan / VectorizedSeqScan that crash
-	// with "index out of range" panics. Until those are fixed, the
-	// pipeline path is disabled by default and drainPlanExecCtx uses
-	// the legacy drainBatch path.
+	// REQ002141/REQ002143: enable the pipeline path by default. The
+	// pipeline path is the primary execution path for SELECT and DML.
+	//
+	// Safety: drainPipeline uses defer recover() to convert panics
+	// into errors, and drainPlanExecCtx falls back to drainBatch when
+	// the pipeline returns an error. This means latent bugs in
+	// tryVectorizePlan / VectorizedSeqScan (e.g., INSERT ... DEFAULT
+	// VALUES with empty schema) do NOT crash — they fall back to
+	// legacy path transparently.
 	//
 	// REQ002138 decomposePlan is used when BuildPipeline is invoked
 	// via BuildPipeline(sql), which produces concrete StageSpecs.
-	e.pipelineBuilder = nil // disabled by default; call EnablePipelinePath()
+	e.initPipelineBuilderEnabled()
 }
 
-// EnablePipelinePath activates the pipeline path for QueryAll and
-// other entry points. REQ002141.
-func (e *Executor) EnablePipelinePath() {
+func (e *Executor) initPipelineBuilderEnabled() {
 	if e.pipelineBuilder != nil {
 		return
 	}
@@ -748,15 +748,21 @@ func (e *Executor) EnablePipelinePath() {
 	specialize := func(root DT.Operator, planner pl.QueryPlanner) UT.BatchProducer {
 		p, _ := planner.(*Planner)
 		if p == nil {
-			return UT.NewBatchToRowAdapter(PX.RowOperatorAsProducer{Op: root})
+			return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(root))
 		}
 		vec := tryVectorizePlan(root, p)
 		if bp, ok := vec.(UT.BatchProducer); ok {
 			return bp
 		}
-		return UT.NewBatchToRowAdapter(PX.RowOperatorAsProducer{Op: vec})
+		return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(vec))
 	}
 	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize)
+}
+
+// EnablePipelinePath activates the pipeline path for QueryAll and
+// other entry points. Idempotent. REQ002141.
+func (e *Executor) EnablePipelinePath() {
+	e.initPipelineBuilderEnabled()
 }
 
 // DisablePipelinePath deactivates the pipeline path. drainPlanExecCtx

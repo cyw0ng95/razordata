@@ -316,9 +316,15 @@ func TestCompareRows_EmptyVsNonEmpty(t *testing.T) {
 func TestEnableDisablePipelinePath(t *testing.T) {
 	e := NewExecutor()
 
-	// Default: pipelineBuilder is nil.
+	// Default: pipelineBuilder is non-nil (enabled by default).
+	if e.pipelineBuilder == nil {
+		t.Fatalf("expected pipelineBuilder non-nil by default")
+	}
+
+	// Disable sets pipelineBuilder to nil.
+	e.DisablePipelinePath()
 	if e.pipelineBuilder != nil {
-		t.Fatalf("expected pipelineBuilder nil by default")
+		t.Fatalf("expected pipelineBuilder nil after Disable")
 	}
 
 	// Enable sets pipelineBuilder non-nil.
@@ -332,12 +338,6 @@ func TestEnableDisablePipelinePath(t *testing.T) {
 	if e.pipelineBuilder == nil {
 		t.Fatalf("expected pipelineBuilder still non-nil")
 	}
-
-	// Disable sets pipelineBuilder to nil.
-	e.DisablePipelinePath()
-	if e.pipelineBuilder != nil {
-		t.Fatalf("expected pipelineBuilder nil after Disable")
-	}
 }
 
 func TestBuildPipeline_NilByDefault(t *testing.T) {
@@ -346,8 +346,10 @@ func TestBuildPipeline_NilByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPipeline: %v", err)
 	}
-	if spec != nil {
-		t.Fatalf("expected nil spec when pipeline disabled, got %v", spec)
+	// Pipeline is now enabled by default. BuildPipeline should return
+	// a non-nil spec.
+	if spec == nil {
+		t.Fatalf("expected non-nil spec when pipeline is enabled")
 	}
 }
 

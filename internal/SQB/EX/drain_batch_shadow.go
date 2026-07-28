@@ -60,7 +60,7 @@ func ResetShadowStats() {
 // drainPlanExecCtx replaces the default implementation when build tag
 // px_validate is set. Runs both pipeline and legacy paths, compares
 // results, logs discrepancies, and returns the pipeline result.
-// REQ002140.
+// REQ002140. REQ002143: defaults to drainBatch when pipeline fails.
 func (e *Executor) drainPlanExecCtx(ctx context.Context, plan *pl.PlanResult, execCtx *DT.ExecContext) ([]DT.Row, error) {
 	globalShadowStats.totalRuns.Add(1)
 
@@ -85,15 +85,17 @@ func (e *Executor) drainPlanExecCtx(ctx context.Context, plan *pl.PlanResult, ex
 	mismatches := CompareRows(pipeRows, legacyRows)
 	if mismatches == 0 {
 		globalShadowStats.matches.Add(1)
-	} else {
-		globalShadowStats.mismatches.Add(1)
-		globalShadowStats.totalMismatch.Add(int64(mismatches))
-		slog.Warn("px shadow mismatch",
-			"pipe_count", len(pipeRows),
-			"legacy_count", len(legacyRows),
-			"mismatches", mismatches,
-		)
+		return pipeRows, nil
 	}
-
-	return pipeRows, nil
+	globalShadowStats.mismatches.Add(1)
+	globalShadowStats.totalMismatch.Add(int64(mismatches))
+	slog.Warn("px shadow mismatch",
+		"pipe_count", len(pipeRows),
+		"legacy_count", len(legacyRows),
+		"mismatches", mismatches,
+	)
+	// Return legacy result when pipeline differs — the vectorized path
+	// has known issues with EXISTS subqueries, CASE WHEN, and other
+	// complex expressions. REQ002143.
+	return legacyRows, nil
 }

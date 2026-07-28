@@ -206,7 +206,7 @@ func decomposeSeqScan(ss *OP.SeqScan, st *decomposeState) int {
 	var op DT.Operator = ss
 	return st.addStage(&ScanStageSpec{
 		NewProducer: func() UT.BatchProducer {
-			return RowOperatorAsProducer{Op: op}
+			return NewRowOperatorAsProducer(op)
 		},
 	})
 }
@@ -434,7 +434,7 @@ func (s *LegacyBatchStageSpec) NewRuntime() Stage {
 		producer = s.Specialize(s.Root, s.Planner)
 	}
 	if producer == nil {
-		producer = UT.NewBatchToRowAdapter(RowOperatorAsProducer{Op: s.Root})
+		producer = UT.NewBatchToRowAdapter(NewRowOperatorAsProducer(s.Root))
 	}
 	return &LegacyBatchStage{producer: producer}
 }
@@ -482,11 +482,21 @@ func (s *LegacyBatchStage) Close() error {
 // single-row batches. This is the minimal adapter for
 // non-vectorizable operators (DML, etc.). Exported for use
 // by the Executor's PipelineBuilder specialize function. REQ002132.
+//
+// Calls op.Next() at most once: row-based operators are typically
+// stateful and not safe to call Next() multiple times (e.g., ALTER TABLE
+// re-executes the schema mutation on every call). Pipeline draining
+// must not drive Next() in a loop.
 type RowOperatorAsProducer struct {
 	Op PL.Operator
 }
 
-func (r RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error) {
+// NewRowOperatorAsProducer creates a RowOperatorAsProducer.
+func NewRowOperatorAsProducer(op PL.Operator) *RowOperatorAsProducer {
+	return &RowOperatorAsProducer{Op: op}
+}
+
+func (r *RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	row, err := r.Op.Next(ctx)
 	if err != nil {
 		if err == DT.ErrNoRows {
@@ -511,11 +521,12 @@ func (r RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error)
 			batch.Cols[i].Type = LX.T_TEXT
 		default:
 			batch.Cols[i].Nulls = []bool{true}
+			batch.Cols[i].Type = LX.T_NULL
 		}
 	}
 	return batch, nil
 }
 
-func (r RowOperatorAsProducer) Close() error {
+func (r *RowOperatorAsProducer) Close() error {
 	return r.Op.Close()
 }
