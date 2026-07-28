@@ -725,12 +725,44 @@ func (e *Executor) putTextPlan(sql string, plan *pl.PlanResult) {
 }
 
 func (e *Executor) initPipelineBuilder() {
-	// REQ002132: PipelineBuilder infrastructure is in place but the
-	// pipeline path is disabled for now. The QueryAll function checks
-	// e.pipelineBuilder != nil before using the pipeline path, so
-	// setting it to nil falls through to the legacy path.
-	// Enable when the PipelineBuilder is fully tested and ready.
-	e.pipelineBuilder = nil // disabled
+	// REQ002141: PipelineBuilder infrastructure is in place. The
+	// pipeline path is opt-in via EnablePipelinePath() because some
+	// query shapes (e.g. INSERT ... DEFAULT VALUES RETURNING) expose
+	// latent bugs in tryVectorizePlan / VectorizedSeqScan that crash
+	// with "index out of range" panics. Until those are fixed, the
+	// pipeline path is disabled by default and drainPlanExecCtx uses
+	// the legacy drainBatch path.
+	//
+	// REQ002138 decomposePlan is used when BuildPipeline is invoked
+	// via BuildPipeline(sql), which produces concrete StageSpecs.
+	e.pipelineBuilder = nil // disabled by default; call EnablePipelinePath()
+}
+
+// EnablePipelinePath activates the pipeline path for QueryAll and
+// other entry points. REQ002141.
+func (e *Executor) EnablePipelinePath() {
+	if e.pipelineBuilder != nil {
+		return
+	}
+	cache := PX.NewPipelineCache(128)
+	specialize := func(root DT.Operator, planner pl.QueryPlanner) UT.BatchProducer {
+		p, _ := planner.(*Planner)
+		if p == nil {
+			return UT.NewBatchToRowAdapter(PX.RowOperatorAsProducer{Op: root})
+		}
+		vec := tryVectorizePlan(root, p)
+		if bp, ok := vec.(UT.BatchProducer); ok {
+			return bp
+		}
+		return UT.NewBatchToRowAdapter(PX.RowOperatorAsProducer{Op: vec})
+	}
+	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize)
+}
+
+// DisablePipelinePath deactivates the pipeline path. drainPlanExecCtx
+// falls back to drainBatch. REQ002141.
+func (e *Executor) DisablePipelinePath() {
+	e.pipelineBuilder = nil
 }
 
 // BuildPipeline compiles SQL into a PipelineSpec using the unified

@@ -3,6 +3,7 @@ package EX
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -30,11 +31,28 @@ func (e *Executor) drainPlan(ctx context.Context, plan *pl.PlanResult) ([]DT.Row
 // and drain_batch_shadow.go (build tag px_validate mode). REQ002140.
 
 // drainPipeline drains a plan through the PipelineExecutor.
-// REQ002133.
-func (e *Executor) drainPipeline(ctx context.Context, plan *pl.PlanResult) ([]DT.Row, error) {
+// REQ002133: builds a PipelineSpec via decomposePlan (REQ002138) which
+// produces concrete StageSpecs. For unsupported operators, the spec
+// wraps the plan tree in LegacyBatchStageSpec, which invokes the
+// SpecializeFunc at runtime to call tryVectorizePlan and produce a
+// batch producer.
+//
+// REQ002141: drainPipeline is now invoked from drainPlanExecCtx as the
+// primary path. If pipeline compilation or execution fails, the caller
+// falls back to drainBatch. Panics in the pipeline path are also
+// recovered and converted to errors so the caller can fall back.
+func (e *Executor) drainPipeline(ctx context.Context, plan *pl.PlanResult) (rows []DT.Row, err error) {
 	if e.pipelineBuilder == nil {
 		return nil, errors.New("ex: pipeline not available")
 	}
+	// REQ002141: defer recover to convert pipeline panics into errors
+	// so drainPlanExecCtx can fall back to drainBatch cleanly.
+	defer func() {
+		if r := recover(); r != nil {
+			rows = nil
+			err = fmt.Errorf("ex: pipeline panic: %v", r)
+		}
+	}()
 	// Vectorize the plan tree. tryVectorizePlan returns a DT.Operator
 	// that may be a BatchProducer (e.g., BatchToRowAdapter wrapping
 	// VectorizedSeqScan). Use it directly as the Specialize result to

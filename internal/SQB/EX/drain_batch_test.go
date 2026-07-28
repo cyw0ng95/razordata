@@ -310,3 +310,57 @@ func TestCompareRows_EmptyVsNonEmpty(t *testing.T) {
 		t.Fatalf("expected mismatch for length diff, got 0")
 	}
 }
+
+// --- Pipeline opt-in tests (REQ002141) ---
+
+func TestEnableDisablePipelinePath(t *testing.T) {
+	e := NewExecutor()
+
+	// Default: pipelineBuilder is nil.
+	if e.pipelineBuilder != nil {
+		t.Fatalf("expected pipelineBuilder nil by default")
+	}
+
+	// Enable sets pipelineBuilder non-nil.
+	e.EnablePipelinePath()
+	if e.pipelineBuilder == nil {
+		t.Fatalf("expected pipelineBuilder non-nil after Enable")
+	}
+
+	// Calling Enable again is idempotent.
+	e.EnablePipelinePath()
+	if e.pipelineBuilder == nil {
+		t.Fatalf("expected pipelineBuilder still non-nil")
+	}
+
+	// Disable sets pipelineBuilder to nil.
+	e.DisablePipelinePath()
+	if e.pipelineBuilder != nil {
+		t.Fatalf("expected pipelineBuilder nil after Disable")
+	}
+}
+
+func TestBuildPipeline_NilByDefault(t *testing.T) {
+	e := NewExecutor()
+	spec, err := e.BuildPipeline("SELECT 1")
+	if err != nil {
+		t.Fatalf("BuildPipeline: %v", err)
+	}
+	if spec != nil {
+		t.Fatalf("expected nil spec when pipeline disabled, got %v", spec)
+	}
+}
+
+func TestBuildPipeline_AfterEnable(t *testing.T) {
+	e := NewExecutor()
+	e.EnablePipelinePath()
+	defer e.DisablePipelinePath()
+
+	spec, err := e.BuildPipeline("SELECT 1")
+	if err != nil {
+		t.Fatalf("BuildPipeline: %v", err)
+	}
+	if spec == nil {
+		t.Fatalf("expected non-nil spec after Enable")
+	}
+}
