@@ -713,17 +713,6 @@ func (e *Executor) initPipelineBuilder() {
 	e.pipelineBuilder = nil // disabled
 }
 
-// specializeForPipeline adapts tryVectorizePlan to the SpecializeFunc
-// signature. It vectorizes the plan tree and wraps the result as a
-// BatchProducer. REQ002132.
-func (e *Executor) specializeForPipeline(root DT.Operator, planner pl.QueryPlanner) UT.BatchProducer {
-	vec := tryVectorizePlan(root, e.planner)
-	if bp, ok := vec.(UT.BatchProducer); ok {
-		return bp
-	}
-	return UT.NewBatchToRowAdapter(PX.RowOperatorAsProducer{Op: vec})
-}
-
 // BuildPipeline compiles SQL into a PipelineSpec using the unified
 // compile flow. Returns nil if the pipeline path is not available
 // (e.g., the pipeline builder was not initialized). REQ002132.
