@@ -10,6 +10,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -188,6 +189,12 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 		return decomposeAggregate(o, st, planner, specialize)
 	case *AG.HashAggregate:
 		return decomposeAggregate(nil, st, planner, specialize) // HashAggregate via Aggregate
+	case *WT.Insert:
+		return st.addStage(&InsertStageSpec{Insert: o})
+	case *WT.Update:
+		return st.addStage(&UpdateStageSpec{Update: o})
+	case *WT.Delete:
+		return st.addStage(&DeleteStageSpec{Delete: o})
 	default:
 		return decomposeFallback(op, st, planner, specialize)
 	}

@@ -78,6 +78,36 @@ func (e *Executor) drainPipeline(ctx context.Context, plan *pl.PlanResult) (rows
 	return executor.Execute(ctx)
 }
 
+// execDMLPipeline runs a DML operator (WT.Insert/Update/Delete) through
+// the pipeline. Triggers the operation by calling Execute, then captures
+// RowsAffected BEFORE closing the pipeline (Close resets i.rows to 0).
+// Returns the Result with RowsAffected set. REQ002142.
+func (e *Executor) execDMLPipeline(ctx context.Context, op DT.Operator) (Result, error) {
+	if e.pipelineBuilder == nil {
+		return Result{}, errors.New("ex: pipeline not available")
+	}
+	// Build a PipelineSpec wrapping the DML operator.
+	spec, err := PX.BuildDMLPipelineSpec(op)
+	if err != nil {
+		return Result{}, err
+	}
+	executor := PX.NewPipelineExecutor(spec)
+	_, err = executor.Execute(ctx)
+	// Capture RowsAffected BEFORE closing (WT.Insert.Close resets rows).
+	type affector interface {
+		RowsAffected() int64
+	}
+	var count int64
+	if a, ok := op.(affector); ok {
+		count = a.RowsAffected()
+	}
+	executor.Close()
+	if err != nil {
+		return Result{RowsAffected: count}, err
+	}
+	return Result{RowsAffected: count}, nil
+}
+
 // drainBatch drains an operator into []DT.Row. If the root implements
 // BatchProducer, it drains via NextBatch() + ToRows() — yielding all
 // rows of each batch at once. Otherwise it falls back to Next() row-by-row.

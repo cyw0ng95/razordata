@@ -1065,27 +1065,24 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	if e.stmtCache.entries != nil {
 		if cached := e.getCachedStmt(sql); cached != nil {
 			stmt := cached
-			// Check if this is a DML with RETURNING clause
-			if hasReturning(stmt) {
-				op, err := e.buildWriterOp(stmt)
-				if err != nil {
-					return Result{}, err
-				}
-				propagateParams(op, args, &e.paramBuf)
-				defer op.Close()
-				var count int64
-				for {
-					_, err := op.Next(ctx)
-					if err != nil {
-						if err == DT.ErrNoRows {
-							break
-						}
-						return Result{}, err
-					}
-					count++
-				}
-				return Result{RowsAffected: count}, nil
-			}
+// Check if this is a DML with RETURNING clause
+	if hasReturning(stmt) {
+		op, err := e.buildWriterOp(stmt)
+		if err != nil {
+			return Result{}, err
+		}
+		propagateParams(op, args, &e.paramBuf)
+		propagatePlanner(op, e.planner)
+		execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
+		execCtx.RowArena = e.ensureArena()
+		propagateExecContext(op, execCtx)
+		defer op.Close()
+		count, err := e.execReturning(ctx, op)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{RowsAffected: count}, nil
+	}
 
 			op, err := e.buildWriterOp(stmt)
 			if err != nil {
@@ -1131,17 +1128,14 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 			return Result{}, err
 		}
 		propagateParams(op, args, &e.paramBuf)
+		propagatePlanner(op, e.planner)
+		execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
+		execCtx.RowArena = e.ensureArena()
+		propagateExecContext(op, execCtx)
 		defer op.Close()
-		var count int64
-		for {
-			_, err := op.Next(ctx)
-			if err != nil {
-				if err == DT.ErrNoRows {
-					break
-				}
-				return Result{}, err
-			}
-			count++
+		count, err := e.execReturning(ctx, op)
+		if err != nil {
+			return Result{}, err
 		}
 		return Result{RowsAffected: count}, nil
 	}
@@ -1159,6 +1153,23 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(op, execCtx)
 
+	// REQ002142: when the pipeline path is enabled, route DML through
+	// the PipelineExecutor. execDMLPipeline captures RowsAffected
+	// before closing the pipeline (Close resets state).
+	if e.pipelineBuilder != nil {
+		res, err := e.execDMLPipeline(ctx, op)
+		if err != nil {
+			return Result{}, err
+		}
+		e.lastChanges = execCtx.LastChanges
+		e.totalChanges = execCtx.TotalChanges
+		updateTableRowCount(op, e.planner)
+		if isDDLStmt(stmt) {
+			e.clearTextPlanCache()
+		}
+		return res, nil
+	}
+
 	if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
 		return Result{}, err
 	}
@@ -1173,6 +1184,38 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	}
 	return res, err
 }
+
+// execReturning executes a DML operator with RETURNING clause and returns
+// the number of rows produced. Uses the pipeline path when enabled, falls
+// back to legacy Next() loop otherwise. REQ002142.
+func (e *Executor) execReturning(ctx context.Context, op DT.Operator) (int64, error) {
+	if e.pipelineBuilder != nil {
+		spec, err := PX.BuildDMLPipelineSpec(op)
+		if err == nil {
+			executor := PX.NewPipelineExecutor(spec)
+			rows, execErr := executor.Execute(ctx)
+			executor.Close()
+			if execErr != nil {
+				return 0, execErr
+			}
+			return int64(len(rows)), nil
+		}
+		// Fall through to legacy on pipeline build error.
+	}
+	var count int64
+	for {
+		_, err := op.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				break
+			}
+			return count, err
+		}
+		count++
+	}
+	return count, nil
+}
+
 func hasReturning(stmt PS.Stmt) bool {
 	switch s := stmt.(type) {
 	case *PS.Insert:
