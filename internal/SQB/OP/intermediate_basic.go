@@ -1223,13 +1223,14 @@ func (p *Project) Close() error {
 		projectFnArgBufPool.Put(&fnArgBuf)
 	}
 	p.fnArgBuf = nil
-	// compiledExprs: keep the old make+copy pattern because the
-	// compileProjectExprs function reslices the pooled slice without
-	// clearing stale entries, and a reused slice may carry dangling
-	// function pointers that cause subtle test failures. REQ002018.
-	var compiledExprs []func(*Row) (Value, error)
-	if p.compiledExprs != nil && len(p.compiledExprs) > 0 {
-		compiledExprs = make([]func(*Row) (Value, error), 0, cap(p.compiledExprs))
+	// REQ002018: zero stale function pointers to prevent GC retention
+	// of captured variables, then pool the backing array with len=0.
+	// Previous make+copy pattern allocated a fresh slice per Close.
+	if p.compiledExprs != nil && cap(p.compiledExprs) > 0 {
+		for i := range p.compiledExprs {
+			p.compiledExprs[i] = nil
+		}
+		compiledExprs := p.compiledExprs[:0]
 		projectCompiledExprsPool.Put(&compiledExprs)
 	}
 	p.compiledExprs = nil
