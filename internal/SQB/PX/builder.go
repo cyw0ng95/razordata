@@ -524,9 +524,23 @@ func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlann
 	return joinIdx
 }
 
+// aggPlan is the common interface for both AG.Aggregate and AG.HashAggregate.
+// REQ002143: HashAggregate is a legacy subset of Aggregate; both share the
+// same GroupCols/Aggs signatures and can be handled by the same native
+// AggregateStageSpec.
+type aggPlan interface {
+	DT.Operator
+	Child() DT.Operator
+	GroupCols() []PS.Expr
+	Aggs() []PS.Expr
+}
+
 // decomposeAggregate native AggregateStageSpec. Resolves group column
 // groupCols) and extracts aggregate func specs (col indices from agg
 // expressions. REQ002124.
+//
+// Accepts both AG.Aggregate and AG.HashAggregate via the aggPlan interface.
+// REQ002143: HashAggregate is now routed through this same function.
 //
 // When all group columns and aggregate arguments resolve to child output
 // indices, builds native AggregateStageSpec with the UnifiedAccumulatorSpec
@@ -537,28 +551,9 @@ func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlann
 // ALWAYS populates the output schema (GroupCols + Aggs names) so the
 // pipeline carries OutputCols metadata — this is essential for the
 // BuildPipeline fast-path gate (len(OutputCols) > 0) to trip.
-func decomposeAggregate(agg *AG.Aggregate, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	var childIdx int
-	var childOut outputSchema
-	if agg != nil {
-		childIdx = decomposeOp(agg.Child(), st, planner, specialize)
-		childOut = st.childOutput(childIdx)
-	} else {
-		// nil agg shouldn't happen post-refactor (caller uses
-		// decomposeHashAggregate instead). Defensive: empty stage.
-		childIdx = st.addStage(&LegacyBatchStageSpec{
-			Root:       nil,
-			Planner:    planner,
-			Specialize: specialize,
-		}, outputSchema{})
-	}
-
-	// If agg = HashAggregate fallback to legacy via empty spec.
-	if agg == nil {
-		aggIdx := st.addStage(&AggregateStageSpec{}, outputSchema{})
-		st.addEdge(aggIdx, childIdx, SingleChild)
-		return aggIdx
-	}
+func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	childIdx := decomposeOp(agg.Child(), st, planner, specialize)
+	childOut := st.childOutput(childIdx)
 
 	groupExprs := agg.GroupCols()
 	aggExprs := agg.Aggs()
@@ -680,40 +675,11 @@ func decomposeAggregate(agg *AG.Aggregate, st *decomposeState, planner PL.QueryP
 	return aggIdx
 }
 
-// decomposeHashAggregate mirrors decomposeAggregate but for HashAggregate.
-// Output schema derivation (GroupCols + Aggs) is identical; the native
-// HashJoinStageSpec isn't implemented yet (REQ002143) so it always falls
-// through to LegacyBatchStageSpec with a populated output schema.
+// decomposeHashAggregate routes HashAggregate through decomposeAggregate.
+// REQ002143: HashAggregate shares the same GroupCols/Aggs interface as
+// Aggregate, so the native AggregateStageSpec handles it identically.
 func decomposeHashAggregate(agg *AG.HashAggregate, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	childIdx := decomposeOp(agg.Child(), st, planner, specialize)
-
-	groupExprs := agg.GroupCols()
-	aggExprs := agg.Aggs()
-
-	names := make([]string, 0, len(groupExprs)+len(aggExprs))
-	types := make([]LX.TokenType, 0, len(groupExprs)+len(aggExprs))
-	for _, g := range groupExprs {
-		names = append(names, exprName(g))
-		types = append(types, LX.T_INT_KW)
-	}
-	for _, ae := range aggExprs {
-		names = append(names, exprName(ae))
-		types = append(types, LX.T_TEXT)
-	}
-	out := outputSchema{names: names, types: types}
-
-	// Native HashAggregateStageSpec is REQ002143 scope (decomposePlan
-	// native stages). For now fall back to LegacyBatchStageSpec so
-	// the operator tree still runs correctly — but the output schema
-	// is populated, so PipelineSpec.OutputCols is non-empty →
-	// BuildPipeline fast path stays active.
-	aggIdx := st.addStage(&LegacyBatchStageSpec{
-		Root:       agg,
-		Planner:    planner,
-		Specialize: specialize,
-	}, out)
-	st.addEdge(aggIdx, childIdx, SingleChild)
-	return aggIdx
+	return decomposeAggregate(agg, st, planner, specialize)
 }
 
 // decomposeDistinct wraps a Distinct operator in LegacyBatchStageSpec for
@@ -721,20 +687,32 @@ func decomposeHashAggregate(agg *AG.HashAggregate, st *decomposeState, planner P
 // the child schema — REQ002143 for the native emit). It always propagates
 // the child's output schema unchanged so OutputCols metadata survives the
 // round-trip through the pipeline.
+// decomposeDistinct creates a native DistinctStageSpec when the child's
+// output schema is known. REQ002143: uses all columns as distinct keys.
 func decomposeDistinct(d *OP.Distinct, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	childIdx := decomposeOp(d.Child(), st, planner, specialize)
 	schema := st.childOutput(childIdx)
 	if !schema.resolved() {
-		// Child's decomposition didn't know its schema (e.g. SeqScan with
-		// an unknown StoreSchema); fall back to extractOutputSchema via
-		// the legacy walker.
 		schema.names, schema.types = extractOutputSchema(d.Child())
 	}
-	return st.addStage(&LegacyBatchStageSpec{
+	if schema.resolved() {
+		// Use all columns as distinct keys.
+		keyCols := make([]int, len(schema.names))
+		for i := range schema.names {
+			keyCols[i] = i
+		}
+		idx := st.addStage(&DistinctStageSpec{KeyCols: keyCols}, schema)
+		st.addEdge(idx, childIdx, SingleChild)
+		return idx
+	}
+	// Fallback: child schema unknown.
+	idx := st.addStage(&LegacyBatchStageSpec{
 		Root:       d,
 		Planner:    planner,
 		Specialize: specialize,
 	}, schema)
+	st.addEdge(idx, childIdx, SingleChild)
+	return idx
 }
 
 // decomposeWindow creates a native WindowStageSpec. Output schema
@@ -1302,15 +1280,30 @@ func (s *LegacyBatchStageSpec) Category() StageCategory {
 // Reset is not supported — returns ErrResetNotSupported.
 type LegacyBatchStage struct {
 	producer UT.BatchProducer
+	execCtx  *DT.ExecContext
 	closed   bool
 }
 
-// NextBatch delegates to the inner BatchProducer.
+// NextBatch delegates to the inner BatchProducer. Sets batch.ExecCtx
+// when the exec context has been propagated (REQ002148).
 func (s *LegacyBatchStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if s.closed {
 		return nil, errors.New("px: nextbatch on closed legacy stage")
 	}
-	return s.producer.NextBatch(ctx)
+	batch, err := s.producer.NextBatch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if batch != nil && s.execCtx != nil {
+		batch.ExecCtx = s.execCtx
+	}
+	return batch, nil
+}
+
+// PropagateExecContext stores the per-execution context so it can be
+// embedded into batches produced by the LegacyBatchStage. REQ002148.
+func (s *LegacyBatchStage) PropagateExecContext(ec *DT.ExecContext) {
+	s.execCtx = ec
 }
 
 // Reset is not supported for legacy stages. The Pipeline handles
