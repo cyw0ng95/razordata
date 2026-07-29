@@ -45,12 +45,15 @@ func (rp *ReclaimPool) Reclaim(ptr unsafe.Pointer) {
 		if drop < 1 {
 			drop = 1
 		}
-		dropped := rp.ptrs[:drop]
+		// REQ002046: copy dropped pointers before zeroing — the slice
+		// shares the backing array with rp.ptrs, and zeroing would
+		// make the reclaimer see nil entries (silent leak).
+		dropped := make([]unsafe.Pointer, drop)
+		copy(dropped, rp.ptrs[:drop])
 		for i := range dropped {
 			rp.ptrs[i] = nil
 		}
 		rp.ptrs = rp.ptrs[drop:]
-		// REQ001014: pass dropped pointers to reclaimer instead of leaking.
 		if rp.reclaimer != nil {
 			rp.reclaimer(dropped)
 		}
