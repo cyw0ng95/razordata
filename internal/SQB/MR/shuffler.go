@@ -126,6 +126,20 @@ func (s *ScalarShuffler) AcceptBatch(ctx context.Context, batch *UT.Batch) error
 	return nil
 }
 
+func (s *ScalarShuffler) DebugAccumCount() int {
+	if r, ok := s.reducer.(*AggregateReducer); ok {
+		return r.debugAccumCount()
+	}
+	return -1
+}
+
+func (s *ScalarShuffler) DebugHasValue() bool {
+	if r, ok := s.reducer.(*AggregateReducer); ok {
+		return r.debugAccumHasValue()
+	}
+	return false
+}
+
 func (s *ScalarShuffler) Finalize(ctx context.Context) ([]*UT.Batch, error) {
 	return s.reducer.Finalize(nil)
 }

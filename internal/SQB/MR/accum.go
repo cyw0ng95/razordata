@@ -70,11 +70,13 @@ func (a *UnifiedAccum) Update(spec *AccumulatorSpec, batch *UT.Batch, rowIdx int
 		return
 	}
 	col := batch.Cols[spec.Col]
-	if rowIdx < 0 || rowIdx >= len(col.Nulls) {
-		return
-	}
-	if col.Nulls[rowIdx] {
-		return
+	if col.Nulls != nil {
+		if rowIdx < 0 || rowIdx >= len(col.Nulls) {
+			return
+		}
+		if col.Nulls[rowIdx] {
+			return
+		}
 	}
 
 	v := UT.ToValue(col, rowIdx)
@@ -404,6 +406,9 @@ func int64ToString(n int64) string {
 	}
 	return string(buf[pos:])
 }
+
+// debugHasValue returns true if this accumulator has a value (for MIN/MAX).
+func (a *UnifiedAccum) debugHasValue() bool { return a.hasValue }
 
 // float64ToString converts float64 to string using strconv for correctness.
 func float64ToString(f float64) string {

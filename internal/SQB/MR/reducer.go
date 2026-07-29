@@ -60,6 +60,16 @@ func (r *AggregateReducer) Accumulate(slot int, batch *UT.Batch, rowIdx int) err
 	return nil
 }
 
+// debugAccumCount returns the number of accumulator slots.
+func (r *AggregateReducer) debugAccumCount() int { return len(r.accums) }
+// debugAccumHasValue returns true if the first accumulator has a value.
+func (r *AggregateReducer) debugAccumHasValue() bool {
+	if len(r.accums) == 0 {
+		return false
+	}
+	return r.accums[0].debugHasValue()
+}
+
 // Finalize produces output batches from all accumulated groups.
 // groupKeys provides key column access; nil for scalar (no GROUP BY).
 func (r *AggregateReducer) Finalize(groupKeys GroupKeySource) ([]*UT.Batch, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
@@ -321,7 +322,18 @@ func decomposeSeqScan(ss *OP.SeqScan, st *decomposeState) int {
 	var op DT.Operator = ss
 	var out outputSchema
 	if ss != nil {
-		if sch := ss.Schema(); sch != nil && len(sch.Cols) > 0 {
+		sch := ss.Schema()
+		if used := ss.UsedCols(); len(used) > 0 && sch != nil {
+			names := make([]string, len(used))
+			types := make([]LX.TokenType, len(used))
+			for i, col := range used {
+				names[i] = col
+				if idx := sch.ColIndex[col]; idx >= 0 && idx < len(sch.ColTypes) {
+					types[i] = sch.ColTypes[idx]
+				}
+			}
+			out = outputSchema{names: names, types: types}
+		} else if sch != nil && len(sch.Cols) > 0 {
 			n := len(sch.Cols)
 			names := make([]string, n)
 			types := make([]LX.TokenType, n)
@@ -993,11 +1005,9 @@ func encodeMemoKey(stmt PS.Stmt) string {
 	if stmt == nil {
 		return ""
 	}
-	// Use the parser's memo key if available.
-	// For now, produce a simple key from statement type.
 	switch s := stmt.(type) {
 	case *PS.Select:
-		return "sel:" + selectTables(s)
+		return "sel:" + selectTables(s) + ":" + selectExprsKey(s.Cols)
 	default:
 		return ""
 	}
@@ -1009,6 +1019,47 @@ func selectTables(s *PS.Select) string {
 		return ""
 	}
 	return s.From
+}
+
+// selectExprsKey returns a compact, stable key for the select expression
+// list. Two SELECTs with identical table, WHERE, and expression text get
+// the same key. This prevents cache collisions between queries that only
+// differ in their aggregate functions (e.g. MIN(a) vs MAX(a)).
+func selectExprsKey(cols []PS.Expr) string {
+	if len(cols) == 0 {
+		return "0"
+	}
+	var b strings.Builder
+	for i, e := range cols {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(exprKey(e))
+	}
+	return b.String()
+}
+
+// exprKey returns a short key string for an expression node.
+func exprKey(e PS.Expr) string {
+	switch x := e.(type) {
+	case *PS.AggregateFunc:
+		s := x.Name
+		if x.Distinct {
+			s += "_DISTINCT"
+		}
+		if x.Arg != nil {
+			s += "(" + exprKey(x.Arg) + ")"
+		}
+		return s
+	case *PS.Ident:
+		return x.Name
+	case *PS.StarExpr:
+		return "*"
+	case *PS.AliasedExpr:
+		return exprKey(x.Expr)
+	default:
+		return "expr"
+	}
 }
 
 // extractOutputSchema returns the output column names and types
