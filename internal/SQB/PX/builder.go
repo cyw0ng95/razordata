@@ -999,6 +999,31 @@ func tryDecomposeFusedScan(op DT.Operator, st *decomposeState, _ PL.QueryPlanner
 	if cur == nil {
 		return 0, false
 	}
+
+	// REQ002150: handle FilterProject as fused Filter + Project.
+	// The planner emits FilterProject instead of separate Filter + Project
+	// for simple WHERE+SELECT queries. There may be multiple FilterProject
+	// layers (e.g., FilterProject(FilterProject(Filter(Scan)))). Walk through
+	// all FilterProject layers and collect the last non-nil pred and exprs.
+	var fpPred PS.Expr
+	var fpExprs []PS.Expr
+	for {
+		fp, ok := cur.(*OP.FilterProject)
+		if !ok {
+			break
+		}
+		if p := fp.Predicate(); p != nil {
+			fpPred = p
+		}
+		if c := fp.Cols(); len(c) > 0 {
+			fpExprs = c
+		}
+		cur = fp.Child()
+		if cur == nil {
+			return 0, false
+		}
+	}
+
 	if proj, ok := cur.(*OP.Project); ok {
 		projectOp = proj
 		cur = proj.Child()
@@ -1019,6 +1044,15 @@ func tryDecomposeFusedScan(op DT.Operator, st *decomposeState, _ PL.QueryPlanner
 		if idx, ok2 := cur.(*OP.IndexScan); ok2 {
 			return tryDecomposeFusedIndexScan(limitOp, projectOp, filterOp, idx, st)
 		}
+		// REQ002150: the planner emits FusedScan for small in-memory
+		// tables (fused.go). FusedScan already applies filter + project
+		// internally, so we skip the FusedScanStageSpec and let it
+		// fall through to decomposeFallback which creates a
+		// LegacyBatchStageSpec. The pipeline path will fall back to
+		// legacy execution, which uses the FusedScan directly.
+		if _, ok2 := cur.(*OP.FusedScan); ok2 {
+			return 0, false
+		}
 		return 0, false
 	}
 	seqScan = ss
@@ -1033,7 +1067,7 @@ func tryDecomposeFusedScan(op DT.Operator, st *decomposeState, _ PL.QueryPlanner
 		return 0, false
 	}
 	// At least Filter, Project, or Limit must be present.
-	if projectOp == nil && filterOp == nil && limitOp == nil {
+	if projectOp == nil && filterOp == nil && fpPred == nil && fpExprs == nil && limitOp == nil {
 		return 0, false
 	}
 	// Build scan output schema from SeqScan's StoreSchema.
@@ -1049,11 +1083,19 @@ func tryDecomposeFusedScan(op DT.Operator, st *decomposeState, _ PL.QueryPlanner
 	var pred PS.Expr
 	if filterOp != nil {
 		pred = filterOp.Predicate()
+	} else if fpPred != nil {
+		pred = fpPred
 	}
 	var exprs []PS.Expr
 	var fusedNames []string
 	if projectOp != nil {
 		exprs = projectOp.Cols()
+		fusedNames = make([]string, len(exprs))
+		for i, e := range exprs {
+			fusedNames[i] = exprName(e)
+		}
+	} else if fpExprs != nil {
+		exprs = fpExprs
 		fusedNames = make([]string, len(exprs))
 		for i, e := range exprs {
 			fusedNames[i] = exprName(e)
@@ -1074,7 +1116,7 @@ func tryDecomposeFusedScan(op DT.Operator, st *decomposeState, _ PL.QueryPlanner
 		outNames := make([]string, len(fusedNames))
 		copy(outNames, fusedNames)
 		fusedTypes := make([]LX.TokenType, len(outNames))
-		if projectOp != nil {
+		if projectOp != nil || fpExprs != nil {
 			for i := range outNames {
 				fusedTypes[i] = LX.T_TEXT
 			}
@@ -1084,7 +1126,7 @@ func tryDecomposeFusedScan(op DT.Operator, st *decomposeState, _ PL.QueryPlanner
 		fusedOut = outputSchema{names: outNames, types: fusedTypes}
 	}
 
-	scanOp := seqScan
+	var scanOp DT.Operator = seqScan
 	fusedIdx := st.addStage(&FusedScanStageSpec{
 		SourceFactory: func() UT.BatchProducer {
 			return NewRowOperatorAsProducer(scanOp)

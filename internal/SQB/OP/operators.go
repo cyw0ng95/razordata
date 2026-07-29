@@ -2337,7 +2337,17 @@ func pruneRowCols(row Row, usedCols []string, usedSet map[string]bool, seq *SeqS
 // Accessor methods for SeqScan fields used by EX plan_node and parallel operators.
 func (s *SeqScan) Table() string               { return s.table }
 func (s *SeqScan) Store() DT.Store             { return s.store }
-func (s *SeqScan) Schema() *DT.StoreSchema     { return s.schema }
+func (s *SeqScan) Schema() *DT.StoreSchema {
+	if s.schema != nil {
+		return s.schema
+	}
+	// REQ002150: fallback to in-memory schema for non-store scans
+	// (e.g. DT.Tables-backed scans). Without this, tryDecomposeFusedScan
+	// skips fusion for in-memory tables, causing the pipeline path to
+	// fall back to LegacyBatchStageSpec which corrupts the plan cache.
+	ss, _ := DT.SchemaFor(s.table)
+	return ss
+}
 func (s *SeqScan) Alias() string               { return s.alias }
 func (s *SeqScan) BatchSupported() bool        { return s.store != nil }
 func (s *SeqScan) UsedCols() []string          { return s.usedCols }
