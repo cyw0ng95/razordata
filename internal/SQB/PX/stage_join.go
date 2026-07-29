@@ -3,7 +3,6 @@ package PX
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -1354,32 +1353,49 @@ func (j *HashJoinStage) Close() error {
 	return firstErr
 }
 
+// SemiJoinStageSpec is the cached factory for SemiJoinStage. REQ002152.
+// Unlike HashJoinStageSpec (static equi-key indices), the semi-join's
+// match predicate is a runtime closure built by the planner's
+// decorrelateExists (view_subquery.go) — it resolves column indices
+// by name on each call and supports arbitrary comparison operators.
+// We therefore carry the closure and fall back to a nested-loop probe
+// rather than a hash table.
+type SemiJoinStageSpec struct {
+	// OnFunc tests whether a (probeRow, buildRow) pair matches. When
+	// nil, every probe row with at least one build row matches (i.e.
+	// a non-correlated EXISTS where the inner table is non-empty).
+	OnFunc func(outer, inner *DT.Row) (bool, error)
+}
+
+func (s *SemiJoinStageSpec) NewRuntime() Stage {
+	return &SemiJoinStage{on: s.OnFunc}
+}
+
+func (s *SemiJoinStageSpec) Category() StageCategory { return CatJoin }
+
 // SemiJoinStage implements SEMI join semantics — emit probe rows where
-// at least one matching build row exists. Used for EXISTS and IN subqueries.
+// at least one matching build row exists. Used for correlated EXISTS
+// and IN subqueries decorrelated by the planner. REQ002152.
+//
+// The match predicate is a closure (OnFunc) that takes (probe, build)
+// row pointers, so we materialize the build side into []pl.Row once
+// and nested-loop probe it for each probe row. This mirrors the
+// row-based NestedLoopJoin SEMI path (OP/join.go:341) but operates
+// inside the batch pipeline: probe batches are converted to rows,
+// tested, and matching rows are re-columnized into the output batch.
 type SemiJoinStage struct {
 	probeChild Stage // Left side (rows to potentially emit)
 	buildChild Stage // Right side (existence check)
-	equiKeys   []int // Equi-join columns from probe to build (probeIndex → buildIndex)
-	kind       JoinKind // Should be SEMI
+	on         func(outer, inner *DT.Row) (bool, error)
 
-	// Working state during execution
-	ht          UT.HashTableInterface
-	rowIDs      map[string][]uint32
-	bloom       *UT.BloomFilter
-	buildCols   []UT.Column
-	buildN      int
-	probeDone   bool
-	seenProbe   map[string]bool
-}
+	// buildRows holds the fully-materialized build side. Built once on
+	// the first NextBatch call; cleared on Reset.
+	buildRows []DT.Row
+	// buildExhausted marks that buildChild has returned EOF.
+	buildExhausted bool
 
-func (s *SemiJoinStage) NewRuntime() Stage {
-	return &SemiJoinStage{
-		probeChild: nil,
-		buildChild: nil,
-		equiKeys:   s.equiKeys,
-		kind:       s.kind,
-		seenProbe:  make(map[string]bool),
-	}
+	// probeDone marks that probeChild has returned EOF.
+	probeDone bool
 }
 
 func (s *SemiJoinStage) Category() StageCategory { return CatJoin }
@@ -1393,86 +1409,12 @@ func (s *SemiJoinStage) SetChild(side ChildSide, child Stage) {
 	}
 }
 
-// NextBatch evaluates SEMI join: for each batch from probe child,
-// check against build-side index and emit rows that have at least one match.
-func (s *SemiJoinStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
-	if s.buildChild == nil || s.probeChild == nil {
-		return nil, errors.New("px: semi-join stage not properly wired")
-	}
-
-	// Build hash index from build side if not already done
-	if s.ht == nil && s.rowIDs == nil {
-		if err := s.buildHashTable(ctx); err != nil {
-			return nil, err
-		}
-	}
-
-	// Process probe batches
+// materializeBuild drains buildChild into s.buildRows. REQ002152.
+func (s *SemiJoinStage) materializeBuild(ctx context.Context) error {
 	for {
-		batch, err := s.probeChild.NextBatch(ctx)
-		if err != nil {
-			return nil, err
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		if batch == nil {
-			// Clean up and return empty (all probed done)
-			s.probeDone = true
-			// Return empty batch to signal EOF
-			return &UT.Batch{Cols: []UT.Column{}, Size: 0}, nil
-		}
-
-		// Output column count is just probe columns (SEMI doesn't include build cols)
-		nProbeCols := countColumns(batch)
-		out := UT.GetBatch(nProbeCols)
-		out.Size = 0
-
-		// For each row in probe batch, check existence and emit if matched
-		for i := 0; i < batch.LogicalSize(); i++ {
-			rowIdx := i
-			if batch.Sel != nil && i < len(batch.Sel) {
-				rowIdx = int(batch.Sel[i])
-			}
-
-			// Construct semi-join key from equi-keys
-			key := s.makeProbeKey(batch, rowIdx)
-			if s.hasMatch(key) {
-				// Check if we've already emitted this probe row (avoid duplicates from multiple matches)
-				rowSig := fmt.Sprintf("%d_%d", rowIdx, batch.LogicalSize())
-				if !s.seenProbe[rowSig] {
-					s.seenProbe[rowSig] = true
-					// Copy probe row to output
-					for c := 0; c < nProbeCols; c++ {
-						out.Cols[c].Name = batch.Cols[c].Name
-						out.Cols[c].Type = batch.Cols[c].Type
-					}
-					// We'd normally copy data here but for simplicity return placeholder
-					out.Size = 1 // simplified: emit first matching row only
-					break // emit one row per batch for simplicity
-				}
-			}
-		}
-
-		if out.Size > 0 {
-			// Don't put the batch yet - we need to keep reference if needed
-			// For simple case, put it after using
-			batch.Put()
-			return out, nil
-		}
-
-		batch.Put()
-		// No matches in this batch, continue to next probe batch
-	}
-
-	// Unreachable
-	return nil, nil
-}
-
-func (s *SemiJoinStage) buildHashTable(ctx context.Context) error {
-	// Materialize build side into a hash table keyed by equi-join columns
-	// Simplified: single integer column key for now
-	
-	// Collect all build batches
-	var batches []*UT.Batch
-	for {
 		batch, err := s.buildChild.NextBatch(ctx)
 		if err != nil {
 			return err
@@ -1480,64 +1422,135 @@ func (s *SemiJoinStage) buildHashTable(ctx context.Context) error {
 		if batch == nil {
 			break
 		}
-		batches = append(batches, batch)
-	}
-
-	if len(batches) == 0 {
-		return nil
-	}
-
-	// Build simple int64 hash table from first column of build data
-	s.rowIDs = make(map[string][]uint32)
-	for bIdx, batch := range batches {
-		for r := 0; r < batch.LogicalSize(); r++ {
-			rowIdx := r
-			if batch.Sel != nil && r < len(batch.Sel) {
-				rowIdx = int(batch.Sel[r])
-			}
-			// Extract int key from build column (simplified)
-			var keyStr string
-			if batch.Cols[0].Data.Ints != nil && rowIdx < len(batch.Cols[0].Data.Ints) {
-				val := batch.Cols[0].Data.Ints[rowIdx]
-				keyStr = fmt.Sprintf("%d", val)
-			} else {
-				keyStr = "null"
-			}
-			s.rowIDs[keyStr] = append(s.rowIDs[keyStr], uint32(bIdx*r)) // placeholder slot
+		rows := batch.ToRows()
+		if batch.Pooled {
+			batch.Put()
 		}
-		batch.Put()
+		s.buildRows = append(s.buildRows, rows...)
 	}
-
+	s.buildExhausted = true
 	return nil
 }
 
-func (s *SemiJoinStage) makeProbeKey(batch *UT.Batch, rowIdx int) string {
-	// Construct key string from probe side equi-column values
-	if batch.Cols[0].Data.Ints != nil && rowIdx < len(batch.Cols[0].Data.Ints) {
-		val := batch.Cols[0].Data.Ints[rowIdx]
-		return fmt.Sprintf("%d", val)
+// NextBatch emits the next batch of probe rows that have at least one
+// matching build row. Returns (nil, nil) at EOF. REQ002152.
+func (s *SemiJoinStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if s.probeChild == nil || s.buildChild == nil {
+		return nil, errors.New("px: semi-join stage not properly wired")
 	}
-	return "null"
-}
+	if s.probeDone {
+		return nil, nil
+	}
 
-func (s *SemiJoinStage) hasMatch(key string) bool {
-	_, found := s.rowIDs[key]
-	return found
+	// Build side is materialized once on first call.
+	if !s.buildExhausted {
+		if err := s.materializeBuild(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		batch, err := s.probeChild.NextBatch(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch == nil {
+			s.probeDone = true
+			return nil, nil
+		}
+
+		// Fast path: empty build side → no probe row can match. SEMI
+		// emits nothing, so skip this batch entirely.
+		if len(s.buildRows) == 0 {
+			if batch.Pooled {
+				batch.Put()
+			}
+			continue
+		}
+
+		logical := batch.LogicalSize()
+		if logical == 0 {
+			if batch.Pooled {
+				batch.Put()
+			}
+			continue
+		}
+
+		names := batch.ColNames()
+		nCols := len(names)
+		out := UT.GetBatch(nCols)
+		// Initialize output column names/types from the probe batch.
+		// GetBatch already zeroed Data/Nulls for the first nCols columns.
+		for c := 0; c < nCols; c++ {
+			out.Cols[c].Name = batch.Cols[c].Name
+			out.Cols[c].Type = batch.Cols[c].Type
+		}
+		out.Size = 0
+		out.Sel = nil
+
+		// Convert probe batch to rows so the closure can index by column
+		// name (the ON closure from buildCorrelationFunc resolves columns
+		// by scanning Cols — it does not understand columnar Data).
+		probeRows := batch.ToRows()
+		for r := 0; r < len(probeRows); r++ {
+			probeRow := probeRows[r]
+			matched := false
+			// Nested-loop probe: stop at first match (short-circuit,
+			// matching NestedLoopJoin SEMI semantics at OP/join.go:364).
+			if s.on == nil {
+				// No predicate → non-correlated EXISTS: any build row matches.
+				matched = len(s.buildRows) > 0
+			} else {
+				for bi := range s.buildRows {
+					buildRow := s.buildRows[bi]
+					ok, oerr := s.on(&probeRow, &buildRow)
+					if oerr != nil {
+						if batch.Pooled {
+							batch.Put()
+						}
+						return nil, oerr
+					}
+					if ok {
+						matched = true
+						break
+					}
+				}
+			}
+			if matched {
+				// Append the probe row's values to each output column.
+				for c := 0; c < nCols; c++ {
+					val := probeRow.Data[c]
+					isNull := val.Kind == DT.KindNull
+					anyVal := val.ToAny()
+					out.AppendRow(c, out.Cols[c].Type, anyVal, isNull)
+				}
+				out.Size++
+			}
+		}
+
+		if batch.Pooled {
+			batch.Put()
+		}
+
+		if out.Size > 0 {
+			return out, nil
+		}
+		// No matches in this probe batch — continue to the next.
+	}
 }
 
 func (s *SemiJoinStage) Reset(_ context.Context) error {
-	// Reset state for plan cache reuse
-	s.ht = nil
-	s.rowIDs = nil
-	s.bloom = nil
-	s.buildCols = nil
-	s.buildN = 0
+	s.buildRows = nil
+	s.buildExhausted = false
 	s.probeDone = false
-	s.seenProbe = make(map[string]bool)
 	return nil
 }
 
 func (s *SemiJoinStage) Close() error {
+	s.buildRows = nil
 	if s.probeChild != nil {
 		s.probeChild.Close()
 	}
@@ -1547,10 +1560,11 @@ func (s *SemiJoinStage) Close() error {
 	return nil
 }
 
-// PropagateExecContext implements ExecContextPropagator.
-func (s *SemiJoinStage) PropagateExecContext(ec *DT.ExecContext) {
-	_ = ec
-}
+// PropagateExecContext implements ExecContextPropagator. The ON closure
+// resolves columns from row.Cols directly, so no execCtx wiring is
+// needed on the stage itself; child stages receive execCtx via the
+// pipeline's standard propagation.
+func (s *SemiJoinStage) PropagateExecContext(_ *DT.ExecContext) {}
 
 // --- helpers ---
 

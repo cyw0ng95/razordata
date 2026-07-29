@@ -281,10 +281,14 @@ func (a *UnifiedAccum) Result(spec *AccumulatorSpec) (any, bool) {
 		return nil, false
 
 	case AggAvg:
+		// SQLite semantics: AVG always returns REAL (float64), even when
+		// all inputs are integers. REQ002155: the previous code did integer
+		// division (sumI / count) when only integer values were seen,
+		// returning int64 — mismatching the legacy AG path and SQLite.
 		if a.count == 0 || a.overflow {
 			return nil, false
 		}
-		if a.seenF {
+if a.seenF {
 			return (a.sumF + float64(a.sumI)) / float64(a.count), true
 		}
 		if a.seenI {
@@ -318,10 +322,8 @@ func (spec *AccumulatorSpec) ResultType(inputType LX.TokenType) LX.TokenType {
 	case AggSum:
 		return inputType
 	case AggAvg:
-		if inputType == LX.T_FLOAT_KW {
-			return LX.T_FLOAT_KW
-		}
-		return LX.T_INT_KW
+		// SQLite: AVG always returns REAL regardless of input type.
+		return LX.T_FLOAT_KW
 	case AggMin, AggMax:
 		return inputType
 	case AggGroupConcat, AggStringAgg:
