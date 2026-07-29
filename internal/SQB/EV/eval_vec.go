@@ -3043,6 +3043,13 @@ func evalIsNotNullBatch(col UT.Column, batch *UT.Batch) []uint16 {
 //   - Pattern is 'prefix%' → strings.HasPrefix (case-insensitive)
 //   - Otherwise → convert to regex
 func evalLikeBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
+	// REQ002162: when an ESCAPE clause is present, the batch fast paths
+	// (exact-match, prefix, regex) do not honor the escape character.
+	// Fall back to the row-based evaluator, which calls MatchLike with
+	// the escape char so `\%` matches a literal `%`, etc.
+	if e.Escape != nil {
+		return evalRowFallback(e, batch, params)
+	}
 	// Extract left column
 	leftCol, leftIsCol := ExtractColumnRef(e.Left, batch)
 	if !leftIsCol {
