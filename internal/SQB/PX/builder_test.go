@@ -559,3 +559,33 @@ func TestDecomposePlan_OutputSchema(t *testing.T) {
 		})
 	}
 }
+
+
+// TestEncodeMemoKey_LimitOffsetDistinct verifies that SELECTs with
+// different LIMIT/OFFSET values produce different memo keys. Otherwise
+// the pipeline cache would return a stale spec for the second query,
+// silently dropping the OFFSET. REQ002155 (sub-test pipeline OFFSET).
+func TestEncodeMemoKey_LimitOffsetDistinct(t *testing.T) {
+	parse := func(sql string) PS.Stmt {
+		parser := PS.NewParser(sql)
+		defer parser.Close()
+		stmt, err := parser.Parse()
+		if err != nil {
+			t.Fatalf("parse %q: %v", sql, err)
+		}
+		return stmt
+	}
+	k1 := encodeMemoKey(parse("SELECT id FROM t ORDER BY id"))
+	k2 := encodeMemoKey(parse("SELECT id FROM t ORDER BY id LIMIT 2"))
+	k3 := encodeMemoKey(parse("SELECT id FROM t ORDER BY id LIMIT 1 OFFSET 1"))
+	k4 := encodeMemoKey(parse("SELECT id FROM t ORDER BY id LIMIT 1 OFFSET 2"))
+	if k1 == k2 {
+		t.Errorf("LIMIT vs no-LIMIT must differ: %q", k1)
+	}
+	if k2 == k3 {
+		t.Errorf("LIMIT 2 vs LIMIT 1 OFFSET 1 must differ: %q", k2)
+	}
+	if k3 == k4 {
+		t.Errorf("OFFSET 1 vs OFFSET 2 must differ: %q", k3)
+	}
+}

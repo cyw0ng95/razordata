@@ -1171,10 +1171,31 @@ func encodeMemoKey(stmt PS.Stmt) string {
 	}
 	switch s := stmt.(type) {
 	case *PS.Select:
-		return "sel:" + selectTables(s) + ":" + selectExprsKey(s.Cols)
+		return "sel:" + selectTables(s) +
+			":" + selectExprsKey(s.Cols) +
+			":L" + limitKey(s.Limit) +
+			":O" + limitKey(s.Offset) +
+			":OF" + boolStr(s.OffsetFirst)
 	default:
 		return ""
 	}
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
+}
+
+func limitKey(e PS.Expr) string {
+	if e == nil {
+		return "0"
+	}
+	if nl, ok := e.(*PS.NumberLiteral); ok {
+		return fmt.Sprintf("%d", nl.Val)
+	}
+	return "expr"
 }
 
 // selectTables extracts the table name from a Select.
