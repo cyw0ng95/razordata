@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
@@ -140,69 +139,8 @@ type Rows struct {
 	Types []LX.TokenType
 }
 
-// stmtCacheEntry holds a cached parsed statement plus the SQL key
-// (the key is needed to delete the map entry on LRU eviction).
-// REQ001693: LRU position is tracked by the container/list element, not
-// a per-entry field.
-type stmtCacheEntry struct {
-	key  string
-	stmt PS.Stmt
-}
-
-// planCacheEntry holds a cached compiled plan with LRU metadata.
-// REQ001011. REQ002066: store the key so eviction can delete from
-// the map without scanning all entries (O(N²) → O(1)).
-type planCacheEntry struct {
-	key    string
-	result *pl.PlanResult
-}
-
-// textPlanCache is a simple LRU cache keyed by exact SQL text.
-// Bypasses stmtCache+planCache+memo-key overhead for identical queries.
-// REQ001464.
-type textPlanCache struct {
-	mu      sync.Mutex
-	maxSize int
-	entries map[string]*textPlanEntry
-	lru     []*textPlanEntry
-}
-
-// textPlanEntry holds a cached PlanResult for exact SQL text.
-type textPlanEntry struct {
-	sql  string
-	plan *pl.PlanResult
-}
-
-// globalStmtCache is the shared statement cache across all Executors.
-// REQ001223: eliminates per-Executor stmtCache allocation (171 MB per query).
-// Initialized lazily on first NewExecutor call.
-var globalStmtCache = &stmtCache{
-	entries: make(map[string]int, 1024),
-	lru:     make([]*stmtCacheEntry, 0, 1024),
-	maxSize: 1024,
-}
-
-// stmtCache is a thread-safe LRU cache for parsed statements.
-// REQ001220: shared across ShallowCopy clones via pointer.
-// REQ001974: slice-indexed LRU replaces container/list to eliminate
-// 1.29M list.Element allocations. entries maps key → index in lru
-// slice. Move-to-front swaps the entry with lru[0] and updates the
-// index map for both swapped entries. O(1) amortized.
-type stmtCache struct {
-	mu      sync.Mutex
-	entries map[string]int
-	lru     []*stmtCacheEntry
-	maxSize int
-}
-
-// planCache is a thread-safe LRU cache for compiled plan trees.
-// REQ001220: shared across ShallowCopy clones via pointer.
-type planCache struct {
-	mu      sync.Mutex
-	entries map[string]*planCacheEntry
-	lru     []*planCacheEntry
-	maxSize int
-}
+// REQ002145: legacy caches (stmtCache, planCache, textPlanCache) removed.
+// PX.PipelineCache is the single source of truth.
 
 // Executor holds the core execution state.
 type Executor struct {
@@ -225,21 +163,8 @@ type Executor struct {
 	// txnDebugger tracks MVCC/transaction statistics for EXPLAIN ANALYZE.
 	// REQ000792: MVCC debugging.
 	txnDebugger *UT.TxnDebugger
-	// stmtCache caches parsed statements keyed by SQL text to avoid
-	// re-parsing on repeated queries. LRU eviction, default 256 entries.
-	// Pointer shared across ShallowCopy clones (REQ001220).
-	stmtCache *stmtCache
-	// planCache caches compiled plan trees keyed by AST fingerprint
-	// (memo key) to avoid re-planning on repeated queries. LRU eviction,
-	// default 128 entries. Pointer shared across ShallowCopy clones
-	// (REQ001220).
-	planCache *planCache
-	// textPlanCache caches PlanResult keyed by exact SQL text.
-	// Bypasses stmtCache+planCache memo-key overhead for identical
-	// queries. LRU eviction, default 1000 entries. REQ001464.
-	textPlanCache *textPlanCache
-	// REQ002132: pipelineBuilder is the unified compile flow that
-	// replaces stmtCache + planCache + textPlanCache + tryVectorizePlan.
+	// REQ002145: pipelineBuilder is the unified compile flow that
+	// replaces the legacy stmtCache + planCache + textPlanCache.
 	// Initialized lazily; nil when the pipeline path is not available
 	// (e.g., DML-only executor without a store).
 	pipelineBuilder *PX.PipelineBuilder
@@ -325,25 +250,19 @@ func (e *Executor) GetAttachedDBs() map[string]string {
 	return e.attachedDBs
 }
 
-// ShallowCopy returns a new Executor that shares Planner, Store, stmtCache,
-// and planCache with the original. Each clone has its own per-request
+// ShallowCopy returns a new Executor that shares Planner, Store, and
+// pipelineBuilder with the original. Each clone has its own per-request
 // mutable state (txWriter, snapshotTS, sessionID).
 // Callers use this to avoid races when the shared Executor is used
 // concurrently by multiple sessions (REQ000611).
-// The stmtCache and planCache are shared via pointer — both are thread-safe
-// LRU with mutex (REQ001220, REQ001259). PlanResult is immutable after
-// compilation; replaceLiteralsOnTree operates on the cached tree and is
-// safe because concurrent calls use different param slices and the tree
-// nodes are not mutated during execution.
+// REQ002145: legacy caches removed; PX.PipelineCache is shared via
+// pipelineBuilder pointer.
 // Memory budget fields are inherited from the original. REQ001056.
 func (e *Executor) ShallowCopy() *Executor {
 	EC.WARN_ON(e.closed.Load(), "ShallowCopy on closed Executor")
 	e2 := &Executor{
 		planner:           e.planner,
 		store:             e.store,
-		stmtCache:         e.stmtCache,       // shared — thread-safe LRU with mutex
-		planCache:         e.planCache,       // shared — REQ001259: immutable after compilation
-		textPlanCache:     e.textPlanCache,   // shared — LRU with mutex
 		pipelineBuilder:   e.pipelineBuilder, // shared — PipelineBuilder is goroutine-safe
 		txnDebugger:       UT.NewTxnDebugger(),
 		pool:              e.pool, // shared — pool is thread-safe
@@ -436,8 +355,6 @@ func NewExecutor() *Executor {
 		attachedDBs:    make(map[string]string),
 	}
 	e.planner.SetPool(e.pool)
-	e.initStmtCache(256)
-	e.initPlanCache(128)
 	OP.WarmFilterBatchPool(4)
 	OP.WarmProjectDataPool(4) // REQ002022: warm project data buffers
 	e.initPipelineBuilder()
@@ -453,9 +370,6 @@ func NewExecutorWithPlanner(pl *Planner) *Executor {
 		attachedDBs:    make(map[string]string),
 	}
 	pl.SetPool(e.pool)
-	e.initStmtCache(256)
-	e.initPlanCache(128)
-	e.initTextPlanCache(1000)
 	OP.WarmFilterBatchPool(4)
 	OP.WarmProjectDataPool(4) // REQ002022: warm project data buffers
 	e.initPipelineBuilder()
@@ -472,27 +386,19 @@ func NewExecutorWithEngine(store DT.Store) *Executor {
 		attachedDBs:    make(map[string]string),
 	}
 	e.planner.SetPool(e.pool)
-	e.initStmtCache(256)
-	e.initPlanCache(128)
-	e.initTextPlanCache(1000)
 	OP.WarmFilterBatchPool(4)
 	OP.WarmProjectDataPool(4) // REQ002022: warm project data buffers
 	e.initPipelineBuilder()
 	return e
 }
 
-// WithStmtCache enables statement caching with the given max size.
-// Call on a newly created Executor before concurrent use.
+// WithStmtCache is a no-op — legacy stmtCache removed. REQ002145.
 func (e *Executor) WithStmtCache(maxSize int) *Executor {
-	e.initStmtCache(maxSize)
-	e.initPlanCache(128)
 	return e
 }
 
-// WithPlanCache enables plan caching with the given max size.
-// Default 128 entries. REQ001011.
+// WithPlanCache is a no-op — legacy planCache removed. REQ002145.
 func (e *Executor) WithPlanCache(maxSize int) *Executor {
-	e.initPlanCache(maxSize)
 	return e
 }
 
@@ -522,237 +428,16 @@ func (e *Executor) WithMaxResultRows(limit int64) *Executor {
 	return e
 }
 
-// initStmtCache initializes the statement cache. Must be called before use.
-func (e *Executor) initStmtCache(maxSize int) {
-	// REQ001223: use globalStmtCache across all Executors.
-	e.stmtCache = globalStmtCache
-}
-
-// getCachedStmt looks up a cached parsed statement. Returns nil if not found.
-// REQ001974: O(1) — one map lookup + swap-to-front (two index updates, no alloc).
-func (e *Executor) getCachedStmt(sql string) PS.Stmt {
-	e.stmtCache.mu.Lock()
-	defer e.stmtCache.mu.Unlock()
-	idx, ok := e.stmtCache.entries[sql]
-	if !ok {
-		return nil
-	}
-	e.stmtCache.moveToFront(idx)
-	return e.stmtCache.lru[0].stmt
-}
-
-// putCachedStmt stores a parsed statement in the cache.
-// REQ001974: O(1) insert + evictBack; replaces container/list.
-func (e *Executor) putCachedStmt(sql string, stmt PS.Stmt) {
-	e.stmtCache.mu.Lock()
-	defer e.stmtCache.mu.Unlock()
-	if idx, ok := e.stmtCache.entries[sql]; ok {
-		e.stmtCache.lru[idx].stmt = stmt
-		e.stmtCache.moveToFront(idx)
-		return
-	}
-	ent := &stmtCacheEntry{key: sql, stmt: stmt}
-	// Prepend to front.
-	e.stmtCache.lru = append(e.stmtCache.lru, nil)
-	copy(e.stmtCache.lru[1:], e.stmtCache.lru)
-	e.stmtCache.lru[0] = ent
-	e.stmtCache.entries[sql] = 0
-	// Update indices for shifted entries.
-	for i := 1; i < len(e.stmtCache.lru); i++ {
-		e.stmtCache.entries[e.stmtCache.lru[i].key] = i
-	}
-	for len(e.stmtCache.lru) > e.stmtCache.maxSize {
-		e.stmtCache.evictBack()
-	}
-}
-
-// moveToFront moves the entry at idx to position 0. Caller must hold mu.
-func (c *stmtCache) moveToFront(idx int) {
-	if idx == 0 {
-		return
-	}
-	ent := c.lru[idx]
-	// Shift [0:idx] right by one.
-	copy(c.lru[1:idx+1], c.lru[0:idx])
-	c.lru[0] = ent
-	// Update indices for all moved entries including the one at front.
-	c.entries[ent.key] = 0
-	for i := 1; i <= idx; i++ {
-		c.entries[c.lru[i].key] = i
-	}
-}
-
-// evictBack removes the least-recently-used entry. Caller must hold mu.
-func (c *stmtCache) evictBack() {
-	if len(c.lru) == 0 {
-		return
-	}
-	back := c.lru[len(c.lru)-1]
-	delete(c.entries, back.key)
-	c.lru[len(c.lru)-1] = nil // avoid memory leak
-	c.lru = c.lru[:len(c.lru)-1]
-}
-
-// clearStmtCache clears the statement cache. Used in tests.
-func (e *Executor) clearStmtCache() {
-	e.stmtCache.mu.Lock()
-	defer e.stmtCache.mu.Unlock()
-	// REQ001673: clear() preserves map capacity, avoiding the
-	// 17.45MB per-Reset alloc from make(map, 1024).
-	clear(e.stmtCache.entries)
-	// REQ001974: re-init the LRU slice in place (no realloc).
-	e.stmtCache.lru = e.stmtCache.lru[:0]
-}
-
-// initPlanCache initializes the plan cache. Must be called before use.
-// REQ001011.
-func (e *Executor) initPlanCache(maxSize int) {
-	if maxSize <= 0 {
-		maxSize = 128
-	}
-	e.planCache = &planCache{
-		entries: make(map[string]*planCacheEntry, maxSize),
-		lru:     make([]*planCacheEntry, 0, maxSize),
-		maxSize: maxSize,
-	}
-}
-
-// getCachedPlan looks up a cached compiled plan by memo key.
-// Returns nil if not found. REQ001011.
-func (e *Executor) getCachedPlan(key string) *pl.PlanResult {
-	e.planCache.mu.Lock()
-	defer e.planCache.mu.Unlock()
-	ent, ok := e.planCache.entries[key]
-	if !ok {
-		return nil
-	}
-	// Move to front of LRU
-	for i, entry := range e.planCache.lru {
-		if entry == ent {
-			e.planCache.lru = append(e.planCache.lru[:i], e.planCache.lru[i+1:]...)
-			break
-		}
-	}
-	e.planCache.lru = append([]*planCacheEntry{ent}, e.planCache.lru...)
-	return ent.result
-}
-
-// putCachedPlan stores a compiled plan in the cache.
-// REQ001011.
-func (e *Executor) putCachedPlan(key string, result *pl.PlanResult) {
-	e.planCache.mu.Lock()
-	defer e.planCache.mu.Unlock()
-	if ent, ok := e.planCache.entries[key]; ok {
-		for i, entry := range e.planCache.lru {
-			if entry == ent {
-				e.planCache.lru = append(e.planCache.lru[:i], e.planCache.lru[i+1:]...)
-				break
-			}
-		}
-		e.planCache.lru = append([]*planCacheEntry{ent}, e.planCache.lru...)
-		return
-	}
-	// REQ001587: create a copy of the plan result so that later
-	// mutations (tryVectorizePlan replacing plan.Root in-place) do
-	// not corrupt the cached entry. Clone the AdaptiveOp wrapper
-	// so it stays pristine.
-	cachedResult := *result
-	if aop, ok := result.Root.(*AD.AdaptiveOp); ok {
-		cachedResult.Root = AD.NewAdaptiveOp(aop.Child(), key)
-	}
-	ent := &planCacheEntry{result: &cachedResult, key: key}
-	e.planCache.entries[key] = ent
-	e.planCache.lru = append([]*planCacheEntry{ent}, e.planCache.lru...)
-	for len(e.planCache.lru) > e.planCache.maxSize {
-		oldest := e.planCache.lru[len(e.planCache.lru)-1]
-		e.planCache.lru = e.planCache.lru[:len(e.planCache.lru)-1]
-		// REQ002066: use the stored key for O(1) map deletion
-		// instead of scanning all entries to find the key.
-		delete(e.planCache.entries, oldest.key)
-	}
-}
-
-// PlanCache returns the plan cache (panic-safe if not initialized).
-func (e *Executor) PlanCache() *planCache {
-	if e.planCache == nil {
-		e.planCache = &planCache{entries: make(map[string]*planCacheEntry)}
-	}
-	return e.planCache
-}
+// ClearPlanCache clears the planner memo and unified PipelineCache.
+// REQ002145: legacy caches removed; only pipeline cache and planner memo remain.
 func (e *Executor) ClearPlanCache() {
-	e.planCache.mu.Lock()
-	defer e.planCache.mu.Unlock()
-	e.planCache.entries = nil
-	e.planCache.lru = nil
-	e.clearTextPlanCache()
-	// REQ001497 follow-up: also clear the statement cache and the
-	// planner's memo so cached plans from the previous SLT file don't
-	// silently reused operator state (e.g. stale Iterators) against
-	// fresh tables.
-	e.clearStmtCache()
 	if e.planner != nil {
 		e.planner.mu.Lock()
 		e.planner.clearMemoLocked()
 		e.planner.mu.Unlock()
 	}
-	// REQ002129/2132: clear the unified PipelineCache so stale entries
-	// (e.g. broken partially-specialized specs cached before the gating
-	// logic was added) don't persist across test resets or different
-	// SLT files. PipelineBuilder.ClearCache is nil-safe / nil-cache safe.
 	if e.pipelineBuilder != nil {
 		e.pipelineBuilder.ClearCache()
-	}
-}
-
-// initTextPlanCache initialises the text-based plan cache. REQ001464.
-func (e *Executor) initTextPlanCache(maxSize int) {
-	if maxSize <= 0 {
-		maxSize = 1000
-	}
-	e.textPlanCache = &textPlanCache{
-		entries: make(map[string]*textPlanEntry, maxSize),
-		maxSize: maxSize,
-	}
-}
-
-// getTextPlan looks up a cached PlanResult by exact SQL text. REQ001464.
-func (e *Executor) getTextPlan(sql string) *pl.PlanResult {
-	if e.textPlanCache == nil {
-		return nil
-	}
-	e.textPlanCache.mu.Lock()
-	defer e.textPlanCache.mu.Unlock()
-	ent, ok := e.textPlanCache.entries[sql]
-	if !ok {
-		return nil
-	}
-	for i, entry := range e.textPlanCache.lru {
-		if entry == ent {
-			e.textPlanCache.lru = append(e.textPlanCache.lru[:i], e.textPlanCache.lru[i+1:]...)
-			break
-		}
-	}
-	e.textPlanCache.lru = append([]*textPlanEntry{ent}, e.textPlanCache.lru...)
-	return ent.plan
-}
-
-// putTextPlan stores a PlanResult keyed by exact SQL text. REQ001464.
-func (e *Executor) putTextPlan(sql string, plan *pl.PlanResult) {
-	if e.textPlanCache == nil {
-		return
-	}
-	e.textPlanCache.mu.Lock()
-	defer e.textPlanCache.mu.Unlock()
-	if _, ok := e.textPlanCache.entries[sql]; ok {
-		return
-	}
-	ent := &textPlanEntry{sql: sql, plan: plan}
-	e.textPlanCache.entries[sql] = ent
-	e.textPlanCache.lru = append([]*textPlanEntry{ent}, e.textPlanCache.lru...)
-	for len(e.textPlanCache.lru) > e.textPlanCache.maxSize {
-		oldest := e.textPlanCache.lru[len(e.textPlanCache.lru)-1]
-		e.textPlanCache.lru = e.textPlanCache.lru[:len(e.textPlanCache.lru)-1]
-		delete(e.textPlanCache.entries, oldest.sql)
 	}
 }
 
@@ -884,51 +569,9 @@ func (e *Executor) BuildPipeline(sql string) (*PX.PipelineSpec, error) {
 	return e.pipelineBuilder.Build(sql)
 }
 
-// planWithCache returns a compiled plan for stmt, checking the plan
-// cache first. On cache miss, plans via Planner.Plan and caches the
-// result. REQ001011.
-// REQ001195: parameterized cache key so queries with the same
-// structure but different literal values share a single cache entry.
-// On cache hit, comparison-literals in the plan tree are replaced
-// via replaceLiteralsOnTree using the current query's extracted values.
+// planWithCache returns a compiled plan for stmt. REQ002145: legacy
+// planCache removed; always plans directly via Planner.Plan.
 func (e *Executor) planWithCache(stmt PS.Stmt) (*pl.PlanResult, error) {
-	if e.planCache.entries != nil {
-		// REQ001972: EncodeMemoKey folds the parameterized clone into
-		// the hash buffer in one pass via a pooled bump allocator, so
-		// callers never hold a pointer into the arena.
-		key, params := pl.EncodeMemoKey(stmt)
-		if cached := e.getCachedPlan(key); cached != nil {
-			// REQ001585: the cached PlanResult shares the same AdaptiveOp
-			// wrapper instance across all callers. After the first execution,
-			// the AdaptiveOp is in a "compiled" state (direct=true) and its
-			// Inner operator tree is drained. Create a fresh PlanResult with
-			// a new AdaptiveOp wrapping the same inner tree so the operator
-			// is reusable. Without this, the second call to QueryAll for
-			// the same SQL returns 0 rows.
-			fresh := &pl.PlanResult{
-				Root:    AD.NewAdaptiveOp(cached.Root.(*AD.AdaptiveOp).Child(), key),
-				Cost:    cached.Cost,
-				MemoKey: key, // REQ002060: use current key, not stale cached.MemoKey
-			}
-			replaceLiteralsOnTree(fresh.Root, params)
-			return fresh, nil
-		}
-		plan, err := e.planner.Plan(stmt)
-		if err != nil {
-			return nil, err
-		}
-		if plan == nil || plan.Root == nil {
-			return nil, errors.New("ex: plan produced no root")
-		}
-		ResolvePlanSlots(plan.Root)
-		// REQ001420: skip executor cache for ConstRow (COUNT(*) fast path)
-		// since it's trivially cheap to create and caching shares the
-		// same operator tree across calls, causing races on mutable state.
-		if plan.Root != nil && !isConstRowPlan(plan.Root) {
-			e.putCachedPlan(key, plan)
-		}
-		return plan, nil
-	}
 	plan, err := e.planner.Plan(stmt)
 	if err != nil {
 		return nil, err
@@ -1209,64 +852,12 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 		}
 	}
 
-	// Try cache first (P0: StmtCache wiring, saves 12.70% CPU on parsing)
-	if e.stmtCache.entries != nil {
-		if cached := e.getCachedStmt(sql); cached != nil {
-			stmt := cached
-			// Check if this is a DML with RETURNING clause
-			if hasReturning(stmt) {
-				op, err := e.buildWriterOp(stmt)
-				if err != nil {
-					return Result{}, err
-				}
-				propagateParams(op, args, &e.paramBuf)
-				propagatePlanner(op, e.planner)
-				execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
-				execCtx.RowArena = e.ensureArena()
-				propagateExecContext(op, execCtx)
-				defer op.Close()
-				count, err := e.execReturning(ctx, op)
-				if err != nil {
-					return Result{}, err
-				}
-				return Result{RowsAffected: count}, nil
-			}
-
-			op, err := e.buildWriterOp(stmt)
-			if err != nil {
-				return Result{}, err
-			}
-			propagateParams(op, args, &e.paramBuf)
-			propagatePlanner(op, e.planner)
-			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
-			execCtx.RowArena = e.ensureArena()
-			propagateExecContext(op, execCtx)
-			defer op.Close()
-			if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
-				return Result{}, err
-			}
-			e.lastChanges = execCtx.LastChanges
-			e.totalChanges = execCtx.TotalChanges
-			res, err := extractResult(op)
-			if err == nil {
-				updateTableRowCount(op, e.planner)
-			}
-			if isDDLStmt(stmt) {
-				e.clearTextPlanCache()
-			}
-			return res, err
-		}
-	}
-
+	// REQ002145: legacy stmtCache removed — always parse fresh.
 	parser := PS.NewParser(sql)
 	defer parser.Close()
 	stmt, err := parser.Parse()
 	if err != nil {
 		return Result{}, err
-	}
-	// Cache the parsed statement
-	if e.stmtCache.entries != nil {
-		e.putCachedStmt(sql, stmt)
 	}
 
 	// Check if this is a DML with RETURNING clause
@@ -1312,9 +903,6 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 		e.lastChanges = execCtx.LastChanges
 		e.totalChanges = execCtx.TotalChanges
 		updateTableRowCount(op, e.planner)
-		if isDDLStmt(stmt) {
-			e.clearTextPlanCache()
-		}
 		return res, nil
 	}
 
@@ -1326,9 +914,6 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	res, err := extractResult(op)
 	if err == nil {
 		updateTableRowCount(op, e.planner)
-	}
-	if isDDLStmt(stmt) {
-		e.clearTextPlanCache()
 	}
 	return res, err
 }
@@ -1410,98 +995,13 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 			}, nil
 		}
 	}
-	// REQ001480: textPlanCache fast-path — bypass parse/plan/NormalizeForMemo
-	// on cache hit. Mirrors QueryAll's fast-path at ex.go:1162-1172.
-	if e.textPlanCache != nil {
-		if plan := e.getTextPlan(sql); plan != nil {
-			propagateParams(plan.Root, args, &e.paramBuf)
-			propagatePlanner(plan.Root, e.planner)
-			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-			execCtx.RowArena = e.ensureArena()
-			propagateExecContext(plan.Root, execCtx)
-			// REQ002058: wrap the cached plan in a fresh AdaptiveOp so
-			// Close() only closes the wrapper, not the cached tree.
-			// The previous code used defer plan.Root.Close() which closed
-			// the shared operator tree, causing subsequent cache hits to
-			// operate on a closed tree → ErrNoRows or panic.
-			cachedKey := plan.MemoKey
-			wrapper := AD.NewAdaptiveOp(plan.Root, cachedKey)
-			row, err := wrapper.Next(ctx)
-			wrapper.Close()
-			if err != nil {
-				if err == DT.ErrNoRows {
-					return &Rows{}, nil
-				}
-				return nil, err
-			}
-			DT.WithExecContext(&row, execCtx)
-			return &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]LX.TokenType(nil), row.Types...)}, nil
-		}
-	}
-	// Try cache first (P0: StmtCache wiring, saves 12.70% CPU on parsing)
-	if e.stmtCache.entries != nil {
-		if cached := e.getCachedStmt(sql); cached != nil {
-			stmt := cached
-			// Check if this is a DML with RETURNING clause
-			if hasReturning(stmt) {
-				op, err := e.buildWriterOp(stmt)
-				if err != nil {
-					return nil, err
-				}
-				propagateParams(op, args, &e.paramBuf)
-				defer op.Close()
-				var out []DT.Row
-				for {
-					row, err := op.Next(ctx)
-					if err != nil {
-						if err == DT.ErrNoRows {
-							break
-						}
-						return nil, err
-					}
-					out = append(out, row)
-				}
-				if len(out) == 0 {
-					return &Rows{}, nil
-				}
-				return &Rows{Cols: append([]string(nil), out[0].Cols...), Types: append([]LX.TokenType(nil), out[0].Types...)}, nil
-			}
-
-			plan, err := e.planWithCache(stmt)
-			if err != nil {
-				return nil, err
-			}
-			if plan == nil || plan.Root == nil {
-				return nil, errors.New("ex: plan produced no root")
-			}
-			propagateParams(plan.Root, args, &e.paramBuf)
-			propagatePlanner(plan.Root, e.planner)
-			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-			execCtx.RowArena = e.ensureArena()
-			propagateExecContext(plan.Root, execCtx)
-			defer plan.Root.Close()
-			row, err := plan.Root.Next(ctx)
-			if err != nil {
-				if err == DT.ErrNoRows {
-					return &Rows{}, nil
-				}
-				return nil, err
-			}
-			DT.WithExecContext(&row, execCtx)
-			rs := &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]LX.TokenType(nil), row.Types...)}
-			return rs, nil
-		}
-	}
-
+	// REQ002145: legacy caches (textPlanCache, stmtCache) removed.
+	// Always parse fresh.
 	parser := PS.NewParser(sql)
 	defer parser.Close()
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, err
-	}
-	// Cache the parsed statement
-	if e.stmtCache.entries != nil {
-		e.putCachedStmt(sql, stmt)
 	}
 
 	// Check if this is a DML with RETURNING clause
@@ -1568,45 +1068,12 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 		return rows, nil
 	}
 
-	// REQ002010: textPlanCache not consulted in QueryAll — the cached
-	// plan's operator tree state (e.g., Aggregate.buf, ValuesOp.evaluated)
-	// is modified by the first execution and not fully reset by Close(),
-	// and cached plans retain closed operator tree memory preventing GC
-	// from collecting Filter/Project/SeqScan buffers (26% of alloc bytes
-	// indirectly via batchBufPool). The stmtCache (parsed AST) still
-	// provides the parse-speedup (12.7% CPU). textPlanCache remains
-	// active for Query/Explain/QueryStreamCompiled paths.
-
-	// Try cache first (P0: StmtCache wiring, saves 12.70% CPU on parsing)
-	if e.stmtCache.entries != nil {
-		if cached := e.getCachedStmt(sql); cached != nil {
-			stmt := cached
-			plan, err := e.planWithCache(stmt)
-			if err != nil {
-				return nil, err
-			}
-			if plan == nil || plan.Root == nil {
-				return nil, errors.New("ex: plan produced no root")
-			}
-			propagateParams(plan.Root, args, &e.paramBuf)
-			propagatePlanner(plan.Root, e.planner)
-			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-			execCtx.RowArena = e.ensureArena()
-			propagateExecContext(plan.Root, execCtx)
-			defer plan.Root.Close()
-			return e.drainPlanExecCtx(ctx, plan, execCtx)
-		}
-	}
-
+	// REQ002145: legacy stmtCache removed — always parse fresh.
 	parser := PS.NewParser(sql)
 	defer parser.Close()
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, err
-	}
-	// Cache the parsed statement
-	if e.stmtCache.entries != nil {
-		e.putCachedStmt(sql, stmt)
 	}
 	plan, err := e.planWithCache(stmt)
 	if err != nil {
@@ -1701,18 +1168,8 @@ func (e *Executor) queryAllBuildPipeline(ctx context.Context, sql string, args [
 	return rows, true
 }
 
-// clearTextPlanCache drops all entries from the text cache. REQ001464.
-func (e *Executor) clearTextPlanCache() {
-	if e.textPlanCache == nil {
-		return
-	}
-	e.textPlanCache.mu.Lock()
-	defer e.textPlanCache.mu.Unlock()
-	// REQ001673: clear() preserves map capacity, avoiding the
-	// 13.34MB per-Reset alloc from make(map, maxSize).
-	clear(e.textPlanCache.entries)
-	e.textPlanCache.lru = nil
-}
+// clearTextPlanCache is a no-op — legacy textPlanCache removed. REQ002145.
+func (e *Executor) clearTextPlanCache() {}
 
 // isDDLStmt reports whether stmt modifies the schema (CREATE/DROP/ALTER). REQ001464.
 func isDDLStmt(stmt PS.Stmt) bool {
@@ -1953,28 +1410,8 @@ func (e *Executor) ExecCompiled(ctx context.Context, cp *CompiledPlan, args ...a
 	return Result{}, nil
 }
 
-// Precompile parses each SQL in sqls and populates the shared stmt cache.
-// Subsequent QueryAll calls skip the parse step. Plan caching is handled
-// by planWithCache on the first execution of each SQL. REQ001458.
+// Precompile is a no-op — legacy stmtCache removed. REQ002145.
 func (e *Executor) Precompile(ctx context.Context, sqls []string) {
-	if e.stmtCache == nil || e.stmtCache.entries == nil {
-		return
-	}
-	for _, sql := range sqls {
-		if sql == "" {
-			continue
-		}
-		if e.getCachedStmt(sql) != nil {
-			continue // already cached
-		}
-		parser := PS.NewParser(sql)
-		stmt, err := parser.Parse()
-		parser.Close()
-		if err != nil {
-			continue
-		}
-		e.putCachedStmt(sql, stmt)
-	}
 }
 
 // propagatePlanner walks the operator tree rooted at root and
@@ -2214,16 +1651,8 @@ func asAnySlice(args []any, buf *[]any) []any {
 // Explain plans the statement and returns a human-readable
 // description of the operator tree. The plan is closed before
 // returning, so Explain does not run the query.
-// REQ001480: textPlanCache fast-path — bypass parse/plan/NormalizeForMemo
-// on cache hit. On hit, plan.Root is borrowed from the cache and must
-// not be Closed (other call paths still need it).
+// REQ002145: legacy textPlanCache removed; always plans fresh.
 func (e *Executor) Explain(sql string) (string, error) {
-	if e.textPlanCache != nil {
-		if plan := e.getTextPlan(sql); plan != nil && plan.Root != nil {
-			nodes := buildPlanNodeTree(plan.Root, e.planner)
-			return formatPlanNodes(nodes), nil
-		}
-	}
 	parser := PS.NewParser(sql)
 	defer parser.Close()
 	stmt, err := parser.Parse()
@@ -2236,11 +1665,6 @@ func (e *Executor) Explain(sql string) (string, error) {
 	}
 	if plan == nil || plan.Root == nil {
 		return "", errors.New("ex: plan produced no root")
-	}
-	// REQ001480: populate textPlanCache so subsequent Explain / Query /
-	// QueryAll calls with the same SQL bypass re-planning.
-	if e.textPlanCache != nil {
-		e.putTextPlan(sql, plan)
 	}
 	defer plan.Root.Close()
 	nodes := buildPlanNodeTree(plan.Root, e.planner)
@@ -2669,28 +2093,10 @@ func extractAttachPath(expr PS.Expr) (string, error) {
 	return s.Val, nil
 }
 
-// QueryStream runs a SELECT and returns a streaming iterator that
-// yields rows one at a time. The caller MUST call Close on the
-// returned iterator to release the underlying plan resources.
-// REQ000348.
+// StmtCacheStats is a no-op — legacy stmtCache removed. REQ002145.
 func (e *Executor) StmtCacheStats() *AD.CacheStats {
-	e.stmtCache.mu.Lock()
-	defer e.stmtCache.mu.Unlock()
-	// Count entries
-	size := len(e.stmtCache.entries)
-	return &AD.CacheStats{
-		Hits:      0, // tracked separately if needed
-		Misses:    0,
-		Evictions: 0,
-		MaxSize:   size,
-	}
+	return &AD.CacheStats{}
 }
 
-// ResetGlobalStmtCache clears the global shared statement cache.
-// Used in tests to prevent cross-test contamination. REQ001223.
-func ResetGlobalStmtCache() {
-	globalStmtCache.mu.Lock()
-	defer globalStmtCache.mu.Unlock()
-	clear(globalStmtCache.entries)
-	globalStmtCache.lru = globalStmtCache.lru[:0]
-}
+// ResetGlobalStmtCache is a no-op — legacy stmtCache removed. REQ002145.
+func ResetGlobalStmtCache() {}

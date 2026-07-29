@@ -58,7 +58,8 @@ type replayer struct {
 	log        lg.Logger
 	compressed bool // REQ000034: lz4-compressed segment flag
 
-	closed atomicBool
+	activeTXNs map[uint64]struct{} // REQ002056: active TXNs from checkpoint
+	closed     atomicBool
 }
 
 // New constructs a Replayer (R35).
@@ -108,6 +109,11 @@ func (r *replayer) Replay() error {
 		if r.log != nil {
 			r.log.Info("rp.replay", "checkpoint_lsn", startLSN)
 		}
+		// REQ002056: track active transactions from checkpoint for rollback
+		r.activeTXNs = make(map[uint64]struct{}, len(cp.ActiveTXNs))
+		for _, id := range cp.ActiveTXNs {
+			r.activeTXNs[id] = struct{}{}
+		}
 	}
 
 	segsToScan := segments
@@ -132,6 +138,22 @@ func (r *replayer) Replay() error {
 				r.log.Error("rp.replay", "segment", segNum, "err", err)
 			}
 			return err
+		}
+	}
+
+	// REQ002056: roll back any transactions that were active at checkpoint
+	// but never committed or rolled back during replay.
+	for txnID := range r.activeTXNs {
+		delete(r.activeTXNs, txnID)
+		if r.cb.OnRollback != nil {
+			if err := r.cb.OnRollback(txnID); err != nil {
+				if r.log != nil {
+					r.log.Warn("rp.replay", "rollback_txn", txnID, "err", err)
+				}
+			}
+		}
+		if r.log != nil {
+			r.log.Info("rp.replay", "rollback_active_txn", txnID)
 		}
 	}
 
@@ -288,11 +310,15 @@ func (r *replayer) applyRecord(rec *wr.LogRecord) error {
 		}
 
 	case wr.RTCommit:
+		// REQ002056: remove from active TXN set — this transaction completed.
+		delete(r.activeTXNs, rec.TxnID)
 		if r.cb.OnCommit != nil {
 			return r.cb.OnCommit(rec.TxnID, rec.BlockID)
 		}
 
 	case wr.RTRollback:
+		// REQ002056: remove from active TXN set — this transaction was rolled back.
+		delete(r.activeTXNs, rec.TxnID)
 		if r.cb.OnRollback != nil {
 			return r.cb.OnRollback(rec.TxnID)
 		}

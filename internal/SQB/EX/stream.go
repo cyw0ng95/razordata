@@ -227,27 +227,12 @@ func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*s
 		return iter, nil
 	}
 
-	// REQ000771: try the in-Executor cache before parsing. The
-	// ST.Stmt.Query hot path goes through here, and avoiding the
-	// parser pass on repeated queries reclaims the 12% CPU that
-	// parsing was costing.
-	var stmt PS.Stmt
-	if e.stmtCache.entries != nil {
-		if cached := e.getCachedStmt(sql); cached != nil {
-			stmt = cached
-		}
-	}
-	if stmt == nil {
-		parser := PS.NewParser(sql)
-		defer parser.Close()
-		parsed, err := parser.Parse()
-		if err != nil {
-			return nil, err
-		}
-		stmt = parsed
-		if e.stmtCache.entries != nil {
-			e.putCachedStmt(sql, stmt)
-		}
+	// REQ002145: legacy stmtCache removed — always parse fresh.
+	parser := PS.NewParser(sql)
+	defer parser.Close()
+	stmt, err := parser.Parse()
+	if err != nil {
+		return nil, err
 	}
 	return e.QueryStreamFromAST(ctx, stmt, args...)
 }
