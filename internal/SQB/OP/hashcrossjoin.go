@@ -236,6 +236,10 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 	const maxMaterialize = 4096
 	j.rightRows = make([]pl.Row, 0, 64)
 	j.rightHasPrefix = false
+	// REQ002151: when no equi-key is set (implicit join with WHERE-only
+	// predicates), all rows go into a single bucket (hash 0) so the
+	// probe produces a Cartesian product.
+	noKey := j.rightKey == ""
 	// Check first row to determine prefix state (all rows from the
 	// same scan share the same Cols). REQ000874.
 	if firstRow, err := j.right.Next(ctx); err == nil {
@@ -251,12 +255,18 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 		} else {
 			prefixed.Cols = prefixCols(firstRow.Cols, j.rightTbl)
 		}
-		keyVal, ok := lookupColumn(&prefixed, j.rightTbl, j.rightKey)
-		if ok && keyVal != nil {
-			h := hashValue(j.hashSeed, keyVal)
+		if noKey {
 			idx := len(j.rightRows)
 			j.rightRows = append(j.rightRows, prefixed)
-			j.buckets[h] = append(j.buckets[h], idx)
+			j.buckets[0] = append(j.buckets[0], idx)
+		} else {
+			keyVal, ok := lookupColumn(&prefixed, j.rightTbl, j.rightKey)
+			if ok && keyVal != nil {
+				h := hashValue(j.hashSeed, keyVal)
+				idx := len(j.rightRows)
+				j.rightRows = append(j.rightRows, prefixed)
+				j.buckets[h] = append(j.buckets[h], idx)
+			}
 		}
 	}
 	for {
@@ -275,14 +285,20 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 		} else {
 			prefixed.Cols = prefixCols(row.Cols, j.rightTbl)
 		}
-		keyVal, ok := lookupColumn(&prefixed, j.rightTbl, j.rightKey)
-		if !ok || keyVal == nil {
-			continue
+		if noKey {
+			idx := len(j.rightRows)
+			j.rightRows = append(j.rightRows, prefixed)
+			j.buckets[0] = append(j.buckets[0], idx)
+		} else {
+			keyVal, ok := lookupColumn(&prefixed, j.rightTbl, j.rightKey)
+			if !ok || keyVal == nil {
+				continue
+			}
+			h := hashValue(j.hashSeed, keyVal)
+			idx := len(j.rightRows)
+			j.rightRows = append(j.rightRows, prefixed)
+			j.buckets[h] = append(j.buckets[h], idx)
 		}
-		h := hashValue(j.hashSeed, keyVal)
-		idx := len(j.rightRows)
-		j.rightRows = append(j.rightRows, prefixed)
-		j.buckets[h] = append(j.buckets[h], idx)
 		if len(j.rightRows) >= maxMaterialize {
 			j.crossOverflow = true
 		}
@@ -301,8 +317,43 @@ func (j *HashCrossJoin) build(ctx context.Context) error {
 // crossRightIdx (position within bucket's index slice), and
 // crossBucketPos (current bucket index list reference).
 func (j *HashCrossJoin) nextCross(_ context.Context) (pl.Row, error) {
+	// REQ002151: when no equi-key is set, produce a Cartesian product
+	// (all left rows × all right rows).
+	noKey := j.leftKey == ""
 	for j.crossLeftIdx < len(j.leftRows) {
 		l := &j.leftRows[j.crossLeftIdx]
+		if noKey {
+			// Cartesian product: match every left row with every right row.
+			for j.crossRightIdx < len(j.rightRows) {
+				ridx := j.crossRightIdx
+				j.crossRightIdx++
+				r := &j.rightRows[ridx]
+				off := len(j.dataBuf)
+				required := off + j.dataPerRow
+				if cap(j.dataBuf) < required {
+					newCap := cap(j.dataBuf) * 2
+					if newCap < required {
+						newCap = required
+					}
+					buf := make([]pl.Value, required, newCap)
+					copy(buf, j.dataBuf)
+					j.dataBuf = buf
+				}
+				j.dataBuf = j.dataBuf[:required]
+				dataSlice := j.dataBuf[off : off+j.dataPerRow : off+j.dataPerRow]
+				copy(dataSlice, l.Data)
+				copy(dataSlice[len(l.Data):], r.Data)
+				return pl.Row{
+					Cols:     j.sharedCols,
+					Types:    j.sharedTypes,
+					Data:     dataSlice,
+					ColIndex: j.sharedColIndex,
+				}, nil
+			}
+			j.crossRightIdx = 0
+			j.crossLeftIdx++
+			continue
+		}
 		lv, lok := lookupColumn(l, j.leftTbl, j.leftKey)
 		if !lok || lv == nil {
 			j.crossLeftIdx++

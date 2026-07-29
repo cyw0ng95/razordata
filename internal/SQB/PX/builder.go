@@ -297,6 +297,10 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 		return decomposeOffset(o, st, planner, specialize)
 	case *OP.HashJoin:
 		return decomposeHashJoin(o, st, planner, specialize)
+	case *OP.HashCrossJoin:
+		return decomposeHashCrossJoin(o, st, planner, specialize)
+	case *OP.NestedLoopJoin:
+		return decomposeNestedLoopJoin(o, st, planner, specialize)
 	case *OP.Distinct:
 		return decomposeDistinct(o, st, planner, specialize)
 	case *AG.Aggregate:
@@ -521,6 +525,95 @@ func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlann
 	// Fallback: couldn't resolve all keys
 	joinIdx := st.addStage(&LegacyBatchStageSpec{
 		Root:       h,
+		Planner:    planner,
+		Specialize: specialize,
+	}, joinOut)
+	st.addEdge(joinIdx, leftIdx, LeftChild)
+	st.addEdge(joinIdx, rightIdx, RightChild)
+	return joinIdx
+}
+
+// decomposeHashCrossJoin creates a native HashJoinStageSpec for HashCrossJoin.
+// HashCrossJoin has single-column equi-keys (LeftKeyName/RightKeyName) that
+// we resolve against left/right child schemas. REQ002151.
+func decomposeHashCrossJoin(h *OP.HashCrossJoin, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	leftIdx := decomposeOp(h.LeftChild(), st, planner, specialize)
+	rightIdx := decomposeOp(h.RightChild(), st, planner, specialize)
+	leftOut := st.childOutput(leftIdx)
+	rightOut := st.childOutput(rightIdx)
+
+	leftKey := h.LeftKeyName()
+	rightKey := h.RightKeyName()
+
+	var probeKeys, buildKeys []int
+	allResolved := leftKey != "" && rightKey != ""
+	if allResolved {
+		li := leftOut.findCol(leftKey)
+		ri := rightOut.findCol(rightKey)
+		if li == -1 || ri == -1 {
+			allResolved = false
+		} else {
+			probeKeys = []int{li}
+			buildKeys = []int{ri}
+		}
+	}
+
+	var joinOut outputSchema
+	if leftOut.resolved() && rightOut.resolved() {
+		n1, n2 := len(leftOut.names), len(rightOut.names)
+		names := make([]string, 0, n1+n2)
+		types := make([]LX.TokenType, 0, n1+n2)
+		names = append(names, leftOut.names...)
+		types = append(types, leftOut.types...)
+		names = append(names, rightOut.names...)
+		types = append(types, rightOut.types...)
+		joinOut = outputSchema{names: names, types: types}
+	}
+
+	if allResolved {
+		joinIdx := st.addStage(&HashJoinStageSpec{
+			BuildKeys: buildKeys,
+			ProbeKeys: probeKeys,
+			Kind:      JoinKindInner,
+		}, joinOut)
+		st.addEdge(joinIdx, leftIdx, LeftChild)
+		st.addEdge(joinIdx, rightIdx, RightChild)
+		return joinIdx
+	}
+	// Fallback: key names not resolvable.
+	joinIdx := st.addStage(&LegacyBatchStageSpec{
+		Root:       h,
+		Planner:    planner,
+		Specialize: specialize,
+	}, joinOut)
+	st.addEdge(joinIdx, leftIdx, LeftChild)
+	st.addEdge(joinIdx, rightIdx, RightChild)
+	return joinIdx
+}
+
+// decomposeNestedLoopJoin falls back to LegacyBatchStageSpec with a
+// populated output schema. NLJ has no equi-keys for native HashJoin.
+// REQ002151.
+func decomposeNestedLoopJoin(n *OP.NestedLoopJoin, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	leftIdx := decomposeOp(n.LeftChild(), st, planner, specialize)
+	rightIdx := decomposeOp(n.RightChild(), st, planner, specialize)
+	leftOut := st.childOutput(leftIdx)
+	rightOut := st.childOutput(rightIdx)
+
+	var joinOut outputSchema
+	if leftOut.resolved() && rightOut.resolved() {
+		n1, n2 := len(leftOut.names), len(rightOut.names)
+		names := make([]string, 0, n1+n2)
+		types := make([]LX.TokenType, 0, n1+n2)
+		names = append(names, leftOut.names...)
+		types = append(types, leftOut.types...)
+		names = append(names, rightOut.names...)
+		types = append(types, rightOut.types...)
+		joinOut = outputSchema{names: names, types: types}
+	}
+
+	joinIdx := st.addStage(&LegacyBatchStageSpec{
+		Root:       n,
 		Planner:    planner,
 		Specialize: specialize,
 	}, joinOut)

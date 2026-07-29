@@ -641,6 +641,12 @@ func transformBitmapHeapScan(b *OP.BitmapHeapScan, p *Planner) UT.BatchProducer 
 // transformHashCrossJoin converts a row HashCrossJoin to a pure batch
 // hash cross join. REQ001628: eliminates the row-based wrapper.
 func transformHashCrossJoin(hcj *OP.HashCrossJoin, p *Planner) UT.BatchProducer {
+	// REQ002151: when no equi-keys are set (e.g. implicit join with
+	// WHERE-only predicates), return nil so the fallback path uses
+	// the row-based HashCrossJoin + native FilterStage.
+	if hcj.LeftKeyName() == "" || hcj.RightKeyName() == "" {
+		return nil
+	}
 	left := transformOp(hcj.LeftChild(), p)
 	if left == nil {
 		return nil
