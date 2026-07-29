@@ -549,6 +549,231 @@ func TestReplayWithCheckpointTruncation(t *testing.T) {
 // tracks, so the next chunk read skipped records (the file position
 // jumped past them). The outer `offset += int64(off)` after the loop
 // was the correct advance.
+// TestReplay_ActiveTXNsRolledBack verifies that transactions active at
+// checkpoint time but never committed/rolled back in the WAL after the
+// checkpoint are rolled back via OnRollback during replay (REQ002056).
+func TestReplay_ActiveTXNsRolledBack(t *testing.T) {
+	tmp := t.TempDir()
+
+	sm, err := setupSegmentManager(tmp)
+	if err != nil {
+		t.Fatalf("setupSegmentManager: %v", err)
+	}
+	defer sm.Close()
+
+	bp, err := setupBufferPool(tmp)
+	if err != nil {
+		t.Fatalf("setupBufferPool: %v", err)
+	}
+	defer bp.Close()
+
+	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
+	if err != nil {
+		t.Fatalf("wr.New: %v", err)
+	}
+
+	// Write some data records with commit (completed transactions).
+	_, err = w.Append(&wr.WriteBatch{
+		TxnID: 1,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTData, BlockID: 1, Value: []byte("committed_data")},
+			{Type: wr.RTCommit, TxnID: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("wr.Append committed: %v", err)
+	}
+
+	// Write data records for active (uncommitted) transactions.
+	_, err = w.Append(&wr.WriteBatch{
+		TxnID: 2,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTData, BlockID: 2, Value: []byte("active_txn_2_data")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("wr.Append active txn 2: %v", err)
+	}
+	_, err = w.Append(&wr.WriteBatch{
+		TxnID: 3,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTData, BlockID: 3, Value: []byte("active_txn_3_data")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("wr.Append active txn 3: %v", err)
+	}
+
+	// Write a checkpoint that records TXN 2 and 3 as active.
+	cp := &wr.Checkpoint{
+		LSN:              100,
+		CatalogRootPtr:   200,
+		ManifestChecksum: 300,
+		ActiveTXNs:       []uint64{2, 3},
+	}
+	header, txns := wr.AppendCheckpointPayload(cp)
+	_, err = w.Append(&wr.WriteBatch{
+		TxnID: 999,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTCheckpoint, BlockID: uint64(len(cp.ActiveTXNs)), Key: header, Value: txns},
+		},
+	})
+	if err != nil {
+		t.Fatalf("wr.Append checkpoint: %v", err)
+	}
+
+	// Write more data + commit after checkpoint (TXN 4 completed).
+	_, err = w.Append(&wr.WriteBatch{
+		TxnID: 4,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTData, BlockID: 4, Value: []byte("post_checkpoint_data")},
+			{Type: wr.RTCommit, TxnID: 4},
+		},
+	})
+	if err != nil {
+		t.Fatalf("wr.Append post-checkpoint: %v", err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatalf("wr.Sync: %v", err)
+	}
+	w.Close()
+
+	var rolledBackTXNs []uint64
+	cb := Callbacks{
+		OnData: func(blockID uint64, data []byte) error {
+			return nil
+		},
+		OnCommit: func(txnID uint64, commitTS uint64) error {
+			return nil
+		},
+		OnRollback: func(txnID uint64) error {
+			rolledBackTXNs = append(rolledBackTXNs, txnID)
+			return nil
+		},
+	}
+
+	r, err := New(tmp, sm, bp, cb, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Close()
+
+	if err := r.Replay(); err != nil {
+		t.Errorf("Replay: %v", err)
+	}
+
+	if len(rolledBackTXNs) != 2 {
+		t.Errorf("expected 2 rolled back TXNs, got %d: %v", len(rolledBackTXNs), rolledBackTXNs)
+	}
+	rolled := make(map[uint64]bool)
+	for _, id := range rolledBackTXNs {
+		rolled[id] = true
+	}
+	if !rolled[2] {
+		t.Error("expected TXN 2 to be rolled back")
+	}
+	if !rolled[3] {
+		t.Error("expected TXN 3 to be rolled back")
+	}
+}
+
+// TestReplay_ActiveTXNsResolvedAfterCheckpoint verifies that active TXNs
+// from checkpoint that are later committed or rolled back in the WAL are
+// NOT rolled back again during replay (REQ002056).
+func TestReplay_ActiveTXNsResolvedAfterCheckpoint(t *testing.T) {
+	tmp := t.TempDir()
+
+	sm, err := setupSegmentManager(tmp)
+	if err != nil {
+		t.Fatalf("setupSegmentManager: %v", err)
+	}
+	defer sm.Close()
+
+	bp, err := setupBufferPool(tmp)
+	if err != nil {
+		t.Fatalf("setupBufferPool: %v", err)
+	}
+	defer bp.Close()
+
+	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
+	if err != nil {
+		t.Fatalf("wr.New: %v", err)
+	}
+
+	// Write data for active TXN 2.
+	_, err = w.Append(&wr.WriteBatch{
+		TxnID: 2,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTData, BlockID: 2, Value: []byte("active_txn_2_data")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("wr.Append active txn 2: %v", err)
+	}
+
+	// Write checkpoint with TXN 2 active.
+	cp := &wr.Checkpoint{
+		LSN:              50,
+		CatalogRootPtr:   100,
+		ManifestChecksum: 200,
+		ActiveTXNs:       []uint64{2},
+	}
+	header, txns := wr.AppendCheckpointPayload(cp)
+	_, err = w.Append(&wr.WriteBatch{
+		TxnID: 999,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTCheckpoint, BlockID: uint64(len(cp.ActiveTXNs)), Key: header, Value: txns},
+		},
+	})
+	if err != nil {
+		t.Fatalf("wr.Append checkpoint: %v", err)
+	}
+
+	// TXN 2 is committed after checkpoint — should NOT be rolled back.
+	_, err = w.Append(&wr.WriteBatch{
+		TxnID: 2,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTCommit, TxnID: 2},
+		},
+	})
+	if err != nil {
+		t.Fatalf("wr.Append commit txn 2: %v", err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatalf("wr.Sync: %v", err)
+	}
+	w.Close()
+
+	var rolledBackTXNs []uint64
+	cb := Callbacks{
+		OnData: func(blockID uint64, data []byte) error {
+			return nil
+		},
+		OnCommit: func(txnID uint64, commitTS uint64) error {
+			return nil
+		},
+		OnRollback: func(txnID uint64) error {
+			rolledBackTXNs = append(rolledBackTXNs, txnID)
+			return nil
+		},
+	}
+
+	r, err := New(tmp, sm, bp, cb, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Close()
+
+	if err := r.Replay(); err != nil {
+		t.Errorf("Replay: %v", err)
+	}
+
+	if len(rolledBackTXNs) != 0 {
+		t.Errorf("expected 0 rolled back TXNs (TXN 2 was committed after checkpoint), got %d: %v",
+			len(rolledBackTXNs), rolledBackTXNs)
+	}
+}
+
 func TestReplayLargeSegmentSpansChunks(t *testing.T) {
 	tmp := t.TempDir()
 
