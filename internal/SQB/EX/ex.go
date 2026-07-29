@@ -790,9 +790,9 @@ func (e *Executor) initPipelineBuilderEnabled() {
 	}
 	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize)
 	// REQ002148: purePipelineFastPath defaults to off. The pipeline path
-	// is the primary execution path, but not all query types are supported
-	// yet (joins, index scans, etc.). Tests that need the pipeline path
-	// should explicitly call EnablePipelinePath().
+	// is the primary execution path, but several operator types (BitmapScan,
+	// implicit joins, semi-joins, complex subqueries, foreign keys) still
+	// have issues. Enable once all failures are resolved.
 	e.purePipelineFastPath.Store(false)
 }
 
