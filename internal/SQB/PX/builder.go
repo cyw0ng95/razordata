@@ -1511,4 +1511,14 @@ func propagatePlannerToTree(root DT.Operator, planner PL.QueryPlanner) {
 		propagatePlannerToTree(lr.LeftChild(), planner)
 		propagatePlannerToTree(lr.RightChild(), planner)
 	}
+	// REQ002149: handle multi-child operators (BitmapHeapScan, etc.)
+	// that store children in a slice rather than a single Child().
+	type multiChilder interface {
+		Children() []DT.Operator
+	}
+	if mc, ok := root.(multiChilder); ok {
+		for _, child := range mc.Children() {
+			propagatePlannerToTree(child, planner)
+		}
+	}
 }

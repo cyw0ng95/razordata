@@ -83,6 +83,30 @@ func (b *BitmapHeapScan) Store() DT.Store { return b.store }
 // reaching into unexported state.
 func (b *BitmapHeapScan) IndexScans() []pl.Operator { return b.indexScans }
 
+// Children returns the child IndexScan operators for multi-child
+// tree walks (propagatePlannerToTree, etc.). REQ002149.
+func (b *BitmapHeapScan) Children() []DT.Operator {
+	children := make([]DT.Operator, len(b.indexScans))
+	for i, c := range b.indexScans {
+		children[i] = c
+	}
+	return children
+}
+
+// WithPlanner propagates the planner to all child IndexScan operators.
+// REQ002149: needed for propagatePlannerToTree to reach BitmapHeapScan's
+// children so they can access the store during execution.
+func (b *BitmapHeapScan) WithPlanner(p pl.QueryPlanner) pl.Operator {
+	for _, child := range b.indexScans {
+		if w, ok := child.(interface {
+			WithPlanner(pl.QueryPlanner) pl.Operator
+		}); ok {
+			w.WithPlanner(p)
+		}
+	}
+	return b
+}
+
 // buildBitmap drains each child IndexScan, collects primary keys,
 // sorts and dedupes them. Safe to call repeatedly (idempotent).
 func (b *BitmapHeapScan) buildBitmap(ctx context.Context) error {
