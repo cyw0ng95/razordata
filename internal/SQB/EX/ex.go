@@ -789,8 +789,10 @@ func (e *Executor) initPipelineBuilderEnabled() {
 		return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(vec))
 	}
 	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize)
-	// REQ002148: purePipelineFastPath defaults to off.
-	e.purePipelineFastPath.Store(false)
+	// Enable pure pipeline path by default. This activates the BuildPipeline-based
+	// execution flow for QueryAll, Query, QueryStream, Exec, CompilePlan, etc.
+	// REQ002129. When all features are verified, this can remain true permanently.
+	e.purePipelineFastPath.Store(true)
 }
 
 // EnablePipelinePath activates the pipeline path for QueryAll and

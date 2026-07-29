@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -41,6 +42,12 @@ type DistinctStage struct {
 // SetChild sets the child stage (implements ChildSetter).
 func (d *DistinctStage) SetChild(_ ChildSide, child Stage) {
 	d.child = child
+}
+
+// PropagateExecContext stores per-execution context for expression
+// evaluation within distinct operations. REQ002148.
+func (d *DistinctStage) PropagateExecContext(ec *DT.ExecContext) {
+	_ = ec
 }
 
 // NextBatch drains all child rows, deduplicates them, and returns

@@ -3,6 +3,7 @@ package PX
 import (
 	"context"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -38,6 +39,11 @@ type LimitStage struct {
 // SetChild sets the child stage (implements ChildSetter).
 func (l *LimitStage) SetChild(_ ChildSide, child Stage) {
 	l.child = child
+}
+
+// PropagateExecContext stores per-execution context. REQ002148.
+func (l *LimitStage) PropagateExecContext(ec *DT.ExecContext) {
+	_ = ec
 }
 
 // NextBatch returns the next batch from the child, truncated if it

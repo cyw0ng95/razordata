@@ -124,6 +124,10 @@ func TestPlanner_SemiJoin(t *testing.T) {
 		// t2.tid=1 matches (t1.id=1), t2.tid=2 matches (t1.id=2)
 		if len(rows) != 2 {
 			t.Errorf("got %d rows, want 2; data=%v", len(rows), rows)
+			// Debug: print actual rows for diagnosis
+			for i, r := range rows {
+				t.Logf("Row %v data: %+v", i, r.Data)
+			}
 		}
 	})
 	t.Run("not_exists", func(t *testing.T) {

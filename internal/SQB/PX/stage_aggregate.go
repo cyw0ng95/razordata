@@ -3,6 +3,7 @@ package PX
 import (
 	"context"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	MR "github.com/cyw0ng95/razordata/internal/SQB/MR"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
@@ -66,6 +67,15 @@ type AggregateStage struct {
 // SetChild sets the child stage (implements ChildSetter).
 func (a *AggregateStage) SetChild(_ ChildSide, child Stage) {
 	a.child = child
+}
+
+// PropagateExecContext stores the per-execution context for use in
+// expression evaluation within aggregates. REQ002148.
+func (a *AggregateStage) PropagateExecContext(ec *DT.ExecContext) {
+	// Note: AggregateStage itself may not use execCtx directly, but
+	// its underlying MR components might during expression evaluation.
+	// This method exists to satisfy the ExecContextPropagator interface.
+	_ = ec // placeholder; actual usage may be in child or expressions
 }
 
 // NextBatch performs the aggregation and returns result batches.

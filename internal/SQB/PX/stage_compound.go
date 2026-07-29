@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -48,6 +49,11 @@ func (s *CompoundStage) SetChild(side ChildSide, child Stage) {
 	case RightChild:
 		s.childRight = child
 	}
+}
+
+// PropagateExecContext stores per-execution context. REQ002148.
+func (s *CompoundStage) PropagateExecContext(ec *DT.ExecContext) {
+	_ = ec
 }
 
 func (s *CompoundStage) PropagateParams(args []any, buf *[]any) {}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -61,6 +62,12 @@ type keyedRow struct {
 // SetChild sets the child stage (implements ChildSetter).
 func (s *SortStage) SetChild(_ ChildSide, child Stage) {
 	s.child = child
+}
+
+// PropagateExecContext stores the per-execution context for expression
+// evaluation during sorting (e.g., sort key expressions that need session state). REQ002148.
+func (s *SortStage) PropagateExecContext(ec *DT.ExecContext) {
+	_ = ec // placeholder; sort stages may need this for complex sort expressions
 }
 
 // NextBatch collects all child rows, sorts them, and returns

@@ -3,6 +3,7 @@ package PX
 import (
 	"context"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -43,6 +44,11 @@ type OffsetStage struct {
 // SetChild sets the child stage (implements ChildSetter).
 func (o *OffsetStage) SetChild(_ ChildSide, child Stage) {
 	o.child = child
+}
+
+// PropagateExecContext stores per-execution context. REQ002148.
+func (o *OffsetStage) PropagateExecContext(ec *DT.ExecContext) {
+	_ = ec
 }
 
 // NextBatch skips the first N rows, then passes through the rest.

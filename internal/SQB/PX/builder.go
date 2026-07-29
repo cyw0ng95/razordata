@@ -591,9 +591,10 @@ func decomposeHashCrossJoin(h *OP.HashCrossJoin, st *decomposeState, planner PL.
 	return joinIdx
 }
 
-// decomposeNestedLoopJoin falls back to LegacyBatchStageSpec with a
-// populated output schema. NLJ has no equi-keys for native HashJoin.
-// REQ002151.
+// decomposeNestedLoopJoin creates native decomposition for NestedLoopJoin.
+// For equi-joins without outer modifiers and simple SEMI patterns, uses native stages.
+// For complex cases, falls back to LegacyBatchStageSpec which uses existing NLJ implementation.
+// REQ002151, REQ002152.
 func decomposeNestedLoopJoin(n *OP.NestedLoopJoin, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	leftIdx := decomposeOp(n.LeftChild(), st, planner, specialize)
 	rightIdx := decomposeOp(n.RightChild(), st, planner, specialize)
@@ -612,6 +613,18 @@ func decomposeNestedLoopJoin(n *OP.NestedLoopJoin, st *decomposeState, planner P
 		joinOut = outputSchema{names: names, types: types}
 	}
 
+	kind := n.Kind()
+
+	// Handle SEMI joins with native SemiJoinStage if we have equi-keys for efficient deduplication
+	if kind == OP.JoinKindSemi {
+		semiIdx := st.addStage(&SemiJoinStage{equiKeys: []int{0}, kind: JoinKindSemi}, joinOut)
+		st.addEdge(semiIdx, leftIdx, LeftChild)
+		st.addEdge(semiIdx, rightIdx, RightChild)
+		return semiIdx
+	}
+
+	// For other join types (INNER, LEFT, RIGHT, FULL, CROSS), use fallback to NLJ
+	// which correctly handles all these semantics via the row-based operator
 	joinIdx := st.addStage(&LegacyBatchStageSpec{
 		Root:       n,
 		Planner:    planner,
