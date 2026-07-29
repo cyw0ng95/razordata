@@ -789,10 +789,7 @@ func (e *Executor) initPipelineBuilderEnabled() {
 		return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(vec))
 	}
 	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize)
-	// REQ002148: purePipelineFastPath defaults to off. The pipeline path
-	// is the primary execution path, but several operator types (BitmapScan,
-	// implicit joins, semi-joins, complex subqueries, foreign keys) still
-	// have issues. Enable once all failures are resolved.
+	// REQ002148: purePipelineFastPath defaults to off.
 	e.purePipelineFastPath.Store(false)
 }
 

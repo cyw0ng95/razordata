@@ -1086,7 +1086,12 @@ func (p *Planner) planPragma(s *PS.PragmaStmt) DT.Operator {
 		// REQ001307: toggle FK enforcement.
 		if s.Value != "" {
 			enabled := s.Value == "on" || s.Value == "1"
-			DT.SetForeignKeysEnabled(enabled)
+			// REQ001307: PRAGMA foreign_keys is a no-op inside a
+			// transaction (SQLite behavior). Matches the check in
+			// WT.Pragma.Next() at writers_admin.go:285.
+			if !DT.IsInTransaction() {
+				DT.SetForeignKeysEnabled(enabled)
+			}
 		}
 		enabled := DT.IsForeignKeysEnabled()
 		return OP.NewPragmaIntResult("foreign_keys", boolToInt64(enabled))

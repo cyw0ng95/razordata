@@ -9,6 +9,7 @@ import (
 
 // TestForeignKeys_DefaultOff verifies REQ001307: default FK state.
 func TestForeignKeys_DefaultOff(t *testing.T) {
+	defer DT.SetForeignKeysEnabled(true) // restore default
 	e := NewExecutorWithEngine(nil)
 	ctx := context.Background()
 
@@ -32,6 +33,7 @@ func TestForeignKeys_DefaultOff(t *testing.T) {
 
 // TestForeignKeys_ToggleOn verifies REQ001307: toggle back ON.
 func TestForeignKeys_ToggleOn(t *testing.T) {
+	defer DT.SetForeignKeysEnabled(true) // restore default
 	e := NewExecutorWithEngine(nil)
 	ctx := context.Background()
 
