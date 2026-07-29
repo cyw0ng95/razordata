@@ -1004,6 +1004,112 @@ func TestVectorizedHashJoin_ParallelProbe_RightOuter(t *testing.T) {
 	}
 }
 
+// REQ002043: two consecutive joins must not leak Size from the first
+// join's output batch into the second via pooled batch reuse.
+// GetBatch may recycle a previously-used batch whose Size is > 0;
+// newOutputBatch must zero Size so the second join's output row count
+// reflects only the rows it actually wrote (no phantom rows).
+func TestVectorizedHashJoin_ConsecutiveJoins_SizeReset(t *testing.T) {
+	ctx := context.Background()
+
+	// First join: 3 matching rows (key 1 → three build rows).
+	j1 := NewVectorizedHashJoin(
+		&testBatchProducer{batches: []*UT.Batch{makeJoinBuildBatch(
+			[]int64{1, 1, 1},
+			[]int64{10, 20, 30},
+		)}},
+		&testBatchProducer{batches: []*UT.Batch{makeJoinProbeBatch([]int64{1})}},
+		[]int{0}, []int{0},
+	)
+	batch1, err := j1.NextBatch(ctx)
+	if err != nil {
+		j1.Close()
+		t.Fatalf("j1 NextBatch: %v", err)
+	}
+	if batch1 == nil || batch1.Size != 3 {
+		sz := -1
+		if batch1 != nil {
+			sz = batch1.Size
+		}
+		j1.Close()
+		t.Fatalf("j1: expected 3 matched rows, got size=%d", sz)
+	}
+	// Return the output batch to the pool with Size=3 still set on
+	// the struct — this is exactly the recycling scenario the fix
+	// guards against.
+	batch1.Put()
+	if err := j1.Close(); err != nil {
+		t.Fatalf("j1 Close: %v", err)
+	}
+
+	// Second join: exactly 1 matching row. If newOutputBatch failed
+	// to zero Size, the recycled batch could carry over Size=3 and
+	// the consumer would observe 2 phantom rows.
+	j2 := NewVectorizedHashJoin(
+		&testBatchProducer{batches: []*UT.Batch{makeJoinBuildBatch(
+			[]int64{7},
+			[]int64{70},
+		)}},
+		&testBatchProducer{batches: []*UT.Batch{makeJoinProbeBatch([]int64{7})}},
+		[]int{0}, []int{0},
+	)
+	defer j2.Close()
+	batch2, err := j2.NextBatch(ctx)
+	if err != nil {
+		t.Fatalf("j2 NextBatch: %v", err)
+	}
+	if batch2 == nil {
+		t.Fatal("j2: expected non-nil batch with 1 matched row")
+	}
+	if batch2.Size != 1 {
+		t.Errorf("j2: expected Size=1, got Size=%d (phantom rows from j1?)", batch2.Size)
+	}
+	// Verify the single row's contents are correct, not stale data.
+	k := UT.BatchValueAt(batch2.Cols[0], 0).(int64)
+	v := UT.BatchValueAt(batch2.Cols[1], 0).(int64)
+	pk := UT.BatchValueAt(batch2.Cols[2], 0).(int64)
+	if k != 7 || v != 70 || pk != 7 {
+		t.Errorf("j2 row 0: got (k=%d,v=%d,pk=%d), want (7,70,7)", k, v, pk)
+	}
+	batch2.Put()
+
+	// Third call: EOF.
+	if batch3, _ := j2.NextBatch(ctx); batch3 != nil {
+		batch3.Put()
+		t.Error("j2: expected EOF on third NextBatch, got non-nil batch")
+	}
+}
+
+// REQ002043: direct unit test that newOutputBatch returns a batch
+// with Size == 0 even when the underlying pool hands back a batch
+// whose Size was non-zero from a prior use. This guards against any
+// future change to GetBatch that drops its Size reset, and documents
+// the contract enforced at the join level.
+func TestVectorizedHashJoin_NewOutputBatch_ZeroesSize(t *testing.T) {
+	// Pollute the pool: get a 3-column batch, set Size to a non-zero
+	// value, and return it. The next GetBatch(3) may hand it back.
+	dirty := UT.GetBatch(3)
+	dirty.Size = 42
+	for i := 0; i < 3; i++ {
+		dirty.Cols[i].Type = LX.T_INT_KW
+	}
+	dirty.Put()
+
+	j := &VectorizedHashJoin{
+		buildN:     2,
+		probeN:     1,
+		buildNames:  []string{"k", "v"},
+		buildTypes:  []LX.TokenType{LX.T_INT_KW, LX.T_INT_KW},
+		probeNames:  []string{"pk"},
+		probeTypes:  []LX.TokenType{LX.T_INT_KW},
+	}
+	out := j.newOutputBatch(3)
+	if out.Size != 0 {
+		t.Errorf("expected Size=0 after newOutputBatch, got %d", out.Size)
+	}
+	out.Put()
+}
+
 // BenchmarkParallelHashJoin_LargeBuild measures parallel-probe speedup on a
 // 100K-row build side (REQ001645). parallel=1 uses the sequential probePhase;
 // parallel=N uses emitParallelMatched (UT.ParallelProbe). Build is identical
