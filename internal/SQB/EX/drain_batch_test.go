@@ -43,32 +43,42 @@ func (f *fakeBatch) Next(_ context.Context) (DT.Row, error) {
 func (f *fakeBatch) Close() error { return nil }
 
 // makeIntBatch creates a single-column int64 batch.
+// REQ002165: allocate a FRESH (non-pooled) column data slice rather
+// than letting AppendRow pull from colDataPool. The pool can hand the
+// same backing array to two different batches when production code
+// shares slice headers across batches (e.g. `output.Cols[i] =
+// resultCols[i]` struct copies) and both are later Put — a write to
+// one batch then corrupts the other. Using fresh slices isolates
+// drainBatch's unit tests from that pool aliasing (tracked separately
+// as REQ002168). Pooled=false so the batch is never returned.
 func makeIntBatch(vals []int64) *UT.Batch {
 	b := UT.GetBatch(1)
-	b.Size = 0
-	for _, v := range vals {
-		b.AppendRow(0, LX.T_INT_KW, v, false)
-		b.AdvanceSize()
-	}
 	b.Pooled = false
+	b.Size = len(vals)
+	b.Cols[0].Type = LX.T_INT_KW
+	b.Cols[0].Data.Ints = make([]int64, len(vals))
+	copy(b.Cols[0].Data.Ints, vals)
 	return b
 }
 
 func makeMultiColBatch(col0 []int64, col1 []string) *UT.Batch {
 	b := UT.GetBatch(2)
-	b.Size = 0
+	b.Pooled = false
 	n := len(col0)
 	if len(col1) < n {
 		n = len(col1)
 	}
-	for i := 0; i < n; i++ {
-		b.AppendRow(0, LX.T_INT_KW, col0[i], false)
-		b.AppendRow(1, LX.T_TEXT, col1[i], false)
-		b.AdvanceSize()
-	}
+	b.Size = n
+	// REQ002165: fresh (non-pooled) column data, same rationale as
+	// makeIntBatch.
+	b.Cols[0].Type = LX.T_INT_KW
+	b.Cols[0].Data.Ints = make([]int64, n)
+	copy(b.Cols[0].Data.Ints, col0[:n])
+	b.Cols[1].Type = LX.T_TEXT
+	b.Cols[1].Data.Strs = make([]string, n)
+	copy(b.Cols[1].Data.Strs, col1[:n])
 	b.SetColumnName(0, "id")
 	b.SetColumnName(1, "name")
-	b.Pooled = false
 	return b
 }
 
