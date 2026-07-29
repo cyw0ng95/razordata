@@ -1086,3 +1086,34 @@ func BenchmarkParallelHashJoinBuild(b *testing.B) {
 		})
 	}
 }
+
+// REQ002043: consecutive VectorizedHashJoin executions produce the correct
+// row count — newOutputBatch must reset Size=0 on pooled batch reuse.
+func TestVectorizedHashJoin_ConsecutiveOutputRowCount(t *testing.T) {
+	ctx := context.Background()
+	for run := 0; run < 3; run++ {
+		buildSide := makeJoinBuildBatch([]int64{1, 2, 3}, []int64{10, 20, 30})
+		probeSide := makeJoinProbeBatch([]int64{1, 2, 3})
+		j := NewVectorizedHashJoin(
+			&fakeVecProducer{batches: []*UT.Batch{buildSide}},
+			&fakeVecProducer{batches: []*UT.Batch{probeSide}},
+			[]int{0}, []int{0},
+		)
+		var totalRows int
+		for {
+			batch, err := j.NextBatch(ctx)
+			if err != nil {
+				t.Fatalf("run %d: NextBatch: %v", run, err)
+			}
+			if batch == nil {
+				break
+			}
+			totalRows += batch.Size
+			batch.Put()
+		}
+		j.Close()
+		if totalRows != 3 {
+			t.Fatalf("run %d: expected 3 output rows, got %d", run, totalRows)
+		}
+	}
+}
