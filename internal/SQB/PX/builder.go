@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
@@ -81,8 +80,17 @@ func (b *PipelineBuilder) Build(sql string) (*PipelineSpec, error) {
 		return nil, fmt.Errorf("px: parse: %w", err)
 	}
 
-	// 3. Check cache by memo key (parameterized)
-	memoKey := encodeMemoKey(stmt)
+	// 3. Check cache by memo key. Use PL.SerializeKey — a full-AST
+	// fingerprint that includes the WHERE clause, joins, group-by, and
+	// order-by. Unlike PL.EncodeMemoKey (which parameterizes comparison
+	// literals), SerializeKey keeps literals in the digest: the PX path
+	// bakes literal values into StageSpecs at specialization time
+	// (e.g. OffsetStageSpec{Offset: n}), so two queries that differ
+	// only in a literal must NOT share a spec. REQ002152: the previous
+	// simplified encoder omitted the WHERE clause entirely, causing
+	// `EXISTS (SELECT 1 FROM t2)` and `EXISTS (SELECT 1 FROM t2 WHERE
+	// t2.tid = t1.id)` to collide on the same memo key.
+	memoKey := PL.SerializeKey(stmt)
 	if b.cache != nil && memoKey != "" {
 		if spec := b.cache.GetByMemo(memoKey); spec != nil {
 			// Store in text cache for next exact-SQL hit
@@ -372,9 +380,53 @@ func decomposeSeqScan(ss scanOp, st *decomposeState) int {
 func decomposeFilter(f *OP.Filter, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	childIdx := decomposeOp(f.Child(), st, planner, specialize)
 	childOut := st.childOutput(childIdx)
+	// REQ002152: predicates containing subquery expressions (EXISTS / NOT
+	// EXISTS / scalar subqueries) cannot be evaluated by the batch-native
+	// FilterStage — they need per-row subquery execution via ExecCtx, which
+	// is REQ002153's scope. Fall back to LegacyBatchStageSpec so the legacy
+	// row evaluator handles them correctly. Without this guard, NOT EXISTS
+	// queries silently return 0 rows because the subquery never evaluates.
+	if pred := f.Predicate(); pred != nil && exprContainsSubquery(pred) {
+		filterIdx := st.addStage(&LegacyBatchStageSpec{
+			Root:       f,
+			Planner:    planner,
+			Specialize: specialize,
+		}, childOut)
+		st.addEdge(filterIdx, childIdx, SingleChild)
+		return filterIdx
+	}
 	filterIdx := st.addStage(&FilterStageSpec{Pred: f.Predicate()}, childOut)
 	st.addEdge(filterIdx, childIdx, SingleChild)
 	return filterIdx
+}
+
+// subqueryDetector embeds PS.BaseVisitor and overrides the subquery
+// visit methods to short-circuit the walk when an EXISTS or scalar
+// subquery expression is found. REQ002152.
+type subqueryDetector struct {
+	PS.BaseVisitor
+	found bool
+}
+
+func (d *subqueryDetector) VisitExistsExpr(*PS.ExistsExpr) bool {
+	d.found = true
+	return false // stop walking
+}
+
+func (d *subqueryDetector) VisitSubqueryExpr(*PS.SubqueryExpr) bool {
+	d.found = true
+	return false // stop walking
+}
+
+// exprContainsSubquery reports whether e contains an EXISTS or scalar
+// subquery expression anywhere in its subtree. REQ002152.
+func exprContainsSubquery(e PS.Expr) bool {
+	if e == nil {
+		return false
+	}
+	d := &subqueryDetector{}
+	PS.AcceptExpr(e, d)
+	return d.found
 }
 
 // decomposeProject creates ProjectStageSpec with a child edge. Output
@@ -616,19 +668,20 @@ func decomposeNestedLoopJoin(n *OP.NestedLoopJoin, st *decomposeState, planner P
 
 	kind := n.Kind()
 
-	// REQ002151/REQ002152: SEMI joins (EXISTS / IN-correlated subqueries)
-	// must NOT use the native SemiJoinStage yet — its NextBatch returns a
-	// non-nil empty batch at EOF (the pipeline drain loop only breaks on
-	// nil) and re-entry is unguarded, so it hangs forever on the second
-	// call. It also has placeholder data emission, 1-row-per-batch, and a
-	// broken dedup signature. Route to LegacyBatchStageSpec so the spec
-	// contains a legacy stage → specHasNoLegacyStages returns false →
-	// queryAllBuildPipeline falls back to the legacy parse→plan→drainBatch
-	// path, which handles SEMI/EXISTS correctly. Re-enable the native
-	// SemiJoinStage once REQ002152 implements it fully.
-	_ = kind // all kinds use the legacy fallback below
+	// REQ002152: SEMI joins (correlated EXISTS / IN subqueries
+	// decorrelated by the planner) use a native SemiJoinStage. The match
+	// predicate is a runtime closure (NestedLoopJoin.OnFunc) built by
+	// decorrelateExists — it resolves columns by name per call, so we
+	// carry it via SemiJoinStageSpec.OnFunc and nested-loop probe the
+	// materialized build side. SEMI emits only probe (left) columns.
+	if kind == OP.JoinKindSemi {
+		semiIdx := st.addStage(&SemiJoinStageSpec{OnFunc: n.OnFunc()}, joinOut)
+		st.addEdge(semiIdx, leftIdx, LeftChild)
+		st.addEdge(semiIdx, rightIdx, RightChild)
+		return semiIdx
+	}
 
-	// For all join types (INNER, LEFT, RIGHT, FULL, CROSS, SEMI), use
+	// For other join types (INNER, LEFT, RIGHT, FULL, CROSS), use
 	// fallback to NLJ which correctly handles these semantics via the
 	// row-based operator.
 	joinIdx := st.addStage(&LegacyBatchStageSpec{
@@ -1075,6 +1128,19 @@ func tryDecomposeFusedScan(op DT.Operator, st *decomposeState, _ PL.QueryPlanner
 	if projectOp == nil && filterOp == nil && fpPred == nil && fpExprs == nil && limitOp == nil {
 		return 0, false
 	}
+	// REQ002152: do not fuse when the filter predicate contains a
+	// subquery expression (EXISTS / NOT EXISTS / scalar subquery). The
+	// FusedScanStage evaluates predicates via the batch-native EV
+	// evaluator, which cannot execute correlated subqueries (REQ002153).
+	// Returning false here lets the query fall through to decomposeFilter,
+	// which guards the same condition and falls back to LegacyBatchStageSpec.
+	candidatePred := fpPred
+	if filterOp != nil {
+		candidatePred = filterOp.Predicate()
+	}
+	if candidatePred != nil && exprContainsSubquery(candidatePred) {
+		return 0, false
+	}
 	// Build scan output schema from SeqScan's StoreSchema.
 	n := len(sch.Cols)
 	names := make([]string, n)
@@ -1207,92 +1273,6 @@ func tryDecomposeFusedIndexScan(limitOp *OP.Limit, projectOp *OP.Project, filter
 		Limit: limit,
 	}, fusedOut)
 	return fusedIdx, true
-}
-
-// encodeMemoKey produces a parameterized cache key from a parsed
-// statement. For REQ002123, this uses the PlanResult's MemoKey
-// when available. A simplified key is produced from the statement
-// type + table names when MemoKey is not yet available.
-func encodeMemoKey(stmt PS.Stmt) string {
-	if stmt == nil {
-		return ""
-	}
-	switch s := stmt.(type) {
-	case *PS.Select:
-		return "sel:" + selectTables(s) +
-			":" + selectExprsKey(s.Cols) +
-			":L" + limitKey(s.Limit) +
-			":O" + limitKey(s.Offset) +
-			":OF" + boolStr(s.OffsetFirst)
-	default:
-		return ""
-	}
-}
-
-func boolStr(b bool) string {
-	if b {
-		return "1"
-	}
-	return "0"
-}
-
-func limitKey(e PS.Expr) string {
-	if e == nil {
-		return "0"
-	}
-	if nl, ok := e.(*PS.NumberLiteral); ok {
-		return fmt.Sprintf("%d", nl.Val)
-	}
-	return "expr"
-}
-
-// selectTables extracts the table name from a Select.
-func selectTables(s *PS.Select) string {
-	if s == nil {
-		return ""
-	}
-	return s.From
-}
-
-// selectExprsKey returns a compact, stable key for the select expression
-// list. Two SELECTs with identical table, WHERE, and expression text get
-// the same key. This prevents cache collisions between queries that only
-// differ in their aggregate functions (e.g. MIN(a) vs MAX(a)).
-func selectExprsKey(cols []PS.Expr) string {
-	if len(cols) == 0 {
-		return "0"
-	}
-	var b strings.Builder
-	for i, e := range cols {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteString(exprKey(e))
-	}
-	return b.String()
-}
-
-// exprKey returns a short key string for an expression node.
-func exprKey(e PS.Expr) string {
-	switch x := e.(type) {
-	case *PS.AggregateFunc:
-		s := x.Name
-		if x.Distinct {
-			s += "_DISTINCT"
-		}
-		if x.Arg != nil {
-			s += "(" + exprKey(x.Arg) + ")"
-		}
-		return s
-	case *PS.Ident:
-		return x.Name
-	case *PS.StarExpr:
-		return "*"
-	case *PS.AliasedExpr:
-		return exprKey(x.Expr)
-	default:
-		return "expr"
-	}
 }
 
 // extractOutputSchema returns the output column names and types

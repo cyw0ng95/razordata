@@ -575,10 +575,10 @@ func TestEncodeMemoKey_LimitOffsetDistinct(t *testing.T) {
 		}
 		return stmt
 	}
-	k1 := encodeMemoKey(parse("SELECT id FROM t ORDER BY id"))
-	k2 := encodeMemoKey(parse("SELECT id FROM t ORDER BY id LIMIT 2"))
-	k3 := encodeMemoKey(parse("SELECT id FROM t ORDER BY id LIMIT 1 OFFSET 1"))
-	k4 := encodeMemoKey(parse("SELECT id FROM t ORDER BY id LIMIT 1 OFFSET 2"))
+	k1 := PL.SerializeKey(parse("SELECT id FROM t ORDER BY id"))
+	k2 := PL.SerializeKey(parse("SELECT id FROM t ORDER BY id LIMIT 2"))
+	k3 := PL.SerializeKey(parse("SELECT id FROM t ORDER BY id LIMIT 1 OFFSET 1"))
+	k4 := PL.SerializeKey(parse("SELECT id FROM t ORDER BY id LIMIT 1 OFFSET 2"))
 	if k1 == k2 {
 		t.Errorf("LIMIT vs no-LIMIT must differ: %q", k1)
 	}
