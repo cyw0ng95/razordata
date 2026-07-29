@@ -73,11 +73,19 @@ func (d *DistinctStage) drain(ctx context.Context) error {
 	d.drained = true
 	d.seen = make(map[string]bool)
 
-	var uniqueBatches []*UT.Batch
+	// REQ002164: defer batch.Put() until after the result batch is built.
+	// The previous code called batch.Put() inside the drain loop, returning
+	// the pooled batch to the pool while uniqueRows still held references
+	// to its Cols/Data. The next NextBatch call recycled the batch and
+	// wiped its data, so the result-build loop saw empty columns → 0 rows.
 	var uniqueRows []struct {
 		batch  *UT.Batch
 		rowIdx int
 	}
+	// Keep one reference per distinct pooled batch so we can Put() each
+	// exactly once after copying. Non-pooled batches (Pooled=false) are
+	// skipped since Put is a no-op for them.
+	var batchesToPut []*UT.Batch
 
 	for {
 		batch, err := d.child.NextBatch(ctx)
@@ -93,14 +101,15 @@ func (d *DistinctStage) drain(ctx context.Context) error {
 			key := d.extractKey(batch, r)
 			if !d.seen[key] {
 				d.seen[key] = true
-				uniqueBatches = append(uniqueBatches, batch)
 				uniqueRows = append(uniqueRows, struct {
 					batch  *UT.Batch
 					rowIdx int
 				}{batch: batch, rowIdx: r})
 			}
 		}
-		batch.Put()
+		if batch.Pooled {
+			batchesToPut = append(batchesToPut, batch)
+		}
 	}
 
 	if len(uniqueRows) == 0 {
@@ -195,6 +204,12 @@ func (d *DistinctStage) drain(ctx context.Context) error {
 	}
 
 	d.result = []*UT.Batch{out}
+
+	// REQ002164: now that the result batch is built (data copied out of
+	// the source batches), return the pooled source batches to the pool.
+	for _, b := range batchesToPut {
+		b.Put()
+	}
 	return nil
 }
 
