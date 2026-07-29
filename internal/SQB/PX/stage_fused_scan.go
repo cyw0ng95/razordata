@@ -5,6 +5,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -61,7 +62,14 @@ type FusedScanStage struct {
 	limit         int64
 	remaining     int64
 	inBloom       *UT.BloomFilter
+	execCtx       *DT.ExecContext
 	done          bool
+}
+
+// PropagateExecContext stores per-execution context for subquery
+// evaluation and row arena. REQ002148.
+func (f *FusedScanStage) PropagateExecContext(ec *DT.ExecContext) {
+	f.execCtx = ec
 }
 
 // PropagateParams receives parameter values for ? placeholders
@@ -90,6 +98,9 @@ func (f *FusedScanStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		if batch == nil {
 			f.done = true
 			return nil, nil
+		}
+		if f.execCtx != nil {
+			batch.ExecCtx = f.execCtx
 		}
 
 		// --- Filter ---

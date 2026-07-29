@@ -106,6 +106,12 @@ func (b *PipelineBuilder) Build(sql string) (*PipelineSpec, error) {
 		return nil, errors.New("px: plan produced no root")
 	}
 
+	// REQ002148: propagate the planner into the plan tree before
+	// decomposition. The SeqScan operator needs WithPlanner to access
+	// the store/transaction. Without this, the SeqScan captured in the
+	// NewProducer closure would have a nil planner and return no rows.
+	propagatePlannerToTree(plan.Root, b.planner)
+
 	// 6. Specialize: convert plan tree → PipelineSpec
 	spec, err := b.specializePlan(plan, sql, memoKey)
 	if err != nil {
@@ -374,7 +380,7 @@ func decomposeProject(p *OP.Project, st *decomposeState, planner PL.QueryPlanner
 		types[i] = LX.T_TEXT
 	}
 	projectOut := outputSchema{names: names, types: types}
-	projectIdx := st.addStage(&ProjectStageSpec{Exprs: exprs}, projectOut)
+	projectIdx := st.addStage(&ProjectStageSpec{Exprs: exprs, Names: names}, projectOut)
 	st.addEdge(projectIdx, childIdx, SingleChild)
 	return projectIdx
 }
@@ -1392,4 +1398,34 @@ func (r *RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error
 
 func (r *RowOperatorAsProducer) Close() error {
 	return r.Op.Close()
+}
+
+// propagatePlannerToTree walks the plan tree and calls WithPlanner
+// on every operator that supports it. This is required so that SeqScan
+// (and other store-backed operators) receive the planner reference they
+// need to access the store/transaction during execution.
+// Mirrors the same pattern in EX's propagatePlanner.
+func propagatePlannerToTree(root DT.Operator, planner PL.QueryPlanner) {
+	if root == nil {
+		return
+	}
+	if w, ok := root.(interface {
+		WithPlanner(PL.QueryPlanner) PL.Operator
+	}); ok {
+		w.WithPlanner(planner)
+	}
+	type childer interface {
+		Child() DT.Operator
+	}
+	if c, ok := root.(childer); ok {
+		propagatePlannerToTree(c.Child(), planner)
+	}
+	type leftRighter interface {
+		LeftChild() DT.Operator
+		RightChild() DT.Operator
+	}
+	if lr, ok := root.(leftRighter); ok {
+		propagatePlannerToTree(lr.LeftChild(), planner)
+		propagatePlannerToTree(lr.RightChild(), planner)
+	}
 }

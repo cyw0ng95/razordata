@@ -221,10 +221,18 @@ func (s *PipelineStream) Close() error {
 
 // batchRowToRow converts a single row from a batch to a DT.Row.
 func batchRowToRow(batch *UT.Batch, phys int) DT.Row {
-	row := DT.Row{
-		Data: make([]DT.Value, len(batch.Cols)),
+	// Count populated columns (Type != 0 or Name != "").
+	nCols := 0
+	for i := range batch.Cols {
+		if batch.Cols[i].Type == 0 && batch.Cols[i].Name == "" {
+			break
+		}
+		nCols = i + 1
 	}
-	for c := range batch.Cols {
+	row := DT.Row{
+		Data: make([]DT.Value, nCols),
+	}
+	for c := 0; c < nCols; c++ {
 		row.Data[c] = UT.ToValue(batch.Cols[c], phys)
 	}
 	return row

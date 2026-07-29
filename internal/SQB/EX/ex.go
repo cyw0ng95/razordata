@@ -789,12 +789,11 @@ func (e *Executor) initPipelineBuilderEnabled() {
 		return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(vec))
 	}
 	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize)
-	// purePipelineFastPath is NOT set to true here. The pipeline fast
-	// path is opt-in via EnablePipelinePath() or EnablePurePipelineFastPath().
-	// Flipping it on by default exposes latent bugs in the vectorized
-	// path that are not yet fixed. Until all shadow mismatches are
-	// resolved (REQ002140), keep the default as legacy path.
-	// e.purePipelineFastPath.Store(true)
+	// REQ002148: purePipelineFastPath defaults to off. The pipeline path
+	// is the primary execution path, but not all query types are supported
+	// yet (joins, index scans, etc.). Tests that need the pipeline path
+	// should explicitly call EnablePipelinePath().
+	e.purePipelineFastPath.Store(false)
 }
 
 // EnablePipelinePath activates the pipeline path for QueryAll and
@@ -1178,8 +1177,11 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	if e.usePipelineFastPath() {
 		defer func() {
 			if r := recover(); r != nil {
+				buf := make([]byte, 4096)
+				n := runtime.Stack(buf, false)
 				slog.Warn("px.Exec pipeline panic, falling back",
-					"err", fmt.Sprintf("%v", r))
+					"err", fmt.Sprintf("%v", r),
+					"stack", string(buf[:n]))
 			}
 		}()
 		spec, bErr := e.pipelineBuilder.Build(sql)
@@ -1379,8 +1381,11 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	if e.usePipelineFastPath() {
 		defer func() {
 			if r := recover(); r != nil {
+				buf := make([]byte, 4096)
+				n := runtime.Stack(buf, false)
 				slog.Warn("px.Query pipeline panic, falling back",
-					"err", fmt.Sprintf("%v", r))
+					"err", fmt.Sprintf("%v", r),
+					"stack", string(buf[:n]))
 			}
 		}()
 		spec, bErr := e.pipelineBuilder.Build(sql)
@@ -1635,9 +1640,12 @@ func (e *Executor) queryAllBuildPipeline(ctx context.Context, sql string, args [
 	}
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			n := runtime.Stack(buf, false)
 			slog.Warn("px.QueryAll pipeline panic, falling back",
 				"err", fmt.Sprintf("%v", r),
-				"sql_len", len(sql))
+				"sql", sql,
+				"stack", string(buf[:n]))
 		}
 	}()
 	spec, err := e.pipelineBuilder.Build(sql)

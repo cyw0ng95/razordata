@@ -762,6 +762,35 @@ func (s *streamIterator) Next() (DT.Row, error) {
 	if s == nil || s.done {
 		return DT.Row{}, DT.ErrNoRows
 	}
+	// Sync (slice-backed) path first — handles the eagerly-fetched
+	// first row from queryStreamBuildPipeline. REQ002148: must check
+	// before pxStream, because queryStreamBuildPipeline stores the
+	// first row in rows[] and also sets pxStream for subsequent rows.
+	if s.rows != nil {
+		if s.idx >= len(s.rows) {
+			// Drained the buffered first row; switch to pxStream.
+			s.rows = nil
+			if s.pxStream == nil {
+				s.done = true
+				return DT.Row{}, DT.ErrNoRows
+			}
+			r, err := s.pxStream.Next()
+			if err != nil {
+				if err == DT.ErrNoRows {
+					s.done = true
+					s.closePX()
+					return DT.Row{}, DT.ErrNoRows
+				}
+				s.done = true
+				s.closePX()
+				return DT.Row{}, err
+			}
+			return r, nil
+		}
+		r := s.rows[s.idx]
+		s.idx++
+		return r, nil
+	}
 	// Pure PX pipeline stream path (BuildPipeline → PipelineStream.Next).
 	// REQ002129/2132: no goroutine, no channel, no first-row schema
 	// fetch — cols/types are known from PipelineSpec.

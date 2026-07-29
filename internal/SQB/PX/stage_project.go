@@ -6,6 +6,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
@@ -44,6 +45,7 @@ type ProjectStage struct {
 	exprs         []PS.Expr
 	names         []string
 	compiledEvals []batchEvalFunc
+	execCtx       *DT.ExecContext
 	done          bool
 }
 
@@ -69,6 +71,10 @@ func (p *ProjectStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		return nil, nil
 	}
 	defer childBatch.Put()
+
+	if p.execCtx != nil {
+		childBatch.ExecCtx = p.execCtx
+	}
 
 	output := UT.GetBatch(len(p.exprs))
 	output.Size = childBatch.LogicalSize()
@@ -99,6 +105,12 @@ func (p *ProjectStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	}
 
 	return output, nil
+}
+
+// PropagateExecContext stores per-execution context for subquery
+// evaluation. REQ002148.
+func (p *ProjectStage) PropagateExecContext(ec *DT.ExecContext) {
+	p.execCtx = ec
 }
 
 // Reset resets the project stage to pre-execution state.

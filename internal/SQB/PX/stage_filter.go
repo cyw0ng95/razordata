@@ -3,6 +3,7 @@ package PX
 import (
 	"context"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -43,6 +44,7 @@ type FilterStage struct {
 	child    Stage
 	pred     PS.Expr
 	params   []any
+	execCtx  *DT.ExecContext
 	inBloom  *UT.BloomFilter // REQ001631: IN-list bloom filter
 	inNegate bool
 	inColIdx int // resolved on first batch (-1 = unresolved)
@@ -73,6 +75,10 @@ func (f *FilterStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			return nil, nil
 		}
 
+		if f.execCtx != nil {
+			batch.ExecCtx = f.execCtx
+		}
+
 		// Apply bloom filter pre-filter if available.
 		if f.inBloom != nil {
 			keep := f.applyBloomFilter(batch)
@@ -99,6 +105,12 @@ func (f *FilterStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		}
 		return batch, nil
 	}
+}
+
+// PropagateExecContext stores per-execution context for subquery
+// evaluation. REQ002148.
+func (f *FilterStage) PropagateExecContext(ec *DT.ExecContext) {
+	f.execCtx = ec
 }
 
 // Reset resets the filter to pre-execution state.

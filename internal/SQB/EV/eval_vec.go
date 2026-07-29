@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"log/slog"
 	"math"
 	"reflect"
 	"regexp"
@@ -1254,16 +1255,24 @@ func evalSubqueryBatchExpr(subq *PS.SubqueryExpr, batch *UT.Batch, params []any)
 	if len(corrCols) == 0 {
 		key := cachedSubqueryKey(subq)
 		if cached, ok := globalSubqueryCache.Load(key); ok {
+			_ = cached
+			_ = key
 			if v, ok := cached.(Value); ok {
 				return broadcastValueColumn(batch, v)
 			}
 			return evalAnyLiteral(cached, batch)
 		}
 		probeRow := &Row{ExecCtx: batch.ExecCtx}
+		if batch.ExecCtx == nil || batch.ExecCtx.Planner == nil {
+			slog.Warn("subq: ExecCtx.Planner is nil",
+				"hasExecCtx", batch.ExecCtx != nil)
+		}
 		v, err := evalScalarSubquery(subq, probeRow, params)
 		if err == nil {
+			slog.Warn("subq: evalScalarSubquery succeeded", "v", v.I64)
 			return broadcastValueColumn(batch, v)
 		}
+		slog.Warn("subq: evalScalarSubquery failed", "err", err)
 		return evalRowFallbackColumn(subq, batch, params)
 	}
 	subqPtr := uintptr(reflect.ValueOf(subq).Pointer())

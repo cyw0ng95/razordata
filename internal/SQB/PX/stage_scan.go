@@ -3,6 +3,7 @@ package PX
 import (
 	"context"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
@@ -41,6 +42,7 @@ func (s *ScanStageSpec) Category() StageCategory { return CatSource }
 // ScanStageSpec.
 type ScanStage struct {
 	producer UT.BatchProducer
+	execCtx  *DT.ExecContext
 	done     bool
 }
 
@@ -58,7 +60,16 @@ func (s *ScanStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		s.done = true
 		return nil, nil
 	}
+	if s.execCtx != nil {
+		batch.ExecCtx = s.execCtx
+	}
 	return batch, nil
+}
+
+// PropagateExecContext stores per-execution context for subquery
+// evaluation and row arena. REQ002148.
+func (s *ScanStage) PropagateExecContext(ec *DT.ExecContext) {
+	s.execCtx = ec
 }
 
 // Reset returns ErrResetNotSupported because scan producers hold
