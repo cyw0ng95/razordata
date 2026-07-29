@@ -616,16 +616,21 @@ func decomposeNestedLoopJoin(n *OP.NestedLoopJoin, st *decomposeState, planner P
 
 	kind := n.Kind()
 
-	// Handle SEMI joins with native SemiJoinStage if we have equi-keys for efficient deduplication
-	if kind == OP.JoinKindSemi {
-		semiIdx := st.addStage(&SemiJoinStage{equiKeys: []int{0}, kind: JoinKindSemi}, joinOut)
-		st.addEdge(semiIdx, leftIdx, LeftChild)
-		st.addEdge(semiIdx, rightIdx, RightChild)
-		return semiIdx
-	}
+	// REQ002151/REQ002152: SEMI joins (EXISTS / IN-correlated subqueries)
+	// must NOT use the native SemiJoinStage yet — its NextBatch returns a
+	// non-nil empty batch at EOF (the pipeline drain loop only breaks on
+	// nil) and re-entry is unguarded, so it hangs forever on the second
+	// call. It also has placeholder data emission, 1-row-per-batch, and a
+	// broken dedup signature. Route to LegacyBatchStageSpec so the spec
+	// contains a legacy stage → specHasNoLegacyStages returns false →
+	// queryAllBuildPipeline falls back to the legacy parse→plan→drainBatch
+	// path, which handles SEMI/EXISTS correctly. Re-enable the native
+	// SemiJoinStage once REQ002152 implements it fully.
+	_ = kind // all kinds use the legacy fallback below
 
-	// For other join types (INNER, LEFT, RIGHT, FULL, CROSS), use fallback to NLJ
-	// which correctly handles all these semantics via the row-based operator
+	// For all join types (INNER, LEFT, RIGHT, FULL, CROSS, SEMI), use
+	// fallback to NLJ which correctly handles these semantics via the
+	// row-based operator.
 	joinIdx := st.addStage(&LegacyBatchStageSpec{
 		Root:       n,
 		Planner:    planner,
