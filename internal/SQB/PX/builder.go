@@ -106,11 +106,12 @@ func (b *PipelineBuilder) Build(sql string) (*PipelineSpec, error) {
 		return nil, errors.New("px: plan produced no root")
 	}
 
-	// REQ002148: propagate the planner into the plan tree before
-	// decomposition. The SeqScan operator needs WithPlanner to access
-	// the store/transaction. Without this, the SeqScan captured in the
-	// NewProducer closure would have a nil planner and return no rows.
-	propagatePlannerToTree(plan.Root, b.planner)
+	// NOTE: propagatePlannerToTree is intentionally NOT called here.
+	// The plan tree is shared with the planner's memo cache, and
+	// modifying the tree (via WithPlanner) corrupts the cached plan
+	// for the legacy path. The planner is propagated inside the
+	// Specialize function, which runs only when the pipeline is
+	// actually executed (NewRuntime). REQ002149.
 
 	// 6. Specialize: convert plan tree → PipelineSpec
 	spec, err := b.specializePlan(plan, sql, memoKey)

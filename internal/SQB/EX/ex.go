@@ -782,6 +782,10 @@ func (e *Executor) initPipelineBuilderEnabled() {
 		if p == nil {
 			return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(root))
 		}
+		// REQ002149: propagate the planner to the tree before vectorization.
+		// This was moved here from Build() to avoid modifying the shared
+		// plan tree cached in the planner's memo cache.
+		propagatePlanner(root, p)
 		vec := tryVectorizePlan(root, p)
 		if bp, ok := vec.(UT.BatchProducer); ok {
 			return bp
@@ -1998,6 +2002,17 @@ func propagatePlanner(root DT.Operator, p *Planner) {
 	if lr, ok := root.(leftRighter); ok {
 		propagatePlanner(lr.LeftChild(), p)
 		propagatePlanner(lr.RightChild(), p)
+	}
+	// REQ002149: multi-child operators (BitmapHeapScan) expose a
+	// Children() slice. Walk each so the embedded IndexScans
+	// receive the planner.
+	type multiChilder interface {
+		Children() []DT.Operator
+	}
+	if mc, ok := root.(multiChilder); ok {
+		for _, child := range mc.Children() {
+			propagatePlanner(child, p)
+		}
 	}
 }
 
