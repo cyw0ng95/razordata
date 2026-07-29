@@ -4,7 +4,6 @@ import (
 	"context"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	MR "github.com/cyw0ng95/razordata/internal/SQB/MR"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
@@ -13,24 +12,24 @@ import (
 // mapper→shuffler→reducer pipeline. It replaces VectorizedHashAggregate,
 // Aggregate (scalar streaming), HashAggregate, and ParallelHashAggregate.
 type AggregateStageSpec struct {
-	Specs     []MR.AccumulatorSpec // aggregate definitions
+	Specs     []AccumulatorSpec // aggregate definitions
 	GroupCols []int                // GROUP BY column indices; nil = scalar aggregate
 	KeyCols   []int                // key extraction column indices for hash grouping
 }
 
 // NewRuntime creates an AggregateStage from this spec.
 func (s *AggregateStageSpec) NewRuntime() Stage {
-	reducer := MR.NewAggregateReducer(s.Specs, s.GroupCols)
+	reducer := NewAggregateReducer(s.Specs, s.GroupCols)
 
-	var shuffler MR.Shuffler
+	var shuffler Shuffler
 	if len(s.GroupCols) == 0 {
-		shuffler = MR.NewScalarShuffler(reducer, s.Specs)
+		shuffler = NewScalarShuffler(reducer, s.Specs)
 	} else {
-		extractor := MR.NewSimpleIntKeyExtractor(s.KeyCols[0])
-		shuffler = MR.NewHashShuffler(reducer, s.Specs, extractor)
+		extractor := NewSimpleIntKeyExtractor(s.KeyCols[0])
+		shuffler = NewHashShuffler(reducer, s.Specs, extractor)
 	}
 
-	mapper := MR.NewAggregateMapper(s.GroupCols)
+	mapper := NewAggregateMapper(s.GroupCols)
 
 	return &AggregateStage{
 		specs:     s.Specs,
@@ -55,10 +54,10 @@ func (s *AggregateStageSpec) Category() StageCategory { return CatMapReduce }
 //     preserving allocated buffers (hash table capacity, scratch space).
 type AggregateStage struct {
 	child     Stage
-	specs     []MR.AccumulatorSpec
+	specs     []AccumulatorSpec
 	groupCols []int
-	mapper    MR.Mapper
-	shuffler  MR.Shuffler
+	mapper    Mapper
+	shuffler  Shuffler
 	result    []*UT.Batch
 	pos       int
 	drained   bool

@@ -9,7 +9,6 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	MR "github.com/cyw0ng95/razordata/internal/SQB/MR"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
@@ -676,7 +675,7 @@ func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner
 	aggExprs := agg.Aggs()
 
 	groupCols := make([]int, 0, len(groupExprs))
-	specs := make([]MR.AccumulatorSpec, 0, len(aggExprs))
+	specs := make([]AccumulatorSpec, 0, len(aggExprs))
 	allResolved := true
 
 	// Resolve group cols
@@ -718,7 +717,7 @@ func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner
 			// not yet fully implemented in the native AggregateStage
 			// accumulators; bail.
 			switch spec.Kind {
-			case MR.AggGroupConcat, MR.AggStringAgg:
+			case AggGroupConcat, AggStringAgg:
 				allResolved = false
 				break
 			}
@@ -868,13 +867,13 @@ func decomposeCompound(c *OP.CompoundOp, st *decomposeState, planner PL.QueryPla
 
 // resolveAggFunc parses an aggregate function expression (e.g. SUM(col),
 // COUNT(DISTINCT col), GROUP_CONCAT(x, ',')) and returns an
-// MR.AccumulatorSpec with child column index + flags. Child's output
+// AccumulatorSpec with child column index + flags. Child's output
 // schema is used to resolve argument column names. Second return is ok=false
 // if child column couldn't be resolved or function is unsupported.
-func resolveAggFunc(expr PS.Expr, childOut outputSchema) (MR.AccumulatorSpec, bool) {
+func resolveAggFunc(expr PS.Expr, childOut outputSchema) (AccumulatorSpec, bool) {
 	fn, ok := expr.(*PS.AggregateFunc)
 	if !ok {
-		return MR.AccumulatorSpec{}, false
+		return AccumulatorSpec{}, false
 	}
 	var col int = -1
 	if fn.Arg != nil {
@@ -890,11 +889,11 @@ func resolveAggFunc(expr PS.Expr, childOut outputSchema) (MR.AccumulatorSpec, bo
 	}
 	kind, ok := aggKindByName(fn.Name)
 	if !ok {
-		return MR.AccumulatorSpec{}, false
+		return AccumulatorSpec{}, false
 	}
 	// col = -1 is valid only for COUNT (counts rows regardless of arg)
-	if col == -1 && kind != MR.AggCount {
-		return MR.AccumulatorSpec{}, false
+	if col == -1 && kind != AggCount {
+		return AccumulatorSpec{}, false
 	}
 	var separator string
 	if fn.Separator != nil {
@@ -902,7 +901,7 @@ func resolveAggFunc(expr PS.Expr, childOut outputSchema) (MR.AccumulatorSpec, bo
 			separator = s.Val
 		}
 	}
-	return MR.AccumulatorSpec{
+	return AccumulatorSpec{
 		Kind:      kind,
 		Col:       col,
 		Separator: separator,
@@ -911,59 +910,59 @@ func resolveAggFunc(expr PS.Expr, childOut outputSchema) (MR.AccumulatorSpec, bo
 }
 
 // aggKindByName maps a SQL aggregate function name (case-insensitive)
-// to an MR.AccumKind. The second return is false if unrecognized.
-func aggKindByName(name string) (MR.AccumKind, bool) {
+// to an AccumKind. The second return is false if unrecognized.
+func aggKindByName(name string) (AccumKind, bool) {
 	switch {
 	case equalFold(name, "count"):
-		return MR.AggCount, true
+		return AggCount, true
 	case equalFold(name, "sum"):
-		return MR.AggSum, true
+		return AggSum, true
 	case equalFold(name, "min"):
-		return MR.AggMin, true
+		return AggMin, true
 	case equalFold(name, "max"):
-		return MR.AggMax, true
+		return AggMax, true
 	case equalFold(name, "avg"):
-		return MR.AggAvg, true
+		return AggAvg, true
 	case equalFold(name, "group_concat"):
-		return MR.AggGroupConcat, true
+		return AggGroupConcat, true
 	case equalFold(name, "string_agg"):
-		return MR.AggStringAgg, true
+		return AggStringAgg, true
 	}
 	return 0, false
 }
 
 // aggFuncDisplayName returns the column display name for an aggregate
 // function kind used in aggregate output schema.
-func aggFuncDisplayName(k MR.AccumKind) string {
+func aggFuncDisplayName(k AccumKind) string {
 	switch k {
-	case MR.AggCount:
+	case AggCount:
 		return "count(*)"
-	case MR.AggSum:
+	case AggSum:
 		return "sum(expr)"
-	case MR.AggMin:
+	case AggMin:
 		return "min(expr)"
-	case MR.AggMax:
+	case AggMax:
 		return "max(expr)"
-	case MR.AggAvg:
+	case AggAvg:
 		return "avg(expr)"
-	case MR.AggGroupConcat:
+	case AggGroupConcat:
 		return "group_concat(expr)"
-	case MR.AggStringAgg:
+	case AggStringAgg:
 		return "string_agg(expr)"
 	}
 	return "agg"
 }
 
 // aggFuncReturnType returns a rough result column type.
-func aggFuncReturnType(k MR.AccumKind) LX.TokenType {
+func aggFuncReturnType(k AccumKind) LX.TokenType {
 	switch k {
-	case MR.AggCount:
+	case AggCount:
 		return LX.T_INT_KW
-	case MR.AggMin, MR.AggMax:
+	case AggMin, AggMax:
 		return LX.T_NULL // actual type determined at runtime
-	case MR.AggAvg, MR.AggSum:
+	case AggAvg, AggSum:
 		return LX.T_FLOAT_KW // conservative guess
-	case MR.AggGroupConcat, MR.AggStringAgg:
+	case AggGroupConcat, AggStringAgg:
 		return LX.T_TEXT
 	}
 	return LX.T_TEXT

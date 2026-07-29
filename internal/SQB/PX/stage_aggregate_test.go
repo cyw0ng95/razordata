@@ -4,12 +4,11 @@ import (
 	"context"
 	"testing"
 
-	MR "github.com/cyw0ng95/razordata/internal/SQB/MR"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
 func TestAggregateStageSpec_Category(t *testing.T) {
-	spec := &AggregateStageSpec{Specs: []MR.AccumulatorSpec{}}
+	spec := &AggregateStageSpec{Specs: []AccumulatorSpec{}}
 	if spec.Category() != CatMapReduce {
 		t.Errorf("expected CatMapReduce, got %v", spec.Category())
 	}
@@ -22,8 +21,8 @@ func TestAggregateStage_ScalarCount(t *testing.T) {
 		makeIntBatch([]int64{4, 5}),
 	}}
 	spec := &AggregateStageSpec{
-		Specs: []MR.AccumulatorSpec{
-			{Kind: MR.AggCount, Col: -1}, // COUNT(*)
+		Specs: []AccumulatorSpec{
+			{Kind: AggCount, Col: -1}, // COUNT(*)
 		},
 	}
 	stage := spec.NewRuntime().(*AggregateStage)
@@ -63,8 +62,8 @@ func TestAggregateStage_ScalarSum(t *testing.T) {
 		makeIntBatch([]int64{10, 20, 30}),
 	}}
 	spec := &AggregateStageSpec{
-		Specs: []MR.AccumulatorSpec{
-			{Kind: MR.AggSum, Col: 0}, // SUM(v)
+		Specs: []AccumulatorSpec{
+			{Kind: AggSum, Col: 0}, // SUM(v)
 		},
 	}
 	stage := spec.NewRuntime().(*AggregateStage)
@@ -86,8 +85,8 @@ func TestAggregateStage_ScalarSum(t *testing.T) {
 func TestAggregateStage_EmptyInput(t *testing.T) {
 	child := &mockStage{batches: nil}
 	spec := &AggregateStageSpec{
-		Specs: []MR.AccumulatorSpec{
-			{Kind: MR.AggCount, Col: -1},
+		Specs: []AccumulatorSpec{
+			{Kind: AggCount, Col: -1},
 		},
 	}
 	stage := spec.NewRuntime().(*AggregateStage)
@@ -112,8 +111,8 @@ func TestAggregateStage_Reset(t *testing.T) {
 		makeIntBatch([]int64{1, 2, 3}),
 	}}
 	spec := &AggregateStageSpec{
-		Specs: []MR.AccumulatorSpec{
-			{Kind: MR.AggCount, Col: -1},
+		Specs: []AccumulatorSpec{
+			{Kind: AggCount, Col: -1},
 		},
 	}
 	stage := spec.NewRuntime().(*AggregateStage)

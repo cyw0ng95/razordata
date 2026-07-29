@@ -1,4 +1,4 @@
-package MR
+package PX
 
 import (
 	"context"
@@ -6,9 +6,6 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
-// MapReduceOperator is a batch producer that implements the map-reduce
-// pattern. It drains all child batches through the Mapper into the
-// Shuffler, then Finalizes to produce output batches.
 type MapReduceOperator struct {
 	child   UT.BatchProducer
 	mapper  Mapper
@@ -19,7 +16,6 @@ type MapReduceOperator struct {
 	done   bool
 }
 
-// NewMapReduceOperator creates a new map-reduce operator.
 func NewMapReduceOperator(child UT.BatchProducer, mapper Mapper, shuffle Shuffler) *MapReduceOperator {
 	return &MapReduceOperator{
 		child:   child,
@@ -28,9 +24,6 @@ func NewMapReduceOperator(child UT.BatchProducer, mapper Mapper, shuffle Shuffle
 	}
 }
 
-// NextBatch returns the next output batch. On first call, drains all
-// child batches through map-shuffle-reduce. Subsequent calls return
-// from the cached result. Returns nil at EOF.
 func (o *MapReduceOperator) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if !o.done {
 		if err := o.drain(ctx); err != nil {
@@ -69,7 +62,6 @@ func (o *MapReduceOperator) drain(ctx context.Context) error {
 	return nil
 }
 
-// Close releases all resources.
 func (o *MapReduceOperator) Close() error {
 	o.result = nil
 	o.shuffle.Reset()
@@ -77,7 +69,6 @@ func (o *MapReduceOperator) Close() error {
 	return o.child.Close()
 }
 
-// Reset resets the operator for re-execution with the same child.
 func (o *MapReduceOperator) Reset() {
 	o.result = nil
 	o.pos = 0
