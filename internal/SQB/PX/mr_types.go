@@ -288,13 +288,7 @@ func (a *UnifiedAccum) Result(spec *AccumulatorSpec) (any, bool) {
 		if a.count == 0 || a.overflow {
 			return nil, false
 		}
-if a.seenF {
-			return (a.sumF + float64(a.sumI)) / float64(a.count), true
-		}
-		if a.seenI {
-			return a.sumI / a.count, true
-		}
-		return nil, false
+		return (a.sumF + float64(a.sumI)) / float64(a.count), true
 
 	case AggMin, AggMax:
 		if !a.hasValue {
