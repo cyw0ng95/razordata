@@ -147,9 +147,14 @@ func TestUnifiedAccum_AvgInt(t *testing.T) {
 	if !ok {
 		t.Fatal("expected non-null result")
 	}
-	// Integer division: 12 / 3 = 4
-	if val.(int64) != 4 {
-		t.Fatalf("expected 4, got %v", val)
+	// SQLite semantics: AVG always returns REAL (float64), even for
+	// integer inputs. 12 / 3 = 4.0. REQ002155.
+	f, isFloat := val.(float64)
+	if !isFloat {
+		t.Fatalf("expected float64 result, got %T(%v)", val, val)
+	}
+	if f != 4.0 {
+		t.Fatalf("expected 4.0, got %v", f)
 	}
 }
 
