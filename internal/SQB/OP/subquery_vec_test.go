@@ -50,6 +50,50 @@ func TestVectorizedInSubquery_BuildAndProbe(t *testing.T) {
 	}
 }
 
+// REQ002042: multi-column IN subquery builds composite keys correctly.
+func TestVectorizedInSubquery_MultiColumn(t *testing.T) {
+	batches := []*UT.Batch{
+		func() *UT.Batch {
+			b := UT.GetBatch(2)
+			b.SetColumnName(0, "x")
+			b.SetColumnName(1, "y")
+			b.Cols[0].Type = LX.T_INT_KW
+			b.Cols[1].Type = LX.T_INT_KW
+			pairs := [][2]int64{{1, 10}, {2, 20}, {3, 30}}
+			for _, p := range pairs {
+				b.AppendRow(0, LX.T_INT_KW, p[0], false)
+				b.AppendRow(1, LX.T_INT_KW, p[1], false)
+				b.AdvanceSize()
+			}
+			return b
+		}(),
+	}
+	child := &fakeVecProducer{batches: batches}
+	v := NewVectorizedInSubquery(child)
+	ctx := context.Background()
+	if err := v.BuildKeySet(ctx); err != nil {
+		t.Fatalf("BuildKeySet: %v", err)
+	}
+
+	tests := []struct {
+		keys   []int64
+		expect bool
+	}{
+		{[]int64{1, 10}, true},
+		{[]int64{2, 20}, true},
+		{[]int64{3, 30}, true},
+		{[]int64{1, 20}, false},  // wrong y
+		{[]int64{2, 10}, false},  // wrong x
+		{[]int64{4, 40}, false},  // not present
+	}
+	for _, tc := range tests {
+		got := v.ContainsKey(tc.keys)
+		if got != tc.expect {
+			t.Errorf("ContainsKey(%v): got %v, want %v", tc.keys, got, tc.expect)
+		}
+	}
+}
+
 // REQ001445: VectorizedExistsSubquery detects rows correctly.
 func TestVectorizedExistsSubquery_HasRows(t *testing.T) {
 	batches := []*UT.Batch{
