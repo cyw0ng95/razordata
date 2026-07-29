@@ -1340,7 +1340,7 @@ func (s *LegacyBatchStageSpec) NewRuntime() Stage {
 	if producer == nil {
 		producer = UT.NewBatchToRowAdapter(NewRowOperatorAsProducer(s.Root))
 	}
-	return &LegacyBatchStage{producer: producer}
+	return &LegacyBatchStage{producer: producer, root: s.Root}
 }
 
 // Category returns CatSource for the legacy single-stage pipeline.
@@ -1354,7 +1354,9 @@ func (s *LegacyBatchStageSpec) Category() StageCategory {
 // Reset is not supported — returns ErrResetNotSupported.
 type LegacyBatchStage struct {
 	producer UT.BatchProducer
+	root     DT.Operator // underlying operator tree for param propagation
 	execCtx  *DT.ExecContext
+	params   []any
 	closed   bool
 }
 
@@ -1378,6 +1380,20 @@ func (s *LegacyBatchStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 // embedded into batches produced by the LegacyBatchStage. REQ002148.
 func (s *LegacyBatchStage) PropagateExecContext(ec *DT.ExecContext) {
 	s.execCtx = ec
+}
+
+// PropagateParams stores parameter values and propagates them to the
+// underlying operator tree (root). REQ002143.
+func (s *LegacyBatchStage) PropagateParams(args []any, buf *[]any) {
+	*buf = append((*buf)[:0], args...)
+	s.params = *buf
+	if s.root != nil {
+		if w, ok := s.root.(interface {
+			WithParams([]any) DT.Operator
+		}); ok {
+			w.WithParams(s.params)
+		}
+	}
 }
 
 // Reset is not supported for legacy stages. The Pipeline handles
