@@ -1989,12 +1989,10 @@ func propagatePlanner(root DT.Operator, p *Planner) {
 	}); ok {
 		w.WithPlanner(p)
 	}
-	type childer interface {
-		Child() DT.Operator
-	}
-	if c, ok := root.(childer); ok {
-		propagatePlanner(c.Child(), p)
-	}
+	// REQ002151: binary joins implement BOTH Child() (→ left) and
+	// LeftChild()/RightChild(). Prefer LeftChild/RightChild so the
+	// left subtree is not walked twice. multiChilder (BitmapHeapScan)
+	// is walked separately below.
 	type leftRighter interface {
 		LeftChild() DT.Operator
 		RightChild() DT.Operator
@@ -2002,6 +2000,13 @@ func propagatePlanner(root DT.Operator, p *Planner) {
 	if lr, ok := root.(leftRighter); ok {
 		propagatePlanner(lr.LeftChild(), p)
 		propagatePlanner(lr.RightChild(), p)
+	} else {
+		type childer interface {
+			Child() DT.Operator
+		}
+		if c, ok := root.(childer); ok {
+			propagatePlanner(c.Child(), p)
+		}
 	}
 	// REQ002149: multi-child operators (BitmapHeapScan) expose a
 	// Children() slice. Walk each so the embedded IndexScans
@@ -2077,12 +2082,9 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 	if aop, ok := root.(*AD.AdaptiveOp); ok {
 		propagateExecContext(aop.Inner, ec)
 	}
-	type childer interface {
-		Child() DT.Operator
-	}
-	if c, ok := root.(childer); ok {
-		propagateExecContext(c.Child(), ec)
-	}
+	// REQ002151: binary joins implement BOTH Child() (→ left) and
+	// LeftChild()/RightChild(). Prefer LeftChild/RightChild so the
+	// left subtree is not walked twice.
 	type leftRighter interface {
 		LeftChild() DT.Operator
 		RightChild() DT.Operator
@@ -2090,6 +2092,13 @@ func propagateExecContext(root DT.Operator, ec *DT.ExecContext) {
 	if lr, ok := root.(leftRighter); ok {
 		propagateExecContext(lr.LeftChild(), ec)
 		propagateExecContext(lr.RightChild(), ec)
+	} else {
+		type childer interface {
+			Child() DT.Operator
+		}
+		if c, ok := root.(childer); ok {
+			propagateExecContext(c.Child(), ec)
+		}
 	}
 }
 
@@ -2108,6 +2117,17 @@ func resetRowArena(ec *DT.ExecContext) {
 // ReplaceLiterals on every node with comparison-literals (Filter).
 // Params are consumed in DFS tree-walk order, matching the
 // extraction order of NormalizeForMemo. REQ001195.
+//
+// REQ002151: binary join operators (NestedLoopJoin, HashJoin,
+// CompoundOp) implement BOTH Child() (which returns the left child,
+// see OP/capabilities.go) AND LeftChild()/RightChild(). Walking via
+// Child() first and then LeftChild()/RightChild() visits the left
+// subtree twice, consuming params in the wrong order and corrupting
+// pushed-down predicates (e.g. implicit joins FROM t1, t9 WHERE
+// a1=281 AND c9=232 returned 0 rows on memo hit because the left
+// Filter consumed both [281, 232]). leftRighter takes precedence so
+// each child is visited exactly once; childer is the fallback for
+// unary operators (Filter, Project, Sort, …).
 func replaceLiteralsOnTree(root DT.Operator, vals []any) {
 	type filterNode interface {
 		CountComparisonLiterals() int
@@ -2125,10 +2145,6 @@ func replaceLiteralsOnTree(root DT.Operator, vals []any) {
 				*remaining = (*remaining)[n:]
 			}
 		}
-		type childer interface{ Child() DT.Operator }
-		if c, ok := op.(childer); ok {
-			walk(c.Child(), remaining)
-		}
 		type leftRighter interface {
 			LeftChild() DT.Operator
 			RightChild() DT.Operator
@@ -2136,6 +2152,11 @@ func replaceLiteralsOnTree(root DT.Operator, vals []any) {
 		if lr, ok := op.(leftRighter); ok {
 			walk(lr.LeftChild(), remaining)
 			walk(lr.RightChild(), remaining)
+			return
+		}
+		type childer interface{ Child() DT.Operator }
+		if c, ok := op.(childer); ok {
+			walk(c.Child(), remaining)
 		}
 	}
 	walk(root, &vals)
