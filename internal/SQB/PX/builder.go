@@ -282,12 +282,9 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *OP.SeqScan:
 		return decomposeSeqScan(o, st)
 	case *OP.IndexScan:
-		// IndexScan has different op wiring; can't extract the
-		// row-operator for a native ScanStageSpec without a schema.
-		// Fall back to LegacyBatchStageSpec → specializePlan errors
-		// → EX falls back to legacy plan-tree execution, which is
-		// still correct (planner produces IndexScan → legacy OP loop).
-		return decomposeFallback(o, st, planner, specialize)
+		// REQ002143: IndexScan now implements UsedCols() and can be
+		// handled by the same ScanStageSpec as SeqScan.
+		return decomposeSeqScan(o, st)
 	case *OP.Filter:
 		return decomposeFilter(o, st, planner, specialize)
 	case *OP.Project:
@@ -321,34 +318,42 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	}
 }
 
+// scanOp is the common interface for both OP.SeqScan and OP.IndexScan.
+// REQ002143: IndexScan now also implements UsedCols(), making it eligible
+// for the same ScanStageSpec-based decomposition as SeqScan.
+type scanOp interface {
+	DT.Operator
+	Schema() *DT.StoreSchema
+	UsedCols() []string
+}
+
 // decomposeSeqScan creates a ScanStageSpec for a SeqScan or IndexScan.
 // Output schema comes from the scan's StoreSchema (Cols + ColTypes) if known,
-// populated by the planner via Schema() method on OP.SeqScan.
-func decomposeSeqScan(ss *OP.SeqScan, st *decomposeState) int {
+// populated by the planner via Schema() method on OP.SeqScan/OP.IndexScan.
+// Accepts both via the scanOp interface (REQ002143).
+func decomposeSeqScan(ss scanOp, st *decomposeState) int {
 	var op DT.Operator = ss
 	var out outputSchema
-	if ss != nil {
-		sch := ss.Schema()
-		if used := ss.UsedCols(); len(used) > 0 && sch != nil {
-			names := make([]string, len(used))
-			types := make([]LX.TokenType, len(used))
-			for i, col := range used {
-				names[i] = col
-				if idx := sch.ColIndex[col]; idx >= 0 && idx < len(sch.ColTypes) {
-					types[i] = sch.ColTypes[idx]
-				}
+	sch := ss.Schema()
+	if used := ss.UsedCols(); len(used) > 0 && sch != nil {
+		names := make([]string, len(used))
+		types := make([]LX.TokenType, len(used))
+		for i, col := range used {
+			names[i] = col
+			if idx := sch.ColIndex[col]; idx >= 0 && idx < len(sch.ColTypes) {
+				types[i] = sch.ColTypes[idx]
 			}
-			out = outputSchema{names: names, types: types}
-		} else if sch != nil && len(sch.Cols) > 0 {
-			n := len(sch.Cols)
-			names := make([]string, n)
-			types := make([]LX.TokenType, n)
-			copy(names, sch.Cols)
-			if len(sch.ColTypes) > 0 {
-				copy(types, sch.ColTypes)
-			}
-			out = outputSchema{names: names, types: types}
 		}
+		out = outputSchema{names: names, types: types}
+	} else if sch != nil && len(sch.Cols) > 0 {
+		n := len(sch.Cols)
+		names := make([]string, n)
+		types := make([]LX.TokenType, n)
+		copy(names, sch.Cols)
+		if len(sch.ColTypes) > 0 {
+			copy(types, sch.ColTypes)
+		}
+		out = outputSchema{names: names, types: types}
 	}
 	return st.addStage(&ScanStageSpec{
 		NewProducer: func() UT.BatchProducer {
@@ -903,6 +908,10 @@ func tryDecomposeFusedScan(op DT.Operator, st *decomposeState, _ PL.QueryPlanner
 	}
 	ss, ok := cur.(*OP.SeqScan)
 	if !ok {
+		// REQ002143: also try IndexScan for FusedScan.
+		if idx, ok2 := cur.(*OP.IndexScan); ok2 {
+			return tryDecomposeFusedIndexScan(limitOp, projectOp, filterOp, idx, st)
+		}
 		return 0, false
 	}
 	seqScan = ss
@@ -969,6 +978,71 @@ func tryDecomposeFusedScan(op DT.Operator, st *decomposeState, _ PL.QueryPlanner
 	}
 
 	scanOp := seqScan
+	fusedIdx := st.addStage(&FusedScanStageSpec{
+		SourceFactory: func() UT.BatchProducer {
+			return NewRowOperatorAsProducer(scanOp)
+		},
+		Pred:  pred,
+		Exprs: exprs,
+		Names: fusedNames,
+		Limit: limit,
+	}, fusedOut)
+	return fusedIdx, true
+}
+
+// tryDecomposeFusedIndexScan mirrors tryDecomposeFusedScan for IndexScan.
+// REQ002143: IndexScan supports the same FusedScan pattern (filter/project/limit).
+func tryDecomposeFusedIndexScan(limitOp *OP.Limit, projectOp *OP.Project, filterOp *OP.Filter, idxScan *OP.IndexScan, st *decomposeState) (int, bool) {
+	sch := idxScan.Schema()
+	if sch == nil || len(sch.Cols) == 0 {
+		return 0, false
+	}
+	if projectOp == nil && filterOp == nil && limitOp == nil {
+		return 0, false
+	}
+	n := len(sch.Cols)
+	names := make([]string, n)
+	types := make([]LX.TokenType, n)
+	copy(names, sch.Cols)
+	if len(sch.ColTypes) > 0 {
+		copy(types, sch.ColTypes)
+	}
+	scanOut := outputSchema{names: names, types: types}
+
+	var pred PS.Expr
+	if filterOp != nil {
+		pred = filterOp.Predicate()
+	}
+	var exprs []PS.Expr
+	var fusedNames []string
+	if projectOp != nil {
+		exprs = projectOp.Cols()
+		fusedNames = make([]string, len(exprs))
+		for i, e := range exprs {
+			fusedNames[i] = exprName(e)
+		}
+	} else if scanOut.resolved() {
+		fusedNames = scanOut.names
+	}
+	var limit int64 = -1
+	if limitOp != nil {
+		limit = limitOp.LimitValue()
+	}
+	var fusedOut outputSchema
+	if len(fusedNames) > 0 {
+		outNames := make([]string, len(fusedNames))
+		copy(outNames, fusedNames)
+		fusedTypes := make([]LX.TokenType, len(outNames))
+		if projectOp != nil {
+			for i := range outNames {
+				fusedTypes[i] = LX.T_TEXT
+			}
+		} else if scanOut.resolved() {
+			copy(fusedTypes, scanOut.types)
+		}
+		fusedOut = outputSchema{names: outNames, types: fusedTypes}
+	}
+	scanOp := idxScan
 	fusedIdx := st.addStage(&FusedScanStageSpec{
 		SourceFactory: func() UT.BatchProducer {
 			return NewRowOperatorAsProducer(scanOp)

@@ -1614,6 +1614,11 @@ type IndexScan struct {
 	// decoding the row. Set by NewFilter when pushdown is possible.
 	rawByteFilter func([]byte) bool
 
+	// REQ002143: usedCols tracks the set of columns actually referenced
+	// by the query, used by decomposeSeqScan for output schema derivation.
+	usedCols   []string
+	usedColSet map[string]bool
+
 	// REQ001226: lastDataSlice tracks the []Value from the previous
 	// DecodeRow call so it can be returned to valueSlicePool on the
 	// next iteration, eliminating per-row make([]Value, N) allocations.
@@ -2352,3 +2357,21 @@ func (i *IndexScan) IndexLower() []byte      { return i.indexLower }
 func (i *IndexScan) IndexUpper() []byte      { return i.indexUpper }
 func (i *IndexScan) Prefix() []byte          { return i.prefix }
 func (i *IndexScan) PrefixIdxKey() []byte    { return i.prefixIdxKey }
+
+// WithUsedCols sets the set of columns the query actually uses.
+// REQ002143: needed for decomposeSeqScan output schema derivation.
+func (i *IndexScan) WithUsedCols(cols []string) *IndexScan {
+	i.usedCols = cols
+	if i.usedColSet == nil {
+		i.usedColSet = make(map[string]bool, len(cols))
+	} else {
+		clear(i.usedColSet)
+	}
+	for _, c := range cols {
+		i.usedColSet[c] = true
+	}
+	return i
+}
+
+func (i *IndexScan) UsedCols() []string          { return i.usedCols }
+func (i *IndexScan) UsedColSet() map[string]bool { return i.usedColSet }
