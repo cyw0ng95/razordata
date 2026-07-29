@@ -632,3 +632,99 @@ func TestReplayLargeSegmentSpansChunks(t *testing.T) {
 		t.Errorf("commit txnID=%d, want 1", seenCommitTxnID)
 	}
 }
+
+func TestReplayRollbacksActiveTXNsFromCheckpoint(t *testing.T) {
+	tmp := t.TempDir()
+
+	sm, err := setupSegmentManager(tmp)
+	if err != nil {
+		t.Fatalf("setupSegmentManager: %v", err)
+	}
+	defer sm.Close()
+
+	bp, err := setupBufferPool(tmp)
+	if err != nil {
+		t.Fatalf("setupBufferPool: %v", err)
+	}
+	defer bp.Close()
+
+	w, err := wr.New(tmp, sm, sp.New(), lg.New(lg.Options{Output: io.Discard}), false)
+	if err != nil {
+		t.Fatalf("wr.New: %v", err)
+	}
+
+	// Write a checkpoint with active transactions 7 and 8.
+	cp := &wr.Checkpoint{
+		LSN:              50,
+		CatalogRootPtr:   100,
+		ManifestChecksum: 200,
+		ActiveTXNs:       []uint64{7, 8},
+	}
+	header, txns := wr.AppendCheckpointPayload(cp)
+	cpBatch := &wr.WriteBatch{
+		TxnID: 99,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTCheckpoint, BlockID: uint64(len(cp.ActiveTXNs)), Key: header, Value: txns},
+		},
+	}
+	if _, err = w.Append(cpBatch); err != nil {
+		t.Fatalf("wr.Append checkpoint: %v", err)
+	}
+
+	// Write a later committed transaction 9 (after checkpoint).
+	_, err = w.Append(&wr.WriteBatch{
+		TxnID: 9,
+		Recs: []wr.LogRecord{
+			{Type: wr.RTData, BlockID: 20, Value: []byte("txn9_data")},
+			{Type: wr.RTCommit, TxnID: 9},
+		},
+	})
+	if err != nil {
+		t.Fatalf("wr.Append: %v", err)
+	}
+	w.Sync()
+	w.Close()
+
+	var rolledBack []uint64
+	var committed []uint64
+	cb := Callbacks{
+		OnCommit: func(txnID uint64, commitTS uint64) error {
+			committed = append(committed, txnID)
+			return nil
+		},
+		OnRollback: func(txnID uint64) error {
+			rolledBack = append(rolledBack, txnID)
+			return nil
+		},
+	}
+
+	r, err := New(tmp, sm, bp, cb, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Close()
+
+	if err := r.Replay(); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+
+	wantCommitted := []uint64{9}
+	if len(committed) != len(wantCommitted) {
+		t.Errorf("committed txns: got %v, want %v", committed, wantCommitted)
+	}
+	for i, v := range wantCommitted {
+		if i >= len(committed) || committed[i] != v {
+			t.Errorf("committed[%d]: got %d, want %d", i, committed[i], v)
+		}
+	}
+
+	wantRolledBack := map[uint64]struct{}{7: {}, 8: {}}
+	if len(rolledBack) != len(wantRolledBack) {
+		t.Errorf("rolled back txns: got %v, want keys %v", rolledBack, wantRolledBack)
+	}
+	for _, txnID := range rolledBack {
+		if _, ok := wantRolledBack[txnID]; !ok {
+			t.Errorf("unexpected rollback for txn %d", txnID)
+		}
+	}
+}

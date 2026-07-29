@@ -21,13 +21,16 @@ var (
 
 func InstallSignalHandler(ctx context.Context, e *Engine) (stop func()) {
 	sigMu.Lock()
-	// Close the old channel if this is a re-install.
+	// Close the old channel if this is a re-install so the previous
+	// goroutine wakes up and exits instead of leaking (REQ002049).
 	if sigCh != nil {
 		signal.Stop(sigCh)
+		close(sigCh)
 	}
-	sigCh = make(chan os.Signal, 1)
+	mySigCh := make(chan os.Signal, 1)
+	sigCh = mySigCh
 	sigMu.Unlock()
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(mySigCh, syscall.SIGINT, syscall.SIGTERM)
 	done := make(chan struct{})
 	var once sync.Once
 	go func() {
@@ -36,15 +39,17 @@ func InstallSignalHandler(ctx context.Context, e *Engine) (stop func()) {
 			return
 		case <-ctx.Done():
 			return
-		case <-sigCh:
+		case <-mySigCh:
 			_ = e.Close(context.Background())
 		}
 	}()
 	return func() {
 		once.Do(func() {
 			sigMu.Lock()
-			signal.Stop(sigCh)
-			sigCh = nil
+			if sigCh == mySigCh {
+				signal.Stop(mySigCh)
+				sigCh = nil
+			}
 			sigMu.Unlock()
 			close(done)
 		})
