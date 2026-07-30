@@ -62,75 +62,97 @@ func (r *AggregateReducer) Finalize(groupKeys GroupKeySource) ([]*UT.Batch, erro
 	numAggCols := len(r.specs)
 	totalCols := numKeyCols + numAggCols
 
-	batch := UT.GetBatch(totalCols)
+	// REQ002158: emit batches of at most UT.BatchSize rows to avoid
+	// materializing all groups in a single huge batch (OOM risk for
+	// large GROUP BY queries with many groups).
+	const batchSize = 1024
 
-	for c := 0; c < numKeyCols; c++ {
-		batch.Cols[c].Type = LX.T_INT_KW
-		batch.Cols[c].Name = "group" + intStr(c)
-	}
-	for i, spec := range r.specs {
-		colIdx := numKeyCols + i
-		inputType := LX.T_INT_KW
-		_ = inputType
-		batch.Cols[colIdx].Type = spec.ResultType(inputType)
-		batch.Cols[colIdx].Name = "agg" + intStr(i)
-	}
+	var batches []*UT.Batch
+	pending := numGroups
+	groupIdx := 0
 
-	for g := 0; g < numGroups; g++ {
-		var accum *UnifiedAccum
-		if groupKeys != nil {
-			if g >= len(r.accums) {
-				continue
-			}
-			accum = &r.accums[g]
-		} else {
-			if len(r.accums) == 0 {
-				accum = &UnifiedAccum{}
-			} else {
-				accum = &r.accums[0]
-			}
+	for pending > 0 {
+		curSize := batchSize
+		if curSize > pending {
+			curSize = pending
 		}
 
+		batch := UT.GetBatch(totalCols)
 		for c := 0; c < numKeyCols; c++ {
-			val, ok := groupKeys.KeyValue(g, c)
-			if !ok {
-				batch.Cols[c].Nulls = append(batch.Cols[c].Nulls, true)
-			} else {
-				batch.Cols[c].Data.Ints = append(batch.Cols[c].Data.Ints, val)
-				batch.Cols[c].Nulls = append(batch.Cols[c].Nulls, false)
-			}
+			batch.Cols[c].Type = LX.T_INT_KW
+			batch.Cols[c].Name = "group" + intStr(c)
 		}
-
 		for i, spec := range r.specs {
 			colIdx := numKeyCols + i
-			val, ok := accum.Result(&spec)
-			if !ok {
-				batch.Cols[colIdx].Nulls = append(batch.Cols[colIdx].Nulls, true)
-				continue
-			}
-			batch.Cols[colIdx].Nulls = append(batch.Cols[colIdx].Nulls, false)
-			switch v := val.(type) {
-			case int64:
-				batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, v)
-				batch.Cols[colIdx].Type = LX.T_INT_KW
-			case float64:
-				batch.Cols[colIdx].Data.Floats = append(batch.Cols[colIdx].Data.Floats, v)
-				batch.Cols[colIdx].Type = LX.T_FLOAT_KW
-			case string:
-				batch.Cols[colIdx].Data.Strs = append(batch.Cols[colIdx].Data.Strs, v)
-				batch.Cols[colIdx].Type = LX.T_TEXT
-			case bool:
-				batch.Cols[colIdx].Data.Bools = append(batch.Cols[colIdx].Data.Bools, v)
-				batch.Cols[colIdx].Type = LX.T_BOOL
-			default:
-				batch.Cols[colIdx].Nulls[len(batch.Cols[colIdx].Nulls)-1] = true
-			}
+			inputType := LX.T_INT_KW
+			_ = inputType
+			batch.Cols[colIdx].Type = spec.ResultType(inputType)
+			batch.Cols[colIdx].Name = "agg" + intStr(i)
 		}
 
-		batch.AdvanceSize()
+		end := groupIdx + curSize
+		if end > numGroups {
+			end = numGroups
+		}
+		for g := groupIdx; g < end; g++ {
+			var accum *UnifiedAccum
+			if groupKeys != nil {
+				if g >= len(r.accums) {
+					continue
+				}
+				accum = &r.accums[g]
+			} else {
+				if len(r.accums) == 0 {
+					accum = &UnifiedAccum{}
+				} else {
+					accum = &r.accums[0]
+				}
+			}
+
+			for c := 0; c < numKeyCols; c++ {
+				val, ok := groupKeys.KeyValue(g, c)
+				if !ok {
+					batch.Cols[c].Nulls = append(batch.Cols[c].Nulls, true)
+				} else {
+					batch.Cols[c].Data.Ints = append(batch.Cols[c].Data.Ints, val)
+					batch.Cols[c].Nulls = append(batch.Cols[c].Nulls, false)
+				}
+			}
+
+			for i, spec := range r.specs {
+				colIdx := numKeyCols + i
+				val, ok := accum.Result(&spec)
+				if !ok {
+					batch.Cols[colIdx].Nulls = append(batch.Cols[colIdx].Nulls, true)
+					continue
+				}
+				batch.Cols[colIdx].Nulls = append(batch.Cols[colIdx].Nulls, false)
+				switch v := val.(type) {
+				case int64:
+					batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, v)
+					batch.Cols[colIdx].Type = LX.T_INT_KW
+				case float64:
+					batch.Cols[colIdx].Data.Floats = append(batch.Cols[colIdx].Data.Floats, v)
+					batch.Cols[colIdx].Type = LX.T_FLOAT_KW
+				case string:
+					batch.Cols[colIdx].Data.Strs = append(batch.Cols[colIdx].Data.Strs, v)
+					batch.Cols[colIdx].Type = LX.T_TEXT
+				case bool:
+					batch.Cols[colIdx].Data.Bools = append(batch.Cols[colIdx].Data.Bools, v)
+					batch.Cols[colIdx].Type = LX.T_BOOL
+				default:
+					batch.Cols[colIdx].Nulls[len(batch.Cols[colIdx].Nulls)-1] = true
+				}
+			}
+
+			batch.AdvanceSize()
+		}
+		groupIdx = end
+		pending -= curSize
+		batches = append(batches, batch)
 	}
 
-	return []*UT.Batch{batch}, nil
+	return batches, nil
 }
 
 func (r *AggregateReducer) Reset() {
