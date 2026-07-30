@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -1144,6 +1145,9 @@ func decomposeDML(spec StageSpec, st *decomposeState) int {
 // decomposeFallback wraps the operator in a LegacyBatchStageSpec.
 // Output schema empty (will fallbacks treat it unknown).
 func decomposeFallback(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	// REQ002185: log unknown operator types to surface missing native stages.
+	slog.Warn("px.decomposeFallback: unknown operator type, using LegacyBatchStageSpec",
+		"type", fmt.Sprintf("%T", op))
 	return st.addStage(&LegacyBatchStageSpec{
 		Root:       op,
 		Planner:    planner,
