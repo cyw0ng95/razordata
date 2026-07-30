@@ -99,10 +99,15 @@ func (a *RowArena) ResetOffset() {
 // current slab (bump-pointer allocation, no per-row heap alloc).
 // REQ001632: returns Row by value instead of *Row to eliminate the
 // per-row heap allocation for the Row struct itself.
+// When schema is nil, Cols/ColIndex are left empty — the caller
+// sets them after the call (e.g. Pipeline.Execute, drainBatch).
 func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) Row {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if nCols <= 0 {
+		if schema == nil {
+			return Row{}
+		}
 		return Row{
 			Cols:     schema.Cols,
 			ColIndex: schema.ColIndex,
@@ -114,11 +119,14 @@ func (a *RowArena) AllocRow(nCols int, schema *StoreSchema) Row {
 	}
 	start := a.offset
 	a.offset += nCols
-	return Row{
-		Cols:     schema.Cols,
-		Data:     a.slab[start : start+nCols : start+nCols],
-		ColIndex: schema.ColIndex,
+	row := Row{
+		Data: a.slab[start : start+nCols : start+nCols],
 	}
+	if schema != nil {
+		row.Cols = schema.Cols
+		row.ColIndex = schema.ColIndex
+	}
+	return row
 }
 
 // BumpValues reserves `n` Value slots in the current slab and
