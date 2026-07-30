@@ -385,6 +385,9 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 		// REQ002194: standalone FilterProject (not part of FusedScan pattern).
 		// Already fuses filter+project efficiently; wrap as native source.
 		return decomposeNativeSource(o, st)
+	case *OP.MergeJoin:
+		// REQ002195: MergeJoin. Native source stage.
+		return decomposeNativeSource(o, st)
 	default:
 		return decomposeFallback(op, st, planner, specialize)
 	}
