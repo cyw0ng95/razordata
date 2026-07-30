@@ -397,6 +397,12 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *WT.DropTable:
 		// REQ002201: DDL. Native source stage.
 		return decomposeNativeSource(o, st)
+	case *WT.CreateIndex:
+		// REQ002202: Index DDL. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.DropIndex:
+		// REQ002202: Index DDL. Native source stage.
+		return decomposeNativeSource(o, st)
 	default:
 		return decomposeFallback(op, st, planner, specialize)
 	}
