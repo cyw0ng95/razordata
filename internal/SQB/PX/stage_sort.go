@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -14,9 +15,11 @@ import (
 // stage that collects all child rows into memory, sorts them by the
 // specified columns, and emits sorted result batches.
 type SortStageSpec struct {
-	SortCols  []int  // column indices to sort by
-	Desc      []bool // true = descending for each column
-	BatchSize int    // rows per output batch (0 = UT.BatchSize)
+	SortCols   []int    // column indices to sort by
+	Desc       []bool   // true = descending for each column
+	Collations []string // REQ002163: per-key COLLATE name ("" = binary)
+	NullsOrder []int8   // REQ002163: per-key NULLS FIRST(1)/LAST(-1)/default(0)
+	BatchSize  int      // rows per output batch (0 = UT.BatchSize)
 }
 
 // NewRuntime creates a SortStage from this spec.
@@ -26,9 +29,11 @@ func (s *SortStageSpec) NewRuntime() Stage {
 		batchSize = UT.BatchSize
 	}
 	return &SortStage{
-		sortCols:  s.SortCols,
-		desc:      s.Desc,
-		batchSize: batchSize,
+		sortCols:   s.SortCols,
+		desc:       s.Desc,
+		collations: s.Collations,
+		nullsOrder: s.NullsOrder,
+		batchSize:  batchSize,
 	}
 }
 
@@ -46,10 +51,24 @@ type SortStage struct {
 	child     Stage
 	sortCols  []int
 	desc      []bool
-	batchSize int
-	result    []*UT.Batch
-	pos       int
-	drained   bool
+	// REQ002163: per-key COLLATE name and NULLS ordering, mirroring
+	// PS.OrderItem. collFuncs is resolved lazily in drain() from the
+	// planner's collation registry (PropagatePlanner).
+	collations []string
+	nullsOrder []int8
+	collFuncs  []DT.CollateFunc
+	planner    pl.QueryPlanner
+	batchSize  int
+	result     []*UT.Batch
+	pos        int
+	drained    bool
+}
+
+// PropagatePlanner stores the query planner so the sort comparator can
+// resolve COLLATE names to registered collation functions at sort time.
+// REQ002163. Implements PlannerPropagator.
+func (s *SortStage) PropagatePlanner(p pl.QueryPlanner) {
+	s.planner = p
 }
 
 // keyedRow holds a reference to a row in a batch for sorting.
@@ -141,10 +160,24 @@ func (s *SortStage) drain(ctx context.Context) error {
 		}
 	}
 
+	// REQ002163: resolve per-key collation functions from the planner's
+	// registry. Re-resolved each drain (cheap, and correct across plan
+	// cache reuse / Reset). A nil entry (unregistered collation) falls
+	// back to binary comparison in compareKey.
+	s.collFuncs = nil
+	if s.planner != nil && len(s.collations) > 0 {
+		s.collFuncs = make([]DT.CollateFunc, len(s.collations))
+		for k, name := range s.collations {
+			if name != "" {
+				s.collFuncs[k] = s.planner.LookupCollation(name)
+			}
+		}
+	}
+
 	// Sort.
 	sort.SliceStable(rows, func(i, j int) bool {
 		for k := range s.sortCols {
-			cmp := compareSortKeys(rows[i].keys[k], rows[j].keys[k])
+			cmp := s.compareKey(k, rows[i].keys[k], rows[j].keys[k])
 			if cmp != 0 {
 				if k < len(s.desc) && s.desc[k] {
 					return cmp > 0
@@ -227,17 +260,38 @@ func extractSortKey(batch *UT.Batch, colIdx, rowIdx int) sortKey {
 	return sortKey{isNull: true, typ: col.Type}
 }
 
-// compareSortKeys compares two sort keys. Returns -1, 0, or 1.
-func compareSortKeys(a, b sortKey) int {
-	// NULLs sort last.
-	if a.isNull && b.isNull {
-		return 0
+// compareKey compares two sort keys at column-index k. Returns -1, 0, 1.
+// REQ002163: applies per-key NULLS FIRST/LAST ordering and registered
+// COLLATE functions for text values, mirroring the legacy OP.Sort
+// comparator (intermediate_sort.go). When no collation is registered
+// for the key (or the name is unregistered), text falls back to binary
+// comparison — matching SQLite's behavior for unknown collations.
+func (s *SortStage) compareKey(k int, a, b sortKey) int {
+	// Handle NULLs. NullsOrder: 1=FIRST, -1=LAST, 0=default(LAST).
+	nullsOrder := int8(0)
+	if k < len(s.nullsOrder) {
+		nullsOrder = s.nullsOrder[k]
 	}
-	if a.isNull {
-		return 1
+	if a.isNull || b.isNull {
+		if a.isNull && b.isNull {
+			return 0
+		}
+		// Exactly one is NULL. sign follows NullsOrder; 0 → LAST.
+		sign := int(nullsOrder)
+		if sign == 0 {
+			sign = -1
+		}
+		if a.isNull {
+			return -sign
+		}
+		return sign
 	}
-	if b.isNull {
-		return -1
+
+	// Neither is NULL. Apply registered collation for text keys.
+	if k < len(s.collFuncs) && s.collFuncs[k] != nil {
+		if isTextType(a.typ) && isTextType(b.typ) {
+			return s.collFuncs[k]([]byte(a.s), []byte(b.s))
+		}
 	}
 
 	switch a.typ {
@@ -267,6 +321,12 @@ func compareSortKeys(a, b sortKey) int {
 		return 0
 	}
 	return 0
+}
+
+// isTextType reports whether a token type is a text-like type whose
+// values should be routed through a registered collation function.
+func isTextType(t LX.TokenType) bool {
+	return t == LX.T_TEXT || t == LX.T_VARCHAR || t == LX.T_BLOB
 }
 
 // buildSortedColumn fills a column from the sorted row references.

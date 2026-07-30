@@ -1080,6 +1080,11 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 		if def.Kind == AggGroupConcat || def.Kind == AggStringAgg {
 			batch.Cols[colIdx].Type = LX.T_TEXT
 			batch.Cols[colIdx].Data.Strs = make([]string, 0)
+		} else if def.Kind == AggAvg {
+			// SQLite: AVG always returns REAL regardless of input type.
+			// REQ002155: previously T_INT_KW with integer division.
+			batch.Cols[colIdx].Type = LX.T_FLOAT_KW
+			batch.Cols[colIdx].Data.Floats = make([]float64, 0)
 		} else {
 			batch.Cols[colIdx].Type = LX.T_INT_KW
 			batch.Cols[colIdx].Data.Ints = make([]int64, 0)
@@ -1114,6 +1119,16 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 				colIdx++
 				continue
 			}
+			if def.Kind == AggAvg {
+				// AVG always returns REAL (float64). REQ002155.
+				var avg float64
+				if p.Count > 0 {
+					avg = float64(p.Sum) / float64(p.Count)
+				}
+				batch.Cols[colIdx].Data.Floats = append(batch.Cols[colIdx].Data.Floats, avg)
+				colIdx++
+				continue
+			}
 			var val int64
 			switch def.Kind {
 			case AggCount:
@@ -1127,10 +1142,6 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 			case AggMax:
 				if p.HasValue {
 					val = p.Max
-				}
-			case AggAvg:
-				if p.Count > 0 {
-					val = p.Sum / p.Count
 				}
 			}
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, val)
@@ -1180,6 +1191,16 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 				colIdx++
 				continue
 			}
+			if def.Kind == AggAvg {
+				// AVG always returns REAL (float64). REQ002155.
+				var avg float64
+				if p.Count > 0 {
+					avg = float64(p.Sum) / float64(p.Count)
+				}
+				batch.Cols[colIdx].Data.Floats = append(batch.Cols[colIdx].Data.Floats, avg)
+				colIdx++
+				continue
+			}
 			var val int64
 			switch def.Kind {
 			case AggCount:
@@ -1193,10 +1214,6 @@ func (a *VectorizedHashAggregate) buildResultBatch() (*UT.Batch, error) {
 			case AggMax:
 				if p.HasValue {
 					val = p.Max
-				}
-			case AggAvg:
-				if p.Count > 0 {
-					val = p.Sum / p.Count
 				}
 			}
 			batch.Cols[colIdx].Data.Ints = append(batch.Cols[colIdx].Data.Ints, val)

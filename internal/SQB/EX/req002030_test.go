@@ -400,6 +400,7 @@ func TestREQ002030_MaxNegate(t *testing.T) {
 
 func TestREQ002030_AvgNegate(t *testing.T) {
 	// AVG(-v) with values [10, 20, 30] => (-10 + -20 + -30) / 3 = -20
+	// SQLite: AVG always returns REAL, so expect float64(-20). REQ002155.
 	src := &testAggSource{
 		batches: []*UT.Batch{makeAggIntBatch([]int64{10, 20, 30})},
 	}
@@ -416,9 +417,9 @@ func TestREQ002030_AvgNegate(t *testing.T) {
 	}
 	defer batch.Put()
 
-	got := batch.Cols[0].Data.Ints[0]
+	got := batch.Cols[0].Data.Floats[0]
 	if got != -20 {
-		t.Errorf("AVG(-v) = %d, want -20", got)
+		t.Errorf("AVG(-v) = %v, want -20", got)
 	}
 }
 

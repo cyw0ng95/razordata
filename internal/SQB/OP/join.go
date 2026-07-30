@@ -649,13 +649,28 @@ func (j *NestedLoopJoin) nullRightRow() Row {
 		return *j.nullRightRowCache
 	}
 	DT.TablesMu.RLock()
-	rightSchema := DT.Tables[j.rightTbl]
+	rightRows := DT.Tables[j.rightTbl]
+	rightSchema := DT.Schemas[j.rightTbl]
 	DT.TablesMu.RUnlock()
 
+	// REQ002166: same empty-table fix as nullLeftRow — schemaCols
+	// returns nil for empty right tables, which previously produced a
+	// 0-column NULL row and mis-sized Data (make([]Value, len(rows))
+	// yielded 0 values). Fall back to DT.Schemas for column names.
+	var cols []string
+	var types []LX.TokenType
+	if len(rightRows) > 0 {
+		cols = append([]string(nil), rightRows[0].Cols...)
+		types = append([]LX.TokenType(nil), rightRows[0].Types...)
+	} else if len(rightSchema) > 0 {
+		cols = append([]string(nil), rightSchema...)
+	}
+	cols = prefixCols(cols, j.rightTbl)
+
 	nullRow := Row{
-		Cols:  prefixCols(schemaCols(rightSchema), j.rightTbl),
-		Types: schemaTypes(rightSchema),
-		Data:  make([]Value, len(rightSchema)),
+		Cols:  cols,
+		Types: types,
+		Data:  make([]Value, len(cols)),
 	}
 	// Cache for reuse (copy the slice header — Data values are all zero = NULL).
 	j.nullRightRowCache = &nullRow
@@ -670,13 +685,30 @@ func (j *NestedLoopJoin) nullLeftRow() Row {
 		return *j.nullLeftRowCache
 	}
 	DT.TablesMu.RLock()
-	leftSchema := DT.Tables[j.leftTbl]
+	leftRows := DT.Tables[j.leftTbl]
+	leftSchema := DT.Schemas[j.leftTbl]
 	DT.TablesMu.RUnlock()
 
-	cols := prefixCols(schemaCols(leftSchema), j.leftTbl)
+	// REQ002166: schemaCols([]DT.Row{}) returns nil for empty tables,
+	// which previously produced a 0-column NULL row — corrupting
+	// RIGHT/FULL outer-join output (right-side data landed in left
+	// column slots because outerJoinRows emitted fewer Data values than
+	// Cols). Fall back to DT.Schemas (always populated by CREATE TABLE)
+	// when the table has no rows. Both sources carry un-prefixed names,
+	// so prefixCols produces identical "tbl.col" output either way.
+	var cols []string
+	var types []LX.TokenType
+	if len(leftRows) > 0 {
+		cols = append([]string(nil), leftRows[0].Cols...)
+		types = append([]LX.TokenType(nil), leftRows[0].Types...)
+	} else if len(leftSchema) > 0 {
+		cols = append([]string(nil), leftSchema...)
+	}
+	cols = prefixCols(cols, j.leftTbl)
+
 	nullRow := Row{
 		Cols:  cols,
-		Types: schemaTypes(leftSchema),
+		Types: types,
 		// REQ001355: size Data to match Cols count, not row count.
 		Data: make([]Value, len(cols)),
 	}
@@ -1207,20 +1239,4 @@ func isJoinOp(op Operator) bool {
 		return true
 	}
 	return false
-}
-
-// schemaCols extracts column names from a schema.
-func schemaCols(rows []Row) []string {
-	if len(rows) == 0 {
-		return nil
-	}
-	return append([]string(nil), rows[0].Cols...)
-}
-
-// schemaTypes extracts column types from a schema.
-func schemaTypes(rows []Row) []LX.TokenType {
-	if len(rows) == 0 {
-		return nil
-	}
-	return append([]LX.TokenType(nil), rows[0].Types...)
 }

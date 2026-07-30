@@ -2,6 +2,8 @@ package EX
 
 import (
 	"bytes"
+	"strconv"
+	"strings"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -116,36 +118,104 @@ func (p *Planner) deriveRangeFilterFromStats(pair joinEquiPair) ([]PS.Expr, bool
 	if lstats := p.statsCatalog.ColumnStatsByName(pair.LeftTbl, pair.LeftCol); lstats != nil &&
 		len(lstats.MinValue) > 0 && len(lstats.MaxValue) > 0 &&
 		!bytes.Equal(lstats.MinValue, lstats.MaxValue) {
-		return buildRangePredicates(pair.RightTbl, pair.RightCol, lstats.MinValue, lstats.MaxValue), true
+		// REQ002167: look up the TARGET column's type so we emit
+		// the correct literal kind (NumberLiteral for INT, etc.).
+		// The stats store min/max as []byte; for numeric columns
+		// a StringLiteral would fail the vectorized comparison
+		// path (compareColLiteral cannot coerce string→int64).
+		colType := p.columnTokenType(pair.RightTbl, pair.RightCol)
+		return buildRangePredicates(pair.RightTbl, pair.RightCol, lstats.MinValue, lstats.MaxValue, colType), true
 	}
 	// Then right → left.
 	if rstats := p.statsCatalog.ColumnStatsByName(pair.RightTbl, pair.RightCol); rstats != nil &&
 		len(rstats.MinValue) > 0 && len(rstats.MaxValue) > 0 &&
 		!bytes.Equal(rstats.MinValue, rstats.MaxValue) {
-		return buildRangePredicates(pair.LeftTbl, pair.LeftCol, rstats.MinValue, rstats.MaxValue), true
+		colType := p.columnTokenType(pair.LeftTbl, pair.LeftCol)
+		return buildRangePredicates(pair.LeftTbl, pair.LeftCol, rstats.MinValue, rstats.MaxValue, colType), true
 	}
 	return nil, false
+}
+
+// columnTokenType looks up the LX.TokenType for a (table, column)
+// pair from the planner catalog, in-memory schemas, or store
+// schemas. Returns LX.T_TEXT (0) as a safe fallback when the
+// type cannot be resolved — string comparison is always valid
+// for byte-encoded stats. REQ002167.
+func (p *Planner) columnTokenType(tbl, col string) LX.TokenType {
+	if t, ok := p.catalog[tbl]; ok {
+		for _, c := range t.cols {
+			if strings.EqualFold(c.Name, col) {
+				return c.Typ
+			}
+		}
+	}
+	if ss, ok := DT.InMemSchemas[tbl]; ok && ss != nil {
+		for i, c := range ss.Cols {
+			if strings.EqualFold(c, col) && i < len(ss.ColTypes) {
+				return ss.ColTypes[i]
+			}
+		}
+	}
+	return LX.T_TEXT
 }
 
 // buildRangePredicates builds `tbl.col >= min AND tbl.col <= max`
 // for the given qualified column. Returns one or two predicates
 // (we always return both bounds; downstream AND-combines them).
-func buildRangePredicates(tbl, col string, minVal, maxVal []byte) []PS.Expr {
+// REQ002167: colType determines the literal kind so numeric
+// columns get NumberLiteral/FloatLiteral instead of StringLiteral.
+func buildRangePredicates(tbl, col string, minVal, maxVal []byte, colType LX.TokenType) []PS.Expr {
 	qualified := &PS.QualifiedName{Table: tbl, Name: col}
-	minLit := decodeByteLiteral(minVal)
-	maxLit := decodeByteLiteral(maxVal)
+	minLit := decodeByteLiteral(minVal, colType)
+	maxLit := decodeByteLiteral(maxVal, colType)
 	ge := &PS.BinaryExpr{Left: qualified, Op: LX.T_GE, Right: minLit}
 	le := &PS.BinaryExpr{Left: qualified, Op: LX.T_LE, Right: maxLit}
 	return []PS.Expr{ge, le}
 }
 
-// decodeByteLiteral wraps a []byte value as the simplest
-// representation the executor can evaluate. For now we
-// unconditionally emit a StringLiteral — the executor's
-// binary-comparison path handles byte-comparable types
-// consistently. REQ001252: byte-for-byte comparison is what
-// the secondary index uses, so this matches the storage encoding.
-func decodeByteLiteral(b []byte) PS.Expr {
+// decodeByteLiteral wraps a []byte value as the appropriate PS
+// literal node based on the column type. For INT/BIGINT columns
+// the bytes are parsed as int64 and wrapped as NumberLiteral;
+// for FLOAT columns as float64 and FloatLiteral; for all other
+// types (including TEXT and the zero-value fallback) as
+// StringLiteral.
+//
+// REQ002167: the previous implementation unconditionally emitted
+// a StringLiteral. When the target column was numeric, the
+// vectorized comparison path (compareColLiteral in eval_vec.go)
+// could not coerce string→int64 and fell through to
+// evalRowFallback, which returned zero matching rows — silently
+// dropping all in-range rows. Emitting the correct literal kind
+// lets the vectorized fast path handle the comparison directly.
+//
+// When colType is not a known numeric type (e.g. programmatically
+// registered tables set Typ=T_IDENT), we still try to parse the
+// byte value as int64 then float64 — stats min/max for numeric
+// data are always parseable, and this avoids the string-literal
+// trap for tables that were registered without explicit types.
+func decodeByteLiteral(b []byte, colType LX.TokenType) PS.Expr {
+	switch colType {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		if v, err := strconv.ParseInt(string(b), 10, 64); err == nil {
+			return &PS.NumberLiteral{Val: v}
+		}
+	case LX.T_FLOAT_KW:
+		if v, err := strconv.ParseFloat(string(b), 64); err == nil {
+			return &PS.FloatLiteral{Val: v}
+		}
+	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+		return &PS.StringLiteral{Val: string(b)}
+	default:
+		// Unknown type (e.g. T_IDENT from programmatic registration).
+		// Try numeric parse first — stats for numeric columns store
+		// decimal-string min/max values. Falls back to string.
+		if v, err := strconv.ParseInt(string(b), 10, 64); err == nil {
+			return &PS.NumberLiteral{Val: v}
+		}
+		if v, err := strconv.ParseFloat(string(b), 64); err == nil {
+			return &PS.FloatLiteral{Val: v}
+		}
+	}
 	return &PS.StringLiteral{Val: string(b)}
 }
 
@@ -177,25 +247,27 @@ func (p *Planner) statsRangeFilterForJoin(on PS.Expr, leftTbl, rightTbl string) 
 	if lstats := p.statsCatalog.ColumnStatsByName(ln.Table, ln.Name); lstats != nil &&
 		len(lstats.MinValue) > 0 && len(lstats.MaxValue) > 0 &&
 		!bytes.Equal(lstats.MinValue, lstats.MaxValue) {
-		// We can compose `t2.col >= min AND t2.col <= max`.
-		return buildRangePredicate(rn.Table, rn.Name, lstats.MinValue, lstats.MaxValue)
+		// REQ002167: emit the correct literal kind for the target
+		// column type so the vectorized comparison path works.
+		colType := p.columnTokenType(rn.Table, rn.Name)
+		return buildRangePredicate(rn.Table, rn.Name, lstats.MinValue, lstats.MaxValue, colType)
 	}
 	if rstats := p.statsCatalog.ColumnStatsByName(rn.Table, rn.Name); rstats != nil &&
 		len(rstats.MinValue) > 0 && len(rstats.MaxValue) > 0 &&
 		!bytes.Equal(rstats.MinValue, rstats.MaxValue) {
-		return buildRangePredicate(ln.Table, ln.Name, rstats.MinValue, rstats.MaxValue)
+		colType := p.columnTokenType(ln.Table, ln.Name)
+		return buildRangePredicate(ln.Table, ln.Name, rstats.MinValue, rstats.MaxValue, colType)
 	}
 	return nil
 }
 
 // buildRangePredicate composes `tbl.col >= min AND tbl.col <= max`
-// into a single AND-joined PS.Expr. The byte values are wrapped
-// as StringLiteral; the executor's binary-comparison path handles
-// them as bytes — this matches the secondary index encoding.
-func buildRangePredicate(tbl, col string, minVal, maxVal []byte) PS.Expr {
+// into a single AND-joined PS.Expr. REQ002167: colType determines
+// the literal kind so numeric columns get NumberLiteral/FloatLiteral.
+func buildRangePredicate(tbl, col string, minVal, maxVal []byte, colType LX.TokenType) PS.Expr {
 	qualified := &PS.QualifiedName{Table: tbl, Name: col}
-	minLit := &PS.StringLiteral{Val: string(minVal)}
-	maxLit := &PS.StringLiteral{Val: string(maxVal)}
+	minLit := decodeByteLiteral(minVal, colType)
+	maxLit := decodeByteLiteral(maxVal, colType)
 	ge := &PS.BinaryExpr{Left: qualified, Op: LX.T_GE, Right: minLit}
 	le := &PS.BinaryExpr{Left: qualified, Op: LX.T_LE, Right: maxLit}
 	return &PS.BinaryExpr{Left: ge, Op: LX.T_AND, Right: le}

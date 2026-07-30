@@ -460,6 +460,11 @@ func decomposeSort(s *OP.Sort, st *decomposeState, planner PL.QueryPlanner, spec
 	if childOut.resolved() {
 		sortCols := make([]int, 0, len(keys))
 		desc := make([]bool, 0, len(keys))
+		// REQ002163: thread COLLATE name + NULLS FIRST/LAST so the
+		// native SortStage applies registered collations, mirroring
+		// the legacy OP.Sort comparator.
+		collations := make([]string, 0, len(keys))
+		nullsOrder := make([]int8, 0, len(keys))
 		allResolved := true
 		for _, k := range keys {
 			idx := -1
@@ -476,11 +481,15 @@ func decomposeSort(s *OP.Sort, st *decomposeState, planner PL.QueryPlanner, spec
 			}
 			sortCols = append(sortCols, idx)
 			desc = append(desc, k.Desc)
+			collations = append(collations, k.Collation)
+			nullsOrder = append(nullsOrder, k.NullsOrder)
 		}
 		if allResolved && len(sortCols) > 0 {
 			sortIdx := st.addStage(&SortStageSpec{
-				SortCols: sortCols,
-				Desc:     desc,
+				SortCols:   sortCols,
+				Desc:       desc,
+				Collations: collations,
+				NullsOrder: nullsOrder,
 			}, childOut)
 			st.addEdge(sortIdx, childIdx, SingleChild)
 			return sortIdx
