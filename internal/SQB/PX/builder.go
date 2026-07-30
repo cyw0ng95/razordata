@@ -419,13 +419,11 @@ func decomposeSeqScan(ss scanOp, st *decomposeState) int {
 func decomposeFilter(f *OP.Filter, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	childIdx := decomposeOp(f.Child(), st, planner, specialize)
 	childOut := st.childOutput(childIdx)
-	// REQ002179: predicates containing subquery expressions use a native
+	// REQ002186: predicates containing subquery expressions use a native
 	// SubqueryFilterStage that evaluates the predicate row-by-row with
-	// ExecCtx for subquery execution. Currently falls back to
-	// LegacyBatchStageSpec because the SubqueryFilterStage does not
-	// yet receive the ExecCtx correctly in all scenarios (the ToRows()
-	// method does not propagate ExecCtx). The SubqueryFilterStage
-	// implementation is ready in stage_filter.go for future use.
+	// ExecCtx for subquery execution. ToRows() now propagates ExecCtx.
+	// Falls back to LegacyBatchStageSpec for now because the NOT EXISTS
+	// test case (correlated subquery) does not receive ExecCtx correctly.
 	if pred := f.Predicate(); pred != nil && exprContainsSubquery(pred) {
 		filterIdx := st.addStage(&LegacyBatchStageSpec{
 			Root:       f,
@@ -860,11 +858,10 @@ func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner
 				allResolved = false
 				break
 			}
-			// REQ002183: DISTINCT, GROUP_CONCAT, and STRING_AGG are natively
-			// supported by UnifiedAccum. Currently falls back to
-			// LegacyBatchStageSpec because the AggregateStage does not
-			// yet handle these correctly in all scenarios (e.g., the
-			// AggGroupConcat result type and DISTINCT dedup cache).
+			// REQ002188: DISTINCT, GROUP_CONCAT, and STRING_AGG are natively
+			// supported by UnifiedAccum. Falls back to LegacyBatchStageSpec
+			// because the AggregateStage HashShuffler only supports int64
+			// group keys (string group keys cause 0-row results).
 			if spec.Distinct {
 				allResolved = false
 				break

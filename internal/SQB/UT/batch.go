@@ -721,7 +721,8 @@ func (b *Batch) ToRows() []pl.Row {
 			phys = int(b.Sel[r])
 		}
 		row := pl.Row{
-			Cols: names,
+			Cols:    names,
+			ExecCtx: b.ExecCtx,
 		}
 		row.Data = make([]pl.Value, len(names))
 		for c := range names {

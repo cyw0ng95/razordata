@@ -251,11 +251,8 @@ func (f *SubqueryFilterStage) NextBatch(ctx context.Context) (*UT.Batch, error) 
 		}
 
 		// Row-by-row evaluation using the row-based EV evaluator.
-		// ToRows() does not propagate ExecCtx — set it manually.
+		// REQ002186: ToRows() now propagates ExecCtx automatically.
 		rows := batch.ToRows()
-		for i := range rows {
-			rows[i].ExecCtx = batch.ExecCtx
-		}
 		var sel []uint16
 		for i := range rows {
 			result, err := EV.EvalValue(f.pred, &rows[i], f.params)
@@ -269,10 +266,8 @@ func (f *SubqueryFilterStage) NextBatch(ctx context.Context) (*UT.Batch, error) 
 		}
 
 		if len(sel) == 0 {
-			// REQ002179: 0 rows may indicate a subquery evaluation issue
-			// (e.g., ExecCtx not set). Return the batch with all rows
-			// passed through to avoid silently dropping results.
-			return batch, nil
+			batch.Put()
+			continue
 		}
 		batch.Sel = sel
 		batch.Size = len(sel)
