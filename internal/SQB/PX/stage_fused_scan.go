@@ -75,8 +75,9 @@ func (f *FusedScanStage) PropagateExecContext(ec *DT.ExecContext) {
 // PropagateParams receives parameter values for ? placeholders
 // (implements ParamPropagator).
 func (f *FusedScanStage) PropagateParams(args []any, buf *[]any) {
-	*buf = append((*buf)[:0], args...)
-	f.params = *buf
+	// REQ002161: copy into own buffer — the incoming buf is shared
+	// across all stages and subsequent stages would overwrite it.
+	f.params = append(f.params[:0], args...)
 }
 
 // NextBatch applies filter + project + limit in a single pass.

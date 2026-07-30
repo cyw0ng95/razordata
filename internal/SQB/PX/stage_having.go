@@ -43,8 +43,9 @@ func (h *HavingStage) SetChild(_ ChildSide, child Stage) {
 // PropagateParams receives parameter values for ? placeholders
 // (implements ParamPropagator).
 func (h *HavingStage) PropagateParams(args []any, buf *[]any) {
-	*buf = append((*buf)[:0], args...)
-	h.params = *buf
+	// REQ002161: copy into own buffer — the incoming buf is shared
+	// across all stages and subsequent stages would overwrite it.
+	h.params = append(h.params[:0], args...)
 }
 
 // NextBatch pulls a batch from the child (the aggregate stage) and

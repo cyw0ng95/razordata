@@ -2,6 +2,7 @@ package UT
 
 import (
 	"sync"
+	"unsafe"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -223,6 +224,47 @@ type columnDataPool struct {
 
 var colDataPool = &columnDataPool{}
 
+// REQ002168: dedup helpers — compare backing-array pointers to detect
+// when the same slice is already pooled. Without this, struct-copy
+// aliasing (e.g. `output.Cols[i] = resultCols[i]`) causes two batches
+// to return the SAME backing array via Put(), and a later getInts
+// hands the same memory to two different batches → silent corruption.
+func containsIntPtr(pool [][]int64, ptr unsafe.Pointer) bool {
+	for _, s := range pool {
+		if len(s) > 0 && unsafe.Pointer(unsafe.SliceData(s)) == ptr {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFloatPtr(pool [][]float64, ptr unsafe.Pointer) bool {
+	for _, s := range pool {
+		if len(s) > 0 && unsafe.Pointer(unsafe.SliceData(s)) == ptr {
+			return true
+		}
+	}
+	return false
+}
+
+func containsStrPtr(pool [][]string, ptr unsafe.Pointer) bool {
+	for _, s := range pool {
+		if len(s) > 0 && unsafe.Pointer(unsafe.SliceData(s)) == ptr {
+			return true
+		}
+	}
+	return false
+}
+
+func containsBoolPtr(pool [][]bool, ptr unsafe.Pointer) bool {
+	for _, s := range pool {
+		if len(s) > 0 && unsafe.Pointer(unsafe.SliceData(s)) == ptr {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *columnDataPool) getInts(cols, n int) []int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -240,11 +282,67 @@ func (p *columnDataPool) getInts(cols, n int) []int64 {
 }
 
 func (p *columnDataPool) putInts(cols int, s []int64) {
+	if len(s) == 0 {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if cols < MaxColumns {
-		p.ints[cols] = append(p.ints[cols], s)
+	if cols >= MaxColumns {
+		return
 	}
+	// REQ002168: skip if this backing array is already pooled.
+if containsIntPtr(p.ints[cols], unsafe.Pointer(unsafe.SliceData(s))) {
+		return
+	}
+	p.ints[cols] = append(p.ints[cols], s)
+}
+
+func (p *columnDataPool) putFloats(cols int, s []float64) {
+	if len(s) == 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if cols >= MaxColumns {
+		return
+	}
+	// REQ002168: skip if this backing array is already pooled.
+	if containsFloatPtr(p.floats[cols], unsafe.Pointer(unsafe.SliceData(s))) {
+		return
+	}
+	p.floats[cols] = append(p.floats[cols], s)
+}
+
+func (p *columnDataPool) putStrs(cols int, s []string) {
+	if len(s) == 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if cols >= MaxColumns {
+		return
+	}
+	// REQ002168: skip if this backing array is already pooled.
+	if containsStrPtr(p.strs[cols], unsafe.Pointer(unsafe.SliceData(s))) {
+		return
+	}
+	p.strs[cols] = append(p.strs[cols], s)
+}
+
+func (p *columnDataPool) putBools(cols int, s []bool) {
+	if len(s) == 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if cols >= MaxColumns {
+		return
+	}
+	// REQ002168: skip if this backing array is already pooled.
+	if containsBoolPtr(p.bools[cols], unsafe.Pointer(unsafe.SliceData(s))) {
+		return
+	}
+	p.bools[cols] = append(p.bools[cols], s)
 }
 
 func (p *columnDataPool) getFloats(cols, n int) []float64 {
@@ -263,14 +361,6 @@ func (p *columnDataPool) getFloats(cols, n int) []float64 {
 	return make([]float64, n)
 }
 
-func (p *columnDataPool) putFloats(cols int, s []float64) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if cols < MaxColumns {
-		p.floats[cols] = append(p.floats[cols], s)
-	}
-}
-
 func (p *columnDataPool) getStrs(cols, n int) []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -287,14 +377,6 @@ func (p *columnDataPool) getStrs(cols, n int) []string {
 	return make([]string, n)
 }
 
-func (p *columnDataPool) putStrs(cols int, s []string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if cols < MaxColumns {
-		p.strs[cols] = append(p.strs[cols], s)
-	}
-}
-
 func (p *columnDataPool) getBools(cols, n int) []bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -309,14 +391,6 @@ func (p *columnDataPool) getBools(cols, n int) []bool {
 		}
 	}
 	return make([]bool, n)
-}
-
-func (p *columnDataPool) putBools(cols int, s []bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if cols < MaxColumns {
-		p.bools[cols] = append(p.bools[cols], s)
-	}
 }
 
 // PoolGetInts returns a pooled []int64 slice for column colIdx.

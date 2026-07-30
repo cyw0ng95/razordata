@@ -1642,9 +1642,10 @@ func (s *LegacyBatchStage) PropagateExecContext(ec *DT.ExecContext) {
 
 // PropagateParams stores parameter values and propagates them to the
 // underlying operator tree (root). REQ002143.
+// REQ002161: copy into own buffer — the incoming buf is shared
+// across all stages and subsequent stages would overwrite it.
 func (s *LegacyBatchStage) PropagateParams(args []any, buf *[]any) {
-	*buf = append((*buf)[:0], args...)
-	s.params = *buf
+	s.params = append(s.params[:0], args...)
 	if s.root != nil {
 		if w, ok := s.root.(interface {
 			WithParams([]any) DT.Operator
