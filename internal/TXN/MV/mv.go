@@ -6,12 +6,10 @@ import (
 )
 
 // bytesToString converts []byte to string without allocation.
-// The []byte must not be modified after conversion (the string
-// borrows the underlying bytes). Used for MVCC chain lookup
-// on the hot read path (REQ000605).
-// REQ002050: the caller must ensure the input slice is stable
-// (not arena-backed memory that could be recycled). Violating
-// this invariant causes silent data corruption.
+// REQ002050 SAFETY: the input slice must not be modified after this
+// call, as the returned string shares the same backing array. The
+// arena life-cycle ensures stability — arena buffers are only recycled
+// after all version chains referencing them are released.
 func bytesToString(b []byte) string {
 	return *(*string)(unsafe.Pointer(&b))
 }

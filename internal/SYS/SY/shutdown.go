@@ -24,6 +24,7 @@ func InstallSignalHandler(ctx context.Context, e *Engine) (stop func()) {
 	// Close the old channel if this is a re-install.
 	if sigCh != nil {
 		signal.Stop(sigCh)
+		close(sigCh)
 	}
 	sigCh = make(chan os.Signal, 1)
 	sigMu.Unlock()
