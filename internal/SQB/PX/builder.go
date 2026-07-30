@@ -354,8 +354,6 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 		return decomposeDistinct(o, st, planner, specialize)
 	case *AG.Aggregate:
 		return decomposeAggregate(o, st, planner, specialize)
-	case *AG.HashAggregate:
-		return decomposeHashAggregate(o, st, planner, specialize)
 	case *AG.WindowOperator:
 		return decomposeWindow(o, st)
 	case *OP.CompoundOp:
@@ -926,13 +924,6 @@ func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner
 	return aggIdx
 }
 
-// decomposeHashAggregate routes HashAggregate through decomposeAggregate.
-// REQ002143: HashAggregate shares the same GroupCols/Aggs interface as
-// Aggregate, so the native AggregateStageSpec handles it identically.
-func decomposeHashAggregate(agg *AG.HashAggregate, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	return decomposeAggregate(agg, st, planner, specialize)
-}
-
 // decomposeDistinct wraps a Distinct operator in LegacyBatchStageSpec for
 // now (DistinctStageSpec exists but requires column-index resolution against
 // the child schema — REQ002143 for the native emit). It always propagates
@@ -1497,8 +1488,7 @@ func extractOutputSchema(root DT.Operator) ([]string, []LX.TokenType) {
 		return extractOutputSchema(o.LeftChild())
 	case *AG.Aggregate:
 		return extractAggOutput(o.GroupCols(), o.Aggs())
-	case *AG.HashAggregate:
-		return extractAggOutput(o.GroupCols(), o.Aggs())
+	// REQ002173: HashAggregate removed — handled by Aggregate case.
 	case *AG.WindowOperator:
 		cols := o.Cols()
 		if len(cols) == 0 {

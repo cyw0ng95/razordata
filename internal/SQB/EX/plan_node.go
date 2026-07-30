@@ -191,24 +191,7 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 			node.Detail += " GROUP BY (" + strings.Join(cols, ", ") + ")"
 		}
 
-	case *AG.HashAggregate:
-		node.Detail = "HASH AGGREGATE"
-		node.Cost = 5.0
-		// REQ001294: extract aggregate function names and GROUP BY columns.
-		if aggs := v.Aggs(); len(aggs) > 0 {
-			var names []string
-			for _, a := range aggs {
-				names = append(names, RE.FormatExpr(a))
-			}
-			node.Detail = "HASH AGGREGATE (" + strings.Join(names, ", ") + ")"
-		}
-		if gc := v.GroupCols(); len(gc) > 0 {
-			var cols []string
-			for _, c := range gc {
-				cols = append(cols, RE.FormatExpr(c))
-			}
-			node.Detail += " GROUP BY (" + strings.Join(cols, ", ") + ")"
-		}
+	// REQ002173: HashAggregate removed — merged into Aggregate case above.
 
 	case *AG.WindowOperator:
 		node.Detail = "WINDOW"
@@ -348,7 +331,7 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		if v.RightChild() != nil {
 			node.Add(buildPlanNodeTree(v.RightChild(), planner))
 		}
-	case *AG.HashAggregate:
+	case *AG.Aggregate:
 		if v.Child() != nil {
 			node.Add(buildPlanNodeTree(v.Child(), planner))
 		}
@@ -400,8 +383,6 @@ func operatorType(op DT.Operator) string {
 		return "OP.Distinct"
 	case *AG.Aggregate:
 		return "Aggregate"
-	case *AG.HashAggregate:
-		return "HashAggregate"
 	case *OP.NestedLoopJoin:
 		return "Join"
 	case *OP.HashJoin:

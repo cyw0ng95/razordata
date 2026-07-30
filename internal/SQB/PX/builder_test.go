@@ -514,7 +514,7 @@ func TestDecomposePlan_OutputSchema(t *testing.T) {
 			name: "HashAggregateWithGroupsAndAggs",
 			root: func() DT.Operator {
 				ss := OP.NewSeqScan("t1")
-				return AG.NewHashAggregate(ss,
+				return AG.NewAggregate(ss,
 					[]PS.Expr{&PS.Ident{Name: "dept"}},
 					[]PS.Expr{
 						&PS.AliasedExpr{Expr: &PS.Ident{Name: "sal"}, Alias: "total"},

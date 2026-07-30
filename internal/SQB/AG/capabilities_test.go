@@ -55,7 +55,7 @@ func TestAggregate_GetAggregates(t *testing.T) {
 
 // TestHashAggregate_SetChild verifies the SetChild adapter.
 func TestHashAggregate_SetChild(t *testing.T) {
-	a := NewHashAggregate(nil, nil, nil)
+	a := NewAggregate(nil, nil, nil)
 	var p pl.Parent = a
 	if p.Child() != nil {
 		t.Error("fresh HashAggregate.Child() should be nil")
@@ -64,7 +64,7 @@ func TestHashAggregate_SetChild(t *testing.T) {
 
 // TestHashAggregate_GroupCols verifies the group-cols interface.
 func TestHashAggregate_GroupCols(t *testing.T) {
-	a := NewHashAggregate(nil, []PS.Expr{
+	a := NewAggregate(nil, []PS.Expr{
 		&PS.QualifiedName{Name: "k"},
 	}, nil)
 	var ai pl.AggregateInfo = a

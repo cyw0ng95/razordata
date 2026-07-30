@@ -54,7 +54,7 @@ func TestHashAggregate_AggregateEquivalence(t *testing.T) {
 	// HashAggregate
 	DT.RegisterTable("hashagg_test", rows)
 	scan := OP.NewSeqScan("hashagg_test")
-	ha := AG.NewHashAggregate(scan, groupCols, aggExprs)
+	ha := AG.NewAggregate(scan, groupCols, aggExprs)
 
 	haResults := make(map[string]int64)
 	for {

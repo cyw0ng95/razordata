@@ -993,7 +993,7 @@ func (p *Planner) planAggregation(s *PS.Select, current DT.Operator) DT.Operator
 	}
 	estimatedRows := p.estimateRowCount(s.From, s.Where)
 	if estimatedRows >= HashAggregateThreshold {
-		agg := AG.NewHashAggregate(current, groupCols, aggExprs)
+		agg := AG.NewAggregate(current, groupCols, aggExprs)
 		if isStarExpr(s.Cols) {
 			agg.SetExpandStar()
 		}

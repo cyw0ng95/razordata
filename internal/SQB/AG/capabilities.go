@@ -38,31 +38,7 @@ func (a *Aggregate) Aggregates() []pl.AggregateSpec {
 	return out
 }
 
-// --- HashAggregate adapters -------------------------------------------
-
-// SetChild sets the input. HashAggregate has Child() but no SetChild.
-func (h *HashAggregate) SetChild(op pl.Operator) {
-	if op == nil {
-		h.child = nil
-		return
-	}
-	if o, ok := op.(Operator); ok {
-		h.child = o
-	}
-}
-
-// Aggregates returns aggregate specs projected from the
-// []PS.Expr HashAggregate stores.
-func (h *HashAggregate) Aggregates() []pl.AggregateSpec {
-	if len(h.aggs) == 0 {
-		return nil
-	}
-	out := make([]pl.AggregateSpec, 0, len(h.aggs))
-	for _, e := range h.aggs {
-		out = append(out, exprToSpec(e))
-	}
-	return out
-}
+// REQ002173: HashAggregate adapters removed — use Aggregate.
 
 // exprToSpec converts a single aggregate PS.Expr into an
 // AggregateSpec. The function-call form `count(x)` becomes
