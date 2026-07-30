@@ -54,6 +54,9 @@ func (o *OffsetStage) PropagateExecContext(ec *DT.ExecContext) {
 // NextBatch skips the first N rows, then passes through the rest.
 // Returns (nil, nil) at EOF.
 func (o *OffsetStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Skip phase: discard entire batches until remaining is exhausted.
 	for o.remaining > 0 {
 		batch, err := o.child.NextBatch(ctx)

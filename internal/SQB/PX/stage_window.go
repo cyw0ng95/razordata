@@ -56,6 +56,9 @@ func (w *WindowStage) PropagateParams(args []any, buf *[]any) {}
 
 // NextBatch returns the next batch from the window function result.
 func (w *WindowStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {

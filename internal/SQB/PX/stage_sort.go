@@ -92,6 +92,9 @@ func (s *SortStage) PropagateExecContext(ec *DT.ExecContext) {
 // NextBatch collects all child rows, sorts them, and returns
 // sorted result batches. Returns (nil, nil) at EOF.
 func (s *SortStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !s.drained {
 		if err := s.drain(ctx); err != nil {
 			return nil, err

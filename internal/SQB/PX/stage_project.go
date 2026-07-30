@@ -59,6 +59,9 @@ func (p *ProjectStage) SetChild(_ ChildSide, child Stage) {
 // The child batch is always returned to the pool. Returns (nil, nil)
 // at EOF.
 func (p *ProjectStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if p.done {
 		return nil, nil
 	}

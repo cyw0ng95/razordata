@@ -67,6 +67,9 @@ func (f *FilterStage) PropagateParams(args []any, buf *[]any) {
 // Batches with no matching rows are discarded and the next batch
 // is fetched. Returns (nil, nil) at EOF.
 func (f *FilterStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for {
 		batch, err := f.child.NextBatch(ctx)
 		if err != nil {

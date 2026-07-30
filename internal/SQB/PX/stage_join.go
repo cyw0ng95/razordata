@@ -121,6 +121,9 @@ func (j *HashJoinStage) PropagateExecContext(ec *DT.ExecContext) {
 //   - RIGHT: all build rows + matched probe rows (unmatched build → NULL probe)
 //   - FULL:  all rows from both sides
 func (j *HashJoinStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !j.buildDone {
 		if err := j.buildHashTable(ctx); err != nil {
 			return nil, err

@@ -83,6 +83,9 @@ func (f *FusedScanStage) PropagateParams(args []any, buf *[]any) {
 // NextBatch applies filter + project + limit in a single pass.
 // Returns (nil, nil) at EOF.
 func (f *FusedScanStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if f.done {
 		return nil, nil
 	}

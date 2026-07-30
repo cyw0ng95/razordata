@@ -1621,6 +1621,9 @@ type LegacyBatchStage struct {
 // NextBatch delegates to the inner BatchProducer. Sets batch.ExecCtx
 // when the exec context has been propagated (REQ002148).
 func (s *LegacyBatchStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.closed {
 		return nil, errors.New("px: nextbatch on closed legacy stage")
 	}
@@ -1691,6 +1694,9 @@ func NewRowOperatorAsProducer(op PL.Operator) *RowOperatorAsProducer {
 }
 
 func (r *RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	row, err := r.Op.Next(ctx)
 	if err != nil {
 		if err == DT.ErrNoRows {

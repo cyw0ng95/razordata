@@ -60,6 +60,9 @@ func (s *CompoundStage) PropagateParams(args []any, buf *[]any) {}
 
 // NextBatch returns the next batch from the compound result.
 func (s *CompoundStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {

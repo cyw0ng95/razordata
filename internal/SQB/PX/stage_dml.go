@@ -35,6 +35,9 @@ func (s *InsertStage) SetChild(_ ChildSide, child Stage) {}
 func (s *InsertStage) PropagateParams(args []any, buf *[]any) {}
 
 func (s *InsertStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -82,6 +85,9 @@ func (s *UpdateStage) SetChild(_ ChildSide, child Stage) {}
 func (s *UpdateStage) PropagateParams(args []any, buf *[]any) {}
 
 func (s *UpdateStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -129,6 +135,9 @@ func (s *DeleteStage) SetChild(_ ChildSide, child Stage) {}
 func (s *DeleteStage) PropagateParams(args []any, buf *[]any) {}
 
 func (s *DeleteStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {

@@ -49,6 +49,9 @@ type ScanStage struct {
 // NextBatch returns the next batch from the scan producer.
 // Returns (nil, nil) at EOF. The caller owns the returned batch.
 func (s *ScanStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.done {
 		return nil, nil
 	}

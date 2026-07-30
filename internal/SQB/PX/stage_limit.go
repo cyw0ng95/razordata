@@ -50,6 +50,9 @@ func (l *LimitStage) PropagateExecContext(ec *DT.ExecContext) {
 // would exceed the remaining row count. Returns (nil, nil) when the
 // limit is exhausted or the child reaches EOF.
 func (l *LimitStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if l.limit >= 0 && l.remaining <= 0 {
 		return nil, nil
 	}

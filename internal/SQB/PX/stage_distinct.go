@@ -53,6 +53,9 @@ func (d *DistinctStage) PropagateExecContext(ec *DT.ExecContext) {
 // NextBatch drains all child rows, deduplicates them, and returns
 // result batches. Returns (nil, nil) at EOF.
 func (d *DistinctStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !d.drained {
 		if err := d.drain(ctx); err != nil {
 			return nil, err

@@ -81,6 +81,9 @@ func (a *AggregateStage) PropagateExecContext(ec *DT.ExecContext) {
 // On first call, drains the child through the MR pipeline.
 // Returns (nil, nil) at EOF.
 func (a *AggregateStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !a.drained {
 		if err := a.drain(ctx); err != nil {
 			return nil, err

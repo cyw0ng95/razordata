@@ -52,6 +52,9 @@ func (h *HavingStage) PropagateParams(args []any, buf *[]any) {
 // applies the HAVING predicate. Batches with no matching groups are
 // discarded. Returns (nil, nil) at EOF.
 func (h *HavingStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for {
 		batch, err := h.child.NextBatch(ctx)
 		if err != nil {
