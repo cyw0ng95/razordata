@@ -863,6 +863,24 @@ func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner
 		allResolved = false
 	}
 
+	// REQ002192: check if any group key is a string type — HashShuffler
+	// only supports int64 keys. Fall back to LegacyBatchStageSpec for
+	// string group keys.
+	if allResolved && childOut.resolved() {
+		for _, idx := range groupCols {
+			if idx >= 0 && idx < len(childOut.types) {
+				switch childOut.types[idx] {
+				case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+					allResolved = false
+					break
+				}
+			}
+			if !allResolved {
+				break
+			}
+		}
+	}
+
 	// Resolve aggregate functions
 	if allResolved && childOut.resolved() {
 		for _, ae := range aggExprs {

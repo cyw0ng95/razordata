@@ -247,3 +247,56 @@ func (s *hashGroupKeySource) KeyValue(groupIdx int, colIdx int) (int64, bool) {
 	}
 	return s.ht.Keys[base+colIdx], true
 }
+
+// SimpleStringKeyExtractor extracts a single string key column.
+// REQ002192: supports string GROUP BY columns.
+type SimpleStringKeyExtractor struct {
+	ColIdx  int
+	scratch []uint64
+	hashes  []uint64
+	valid   []int
+}
+
+// NewSimpleStringKeyExtractor creates a single-column string key extractor.
+func NewSimpleStringKeyExtractor(colIdx int) *SimpleStringKeyExtractor {
+	return &SimpleStringKeyExtractor{ColIdx: colIdx}
+}
+
+func (e *SimpleStringKeyExtractor) NumKeys() int { return 1 }
+
+func (e *SimpleStringKeyExtractor) ExtractKeys(batch *UT.Batch) ([]uint64, []uint64, []int) {
+	n := batch.LogicalSize()
+	if cap(e.scratch) < n {
+		e.scratch = make([]uint64, n)
+		e.hashes = make([]uint64, n)
+		e.valid = make([]int, 0, n)
+	} else {
+		e.scratch = e.scratch[:n]
+		e.hashes = e.hashes[:n]
+		e.valid = e.valid[:0]
+	}
+
+	col := batch.Cols[e.ColIdx]
+	for i := 0; i < n; i++ {
+		src := physicalRow(batch, i)
+		if src >= len(col.Data.Strs) || (src < len(col.Nulls) && col.Nulls[src]) {
+			continue
+		}
+		val := col.Data.Strs[src]
+		h := hashString(val)
+		e.scratch[len(e.valid)] = h
+		e.hashes[len(e.valid)] = h
+		e.valid = append(e.valid, src)
+	}
+	return e.scratch[:len(e.valid)], e.hashes[:len(e.valid)], e.valid
+}
+
+// hashString computes a uint64 hash of a string using FNV-1a.
+func hashString(s string) uint64 {
+	var h uint64 = 14695981039346656037
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= 1099511628211
+	}
+	return h
+}
