@@ -1,8 +1,12 @@
 package LX
 
-import "strings"
+import (
+	"strings"
 
-type TokenType int
+	CT "github.com/cyw0ng95/razordata/internal/SYS/CT"
+)
+
+type TokenType = CT.TokenType
 
 const (
 	T_EOF TokenType = iota

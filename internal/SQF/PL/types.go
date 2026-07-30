@@ -18,25 +18,20 @@ import (
 	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
+	CT "github.com/cyw0ng95/razordata/internal/SYS/CT"
 )
 
-// Value is a tagged-union that stores SQL values inline without boxing.
-// This is a type alias for AP.Value. Both packages share the same
-// concrete type, eliminating []any boxing at package boundaries.
-type Value = AP.Value
+// REQ002085: Value, ValueKind, and kind constants aliased from SYS/CT.
+type Value = CT.Value
+type ValueKind = CT.ValueKind
 
-// ValueKind is the type discriminator for Value.
-type ValueKind = AP.ValueKind
-
-// Value kind constants — aliased from SYS/AP for zero-cost interop.
 const (
-	KindNull  = AP.KindNull
-	KindInt   = AP.KindInt
-	KindFloat = AP.KindFloat
-	KindText  = AP.KindText
-	KindBlob  = AP.KindBlob
-	KindBool  = AP.KindBool
+	KindNull  = CT.KindNull
+	KindInt   = CT.KindInt
+	KindFloat = CT.KindFloat
+	KindText  = CT.KindText
+	KindBlob  = CT.KindBlob
+	KindBool  = CT.KindBool
 )
 
 // ErrNoRows is returned by Operator.Next() when no more rows exist.

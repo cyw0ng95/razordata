@@ -4,39 +4,36 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
-	"strings"
-	"sync"
-	"sync/atomic"
+	CT "github.com/cyw0ng95/razordata/internal/SYS/CT"
 )
 
-// Value is a tagged-union that stores SQL values inline without boxing.
-type Value = pl.Value
+// REQ002085: Value, ValueKind, kind constants, and constructors aliased from SYS/CT.
+type Value = CT.Value
+type ValueKind = CT.ValueKind
 
-// ValueKind is the type discriminator for Value.
-type ValueKind = pl.ValueKind
-
-// Value kind constants.
 const (
-	KindNull  = pl.KindNull
-	KindInt   = pl.KindInt
-	KindFloat = pl.KindFloat
-	KindText  = pl.KindText
-	KindBlob  = pl.KindBlob
-	KindBool  = pl.KindBool
+	KindNull  = CT.KindNull
+	KindInt   = CT.KindInt
+	KindFloat = CT.KindFloat
+	KindText  = CT.KindText
+	KindBlob  = CT.KindBlob
+	KindBool  = CT.KindBool
 )
 
-// Value constructors.
-func NewIntValue(v int64) Value     { return AP.NewIntValue(v) }
-func NewFloatValue(v float64) Value { return AP.NewFloatValue(v) }
-func NewTextValue(v string) Value   { return AP.NewTextValue(v) }
-func NewBlobValue(v []byte) Value   { return AP.NewBlobValue(v) }
-func NewBoolValue(v bool) Value     { return AP.NewBoolValue(v) }
-func NullValue() Value              { return AP.NullValue() }
+func NewIntValue(v int64) Value     { return CT.NewIntValue(v) }
+func NewFloatValue(v float64) Value { return CT.NewFloatValue(v) }
+func NewTextValue(v string) Value   { return CT.NewTextValue(v) }
+func NewBlobValue(v []byte) Value   { return CT.NewBlobValue(v) }
+func NewBoolValue(v bool) Value     { return CT.NewBoolValue(v) }
+func NullValue() Value              { return CT.NullValue() }
 
 // ValueToString converts a Value to its string representation.
 func ValueToString(v Value) string { return v.String() }
@@ -102,7 +99,7 @@ type ExecContext = pl.ExecContext
 // ColInfo describes a single column in a table schema.
 type ColInfo = pl.ColInfo
 
-// TxWriter is the optional hook an Executor notifies on every key write.
+// REQ002085: TxWriter aliased from SQF/PL.
 type TxWriter = pl.TxWriter
 
 // Store is the minimal storage surface the executor needs to integrate
@@ -111,14 +108,8 @@ type TxWriter = pl.TxWriter
 type Store interface {
 	Insert(key, value []byte) error
 	Delete(key []byte) error
-	// Get returns the value for an exact key match, or (nil, false, nil)
-	// if the key is not present. Added in iter-22 to support secondary
-	// index seeks (the index yields a primary key, then the executor
-	// fetches the row via Get).
 	Get(key []byte) ([]byte, bool, error)
 	NewIterator(prefix []byte) ls.RangeIter
-	// ManualCompact triggers a full LSM compaction cycle. REQ000257.
-	// Returns ErrCompactionInProgress if already compacting.
 	ManualCompact() error
 }
 
