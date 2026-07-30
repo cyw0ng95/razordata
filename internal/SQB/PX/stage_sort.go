@@ -14,12 +14,18 @@ import (
 // SortStageSpec creates SortStage instances. A SortStage is a CatMapReduce
 // stage that collects all child rows into memory, sorts them by the
 // specified columns, and emits sorted result batches.
+// REQ002181: ResolveKeysAtRuntime enables key resolution from the first
+// batch's column metadata when static key indices are not available.
 type SortStageSpec struct {
 	SortCols   []int    // column indices to sort by
 	Desc       []bool   // true = descending for each column
 	Collations []string // REQ002163: per-key COLLATE name ("" = binary)
 	NullsOrder []int8   // REQ002163: per-key NULLS FIRST(1)/LAST(-1)/default(0)
 	BatchSize  int      // rows per output batch (0 = UT.BatchSize)
+
+	// REQ002181: runtime key resolution
+	ResolveKeysAtRuntime bool
+	SortKeyNames         []string // sort key column names (for runtime resolution)
 }
 
 // NewRuntime creates a SortStage from this spec.
@@ -29,11 +35,13 @@ func (s *SortStageSpec) NewRuntime() Stage {
 		batchSize = UT.BatchSize
 	}
 	return &SortStage{
-		sortCols:   s.SortCols,
-		desc:       s.Desc,
-		collations: s.Collations,
-		nullsOrder: s.NullsOrder,
-		batchSize:  batchSize,
+		sortCols:             s.SortCols,
+		desc:                 s.Desc,
+		collations:           s.Collations,
+		nullsOrder:           s.NullsOrder,
+		batchSize:            batchSize,
+		resolveKeysAtRuntime: s.ResolveKeysAtRuntime,
+		sortKeyNames:         s.SortKeyNames,
 	}
 }
 
@@ -62,6 +70,10 @@ type SortStage struct {
 	result     []*UT.Batch
 	pos        int
 	drained    bool
+
+	// REQ002181: runtime key resolution
+	resolveKeysAtRuntime bool
+	sortKeyNames         []string
 }
 
 // PropagatePlanner stores the query planner so the sort comparator can
@@ -148,6 +160,25 @@ func (s *SortStage) drain(ctx context.Context) error {
 			break
 		}
 		nCols = i + 1
+	}
+
+	// REQ002181: resolve sort keys at runtime if not resolved during decomposition.
+	if s.resolveKeysAtRuntime && len(s.sortKeyNames) > 0 {
+		names := batches[0].ColNames()
+		for _, keyName := range s.sortKeyNames {
+			found := false
+			for i, name := range names {
+				if name == keyName {
+					s.sortCols = append(s.sortCols, i)
+					found = true
+					break
+				}
+			}
+			if !found {
+				s.sortCols = append(s.sortCols, 0)
+			}
+		}
+		s.resolveKeysAtRuntime = false
 	}
 
 	// Build sort keys and row references.

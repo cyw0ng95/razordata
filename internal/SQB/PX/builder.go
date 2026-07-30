@@ -497,15 +497,14 @@ func decomposeSort(s *OP.Sort, st *decomposeState, planner PL.QueryPlanner, spec
 	childIdx := decomposeOp(s.Child(), st, planner, specialize)
 	childOut := st.childOutput(childIdx)
 	keys := s.Keys()
+	sortCols := make([]int, 0, len(keys))
+	desc := make([]bool, 0, len(keys))
+	collations := make([]string, 0, len(keys))
+	nullsOrder := make([]int8, 0, len(keys))
+	allResolved := false
+	sortKeyNames := make([]string, 0, len(keys))
 	if childOut.resolved() {
-		sortCols := make([]int, 0, len(keys))
-		desc := make([]bool, 0, len(keys))
-		// REQ002163: thread COLLATE name + NULLS FIRST/LAST so the
-		// native SortStage applies registered collations, mirroring
-		// the legacy OP.Sort comparator.
-		collations := make([]string, 0, len(keys))
-		nullsOrder := make([]int8, 0, len(keys))
-		allResolved := true
+		allResolved = true
 		for _, k := range keys {
 			idx := -1
 			switch e := k.Expr.(type) {
@@ -523,23 +522,31 @@ func decomposeSort(s *OP.Sort, st *decomposeState, planner PL.QueryPlanner, spec
 			desc = append(desc, k.Desc)
 			collations = append(collations, k.Collation)
 			nullsOrder = append(nullsOrder, k.NullsOrder)
+			sortKeyNames = append(sortKeyNames, exprName(k.Expr))
 		}
-		if allResolved && len(sortCols) > 0 {
-			sortIdx := st.addStage(&SortStageSpec{
-				SortCols:   sortCols,
-				Desc:       desc,
-				Collations: collations,
-				NullsOrder: nullsOrder,
-			}, childOut)
-			st.addEdge(sortIdx, childIdx, SingleChild)
-			return sortIdx
+	} else {
+		for _, k := range keys {
+			sortKeyNames = append(sortKeyNames, exprName(k.Expr))
 		}
 	}
-	// Fallback: couldn't resolve all keys. Wrap in legacy.
-	sortIdx := st.addStage(&LegacyBatchStageSpec{
-		Root:       s,
-		Planner:    planner,
-		Specialize: specialize,
+	if allResolved && len(sortCols) > 0 {
+		sortIdx := st.addStage(&SortStageSpec{
+			SortCols:   sortCols,
+			Desc:       desc,
+			Collations: collations,
+			NullsOrder: nullsOrder,
+		}, childOut)
+		st.addEdge(sortIdx, childIdx, SingleChild)
+		return sortIdx
+	}
+	// REQ002181: keys not resolvable statically — use runtime resolution.
+	sortIdx := st.addStage(&SortStageSpec{
+		SortCols:             sortCols,
+		Desc:                 desc,
+		Collations:           collations,
+		NullsOrder:           nullsOrder,
+		ResolveKeysAtRuntime: true,
+		SortKeyNames:         sortKeyNames,
 	}, childOut)
 	st.addEdge(sortIdx, childIdx, SingleChild)
 	return sortIdx

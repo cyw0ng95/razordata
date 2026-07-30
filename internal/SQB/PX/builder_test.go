@@ -270,9 +270,9 @@ func TestDecomposePlan_FallbackToLegacy(t *testing.T) {
 	if _, ok := stages[0].(*ScanStageSpec); !ok {
 		t.Fatalf("stage 0: expected *ScanStageSpec, got %T", stages[0])
 	}
-	// Stage 1 should be LegacyBatchStageSpec (Sort fallback)
-	if _, ok := stages[1].(*LegacyBatchStageSpec); !ok {
-		t.Fatalf("stage 1: expected *LegacyBatchStageSpec, got %T", stages[1])
+	// Stage 1 should be SortStageSpec with runtime key resolution (REQ002181)
+	if _, ok := stages[1].(*SortStageSpec); !ok {
+		t.Fatalf("stage 1: expected *SortStageSpec, got %T", stages[1])
 	}
 }
 
