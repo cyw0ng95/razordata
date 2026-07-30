@@ -381,6 +381,10 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *OP.ValuesRows:
 		// REQ002193: multi-row VALUES statements. Native source stage.
 		return decomposeNativeSource(o, st)
+	case *OP.FilterProject:
+		// REQ002194: standalone FilterProject (not part of FusedScan pattern).
+		// Already fuses filter+project efficiently; wrap as native source.
+		return decomposeNativeSource(o, st)
 	default:
 		return decomposeFallback(op, st, planner, specialize)
 	}
