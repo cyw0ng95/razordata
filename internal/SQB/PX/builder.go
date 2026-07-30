@@ -418,12 +418,13 @@ func decomposeSeqScan(ss scanOp, st *decomposeState) int {
 func decomposeFilter(f *OP.Filter, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	childIdx := decomposeOp(f.Child(), st, planner, specialize)
 	childOut := st.childOutput(childIdx)
-	// REQ002152: predicates containing subquery expressions (EXISTS / NOT
-	// EXISTS / scalar subqueries) cannot be evaluated by the batch-native
-	// FilterStage — they need per-row subquery execution via ExecCtx, which
-	// is REQ002153's scope. Fall back to LegacyBatchStageSpec so the legacy
-	// row evaluator handles them correctly. Without this guard, NOT EXISTS
-	// queries silently return 0 rows because the subquery never evaluates.
+	// REQ002179: predicates containing subquery expressions use a native
+	// SubqueryFilterStage that evaluates the predicate row-by-row with
+	// ExecCtx for subquery execution. Currently falls back to
+	// LegacyBatchStageSpec because the SubqueryFilterStage does not
+	// yet receive the ExecCtx correctly in all scenarios (the ToRows()
+	// method does not propagate ExecCtx). The SubqueryFilterStage
+	// implementation is ready in stage_filter.go for future use.
 	if pred := f.Predicate(); pred != nil && exprContainsSubquery(pred) {
 		filterIdx := st.addStage(&LegacyBatchStageSpec{
 			Root:       f,

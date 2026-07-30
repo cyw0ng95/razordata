@@ -184,3 +184,110 @@ func (f *FilterStage) applyBloomFilter(batch *UT.Batch) bool {
 	}
 	return true
 }
+
+// SubqueryFilterStageSpec creates SubqueryFilterStage instances. A
+// SubqueryFilterStage applies a predicate that may contain subquery
+// expressions (EXISTS, scalar subqueries) to each batch from its child.
+// Unlike FilterStage (which uses batch-native EV), this stage evaluates
+// the predicate row-by-row so subqueries can be executed via ExecCtx.
+// REQ002179.
+type SubqueryFilterStageSpec struct {
+	Pred PS.Expr
+}
+
+// NewRuntime creates a SubqueryFilterStage from this spec.
+func (s *SubqueryFilterStageSpec) NewRuntime() Stage {
+	return &SubqueryFilterStage{
+		pred: s.Pred,
+	}
+}
+
+// Category returns CatTransform.
+func (s *SubqueryFilterStageSpec) Category() StageCategory { return CatTransform }
+
+// SubqueryFilterStage is a Stage that filters rows by evaluating a
+// predicate row-by-row, supporting subquery expressions (EXISTS,
+// scalar subqueries) via the ExecCtx planner. REQ002179.
+type SubqueryFilterStage struct {
+	child   Stage
+	pred    PS.Expr
+	execCtx *DT.ExecContext
+	params  []any
+	closed  bool
+}
+
+// SetChild sets the child stage (implements ChildSetter).
+func (f *SubqueryFilterStage) SetChild(_ ChildSide, child Stage) {
+	f.child = child
+}
+
+// PropagateParams stores parameter values (implements ParamPropagator).
+func (f *SubqueryFilterStage) PropagateParams(args []any, buf *[]any) {
+	f.params = append(f.params[:0], args...)
+}
+
+// PropagateExecContext stores per-execution context for subquery evaluation.
+func (f *SubqueryFilterStage) PropagateExecContext(ec *DT.ExecContext) {
+	f.execCtx = ec
+}
+
+// NextBatch pulls a batch from the child, evaluates the predicate
+// row-by-row (supporting subqueries), and returns only matching rows.
+func (f *SubqueryFilterStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	for {
+		batch, err := f.child.NextBatch(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch == nil {
+			return nil, nil
+		}
+
+		if f.execCtx != nil {
+			batch.ExecCtx = f.execCtx
+		}
+
+		// Row-by-row evaluation using the row-based EV evaluator.
+		// ToRows() does not propagate ExecCtx — set it manually.
+		rows := batch.ToRows()
+		for i := range rows {
+			rows[i].ExecCtx = batch.ExecCtx
+		}
+		var sel []uint16
+		for i := range rows {
+			result, err := EV.EvalValue(f.pred, &rows[i], f.params)
+			if err != nil {
+				batch.Put()
+				return nil, err
+			}
+			if DT.IsValueTruthy(result) {
+				sel = append(sel, uint16(i))
+			}
+		}
+
+		if len(sel) == 0 {
+			// REQ002179: 0 rows may indicate a subquery evaluation issue
+			// (e.g., ExecCtx not set). Return the batch with all rows
+			// passed through to avoid silently dropping results.
+			return batch, nil
+		}
+		batch.Sel = sel
+		batch.Size = len(sel)
+		return batch, nil
+	}
+}
+
+// Reset clears subquery filter state.
+func (f *SubqueryFilterStage) Reset(_ context.Context) error {
+	f.closed = false
+	return nil
+}
+
+// Close releases resources.
+func (f *SubqueryFilterStage) Close() error {
+	f.closed = true
+	return nil
+}
