@@ -36,6 +36,61 @@ var rowPool = sync.Pool{
 	},
 }
 
+// REQ002077: column data pools for arithmetic/projection chains.
+var int64Pool = sync.Pool{New: func() any { s := make([]int64, 0, 1024); return &s }}
+var float64Pool = sync.Pool{New: func() any { s := make([]float64, 0, 1024); return &s }}
+var strPool = sync.Pool{New: func() any { s := make([]string, 0, 1024); return &s }}
+
+func getInt64Col(n int) []int64 {
+	ptr := int64Pool.Get().(*[]int64)
+	s := *ptr
+	if cap(s) < n {
+		s = make([]int64, n)
+	}
+	return s[:n]
+}
+
+func getFloat64Col(n int) []float64 {
+	ptr := float64Pool.Get().(*[]float64)
+	s := *ptr
+	if cap(s) < n {
+		s = make([]float64, n)
+	}
+	return s[:n]
+}
+
+func getStrCol(n int) []string {
+	ptr := strPool.Get().(*[]string)
+	s := *ptr
+	if cap(s) < n {
+		s = make([]string, n)
+	}
+	return s[:n]
+}
+
+// REQ002075: selection vector pool for comparison kernels.
+var selPool = sync.Pool{
+	New: func() any {
+		sel := make([]uint16, 0, 1024)
+		return &sel
+	},
+}
+
+func getSel(n int) []uint16 {
+	ptr := selPool.Get().(*[]uint16)
+	sel := *ptr
+	if cap(sel) < n {
+		sel = make([]uint16, 0, n)
+	}
+	return sel[:0]
+}
+
+func putSel(sel []uint16) {
+	if cap(sel) > 0 && cap(sel) <= 4096 {
+		selPool.Put(&sel)
+	}
+}
+
 // REQ001994: session-wide counter of batch→row fallback hits. Incremented
 // whenever batchToRow, evalRowFallback, or evalRowFallbackColumn is invoked.
 // Read+reset by PRAGMA eval_fallback_stats. Atomic so concurrent statements
@@ -386,7 +441,7 @@ func CompareInt64Cols(left, right UT.Column, op LX.TokenType, n int) []uint16 {
 }
 
 func cmpInt64ColsEQ(l, r []int64, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -399,7 +454,7 @@ func cmpInt64ColsEQ(l, r []int64, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpInt64ColsNE(l, r []int64, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -412,7 +467,7 @@ func cmpInt64ColsNE(l, r []int64, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpInt64ColsLT(l, r []int64, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -425,7 +480,7 @@ func cmpInt64ColsLT(l, r []int64, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpInt64ColsLE(l, r []int64, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -438,7 +493,7 @@ func cmpInt64ColsLE(l, r []int64, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpInt64ColsGT(l, r []int64, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -451,7 +506,7 @@ func cmpInt64ColsGT(l, r []int64, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpInt64ColsGE(l, r []int64, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -485,7 +540,7 @@ func CompareInt64ColLit(col UT.Column, lit int64, op LX.TokenType, n int) []uint
 }
 
 func cmpInt64LitEQ(data []int64, lit int64, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -498,7 +553,7 @@ func cmpInt64LitEQ(data []int64, lit int64, col UT.Column, n int) []uint16 {
 }
 
 func cmpInt64LitNE(data []int64, lit int64, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -511,7 +566,7 @@ func cmpInt64LitNE(data []int64, lit int64, col UT.Column, n int) []uint16 {
 }
 
 func cmpInt64LitLT(data []int64, lit int64, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -524,7 +579,7 @@ func cmpInt64LitLT(data []int64, lit int64, col UT.Column, n int) []uint16 {
 }
 
 func cmpInt64LitLE(data []int64, lit int64, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -537,7 +592,7 @@ func cmpInt64LitLE(data []int64, lit int64, col UT.Column, n int) []uint16 {
 }
 
 func cmpInt64LitGT(data []int64, lit int64, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -550,7 +605,7 @@ func cmpInt64LitGT(data []int64, lit int64, col UT.Column, n int) []uint16 {
 }
 
 func cmpInt64LitGE(data []int64, lit int64, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -585,7 +640,7 @@ func compareFloat64Cols(left, right UT.Column, op LX.TokenType, n int) []uint16 
 }
 
 func cmpFloat64ColsEQ(l, r []float64, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -598,7 +653,7 @@ func cmpFloat64ColsEQ(l, r []float64, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpFloat64ColsNE(l, r []float64, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -611,7 +666,7 @@ func cmpFloat64ColsNE(l, r []float64, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpFloat64ColsLT(l, r []float64, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -624,7 +679,7 @@ func cmpFloat64ColsLT(l, r []float64, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpFloat64ColsLE(l, r []float64, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -637,7 +692,7 @@ func cmpFloat64ColsLE(l, r []float64, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpFloat64ColsGT(l, r []float64, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -650,7 +705,7 @@ func cmpFloat64ColsGT(l, r []float64, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpFloat64ColsGE(l, r []float64, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -684,7 +739,7 @@ func CompareFloat64ColLit(col UT.Column, lit float64, op LX.TokenType, n int) []
 }
 
 func cmpFloat64LitEQ(data []float64, lit float64, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -697,7 +752,7 @@ func cmpFloat64LitEQ(data []float64, lit float64, col UT.Column, n int) []uint16
 }
 
 func cmpFloat64LitNE(data []float64, lit float64, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -710,7 +765,7 @@ func cmpFloat64LitNE(data []float64, lit float64, col UT.Column, n int) []uint16
 }
 
 func cmpFloat64LitLT(data []float64, lit float64, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -723,7 +778,7 @@ func cmpFloat64LitLT(data []float64, lit float64, col UT.Column, n int) []uint16
 }
 
 func cmpFloat64LitLE(data []float64, lit float64, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -736,7 +791,7 @@ func cmpFloat64LitLE(data []float64, lit float64, col UT.Column, n int) []uint16
 }
 
 func cmpFloat64LitGT(data []float64, lit float64, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -749,7 +804,7 @@ func cmpFloat64LitGT(data []float64, lit float64, col UT.Column, n int) []uint16
 }
 
 func cmpFloat64LitGE(data []float64, lit float64, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -784,7 +839,7 @@ func compareStringCols(left, right UT.Column, op LX.TokenType, n int) []uint16 {
 }
 
 func cmpStringColsEQ(l, r []string, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -797,7 +852,7 @@ func cmpStringColsEQ(l, r []string, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpStringColsNE(l, r []string, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -810,7 +865,7 @@ func cmpStringColsNE(l, r []string, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpStringColsLT(l, r []string, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -823,7 +878,7 @@ func cmpStringColsLT(l, r []string, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpStringColsLE(l, r []string, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -836,7 +891,7 @@ func cmpStringColsLE(l, r []string, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpStringColsGT(l, r []string, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -849,7 +904,7 @@ func cmpStringColsGT(l, r []string, lc, rc UT.Column, n int) []uint16 {
 }
 
 func cmpStringColsGE(l, r []string, lc, rc UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(lc, i) || isNull(rc, i) {
 			continue
@@ -883,7 +938,7 @@ func CompareStringColLit(col UT.Column, lit string, op LX.TokenType, n int) []ui
 }
 
 func cmpStringLitEQ(data []string, lit string, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -896,7 +951,7 @@ func cmpStringLitEQ(data []string, lit string, col UT.Column, n int) []uint16 {
 }
 
 func cmpStringLitNE(data []string, lit string, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -909,7 +964,7 @@ func cmpStringLitNE(data []string, lit string, col UT.Column, n int) []uint16 {
 }
 
 func cmpStringLitLT(data []string, lit string, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -922,7 +977,7 @@ func cmpStringLitLT(data []string, lit string, col UT.Column, n int) []uint16 {
 }
 
 func cmpStringLitLE(data []string, lit string, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -935,7 +990,7 @@ func cmpStringLitLE(data []string, lit string, col UT.Column, n int) []uint16 {
 }
 
 func cmpStringLitGT(data []string, lit string, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -948,7 +1003,7 @@ func cmpStringLitGT(data []string, lit string, col UT.Column, n int) []uint16 {
 }
 
 func cmpStringLitGE(data []string, lit string, col UT.Column, n int) []uint16 {
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(col, i) {
 			continue
@@ -1634,7 +1689,7 @@ func evalArithIntBatch(left, right UT.Column, batch *UT.Batch, op LX.TokenType, 
 	out := UT.Column{
 		Name: "",
 		Type: LX.T_INT_KW,
-		Data: UT.ColumnData{Ints: make([]int64, batch.Size)},
+		Data: UT.ColumnData{Ints: getInt64Col(batch.Size)},
 	}
 	if n == 0 {
 		return out
@@ -1759,7 +1814,7 @@ func evalArithFloatBatch(left, right UT.Column, batch *UT.Batch, op func(a, b fl
 	out := UT.Column{
 		Name: "",
 		Type: LX.T_FLOAT_KW,
-		Data: UT.ColumnData{Floats: make([]float64, batch.Size)},
+		Data: UT.ColumnData{Floats: getFloat64Col(batch.Size)},
 	}
 	if n == 0 {
 		return out
@@ -1835,7 +1890,7 @@ func evalConcatBatch(left, right UT.Column, batch *UT.Batch) UT.Column {
 	out := UT.Column{
 		Name: "",
 		Type: LX.T_TEXT,
-		Data: UT.ColumnData{Strs: make([]string, batch.Size)},
+		Data: UT.ColumnData{Strs: getStrCol(batch.Size)},
 	}
 	if n == 0 {
 		return out
@@ -2482,11 +2537,11 @@ func setNull(col *UT.Column, i int) {
 func allocateColumnData(col *UT.Column, n int) {
 	switch col.Type {
 	case LX.T_INT_KW, LX.T_BIGINT:
-		col.Data = UT.ColumnData{Ints: make([]int64, n)}
+		col.Data = UT.ColumnData{Ints: getInt64Col(n)}
 	case LX.T_FLOAT_KW:
-		col.Data = UT.ColumnData{Floats: make([]float64, n)}
+		col.Data = UT.ColumnData{Floats: getFloat64Col(n)}
 	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
-		col.Data = UT.ColumnData{Strs: make([]string, n)}
+		col.Data = UT.ColumnData{Strs: getStrCol(n)}
 	case LX.T_BOOL:
 		col.Data = UT.ColumnData{Bools: make([]bool, n)}
 	default:
@@ -2657,7 +2712,7 @@ func evalInListBatch(col UT.Column, list []any, n int) []uint16 {
 			return nil
 		}
 		slices.Sort(ints)
-		sel := make([]uint16, 0, n)
+		sel := getSel(n)
 		for i := 0; i < n; i++ {
 			if isNull(col, i) {
 				continue
@@ -2690,7 +2745,7 @@ func evalInListBatch(col UT.Column, list []any, n int) []uint16 {
 		if len(set) == 0 {
 			return nil
 		}
-		sel := make([]uint16, 0, n)
+		sel := getSel(n)
 		for i := 0; i < n; i++ {
 			if isNull(col, i) {
 				continue
@@ -3008,7 +3063,7 @@ func evalIsNullBatch(col UT.Column, batch *UT.Batch) []uint16 {
 	if col.Nulls == nil {
 		return []uint16{}
 	}
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if i < len(col.Nulls) && col.Nulls[i] {
 			sel = append(sel, uint16(i))
@@ -3027,7 +3082,7 @@ func evalIsNotNullBatch(col UT.Column, batch *UT.Batch) []uint16 {
 	if col.Nulls == nil {
 		return nil // all rows match
 	}
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if i >= len(col.Nulls) || !col.Nulls[i] {
 			sel = append(sel, uint16(i))
@@ -3078,7 +3133,7 @@ func evalLikeBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
 
 	// Fast path: no wildcards → exact match (case-insensitive)
 	if !strings.Contains(pattern, "%") && !strings.Contains(pattern, "_") {
-		sel := make([]uint16, 0, n)
+		sel := getSel(n)
 		patternLower := strings.ToLower(pattern)
 		for i := 0; i < n; i++ {
 			if isNull(leftCol, i) {
@@ -3095,7 +3150,7 @@ func evalLikeBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
 	if strings.HasSuffix(pattern, "%") && !strings.Contains(pattern[:len(pattern)-1], "%") && !strings.Contains(pattern, "_") {
 		prefix := pattern[:len(pattern)-1]
 		prefixLower := strings.ToLower(prefix)
-		sel := make([]uint16, 0, n)
+		sel := getSel(n)
 		for i := 0; i < n; i++ {
 			if isNull(leftCol, i) {
 				continue
@@ -3109,7 +3164,7 @@ func evalLikeBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
 
 	// General path: convert LIKE pattern to regex
 	re := likeToRegex(pattern)
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(leftCol, i) {
 			continue
@@ -3176,7 +3231,7 @@ func evalGlobBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
 
 	// Fast path: no wildcards → exact match (case-sensitive)
 	if !strings.Contains(pattern, "*") && !strings.Contains(pattern, "?") {
-		sel := make([]uint16, 0, n)
+		sel := getSel(n)
 		for i := 0; i < n; i++ {
 			if isNull(leftCol, i) {
 				continue
@@ -3191,7 +3246,7 @@ func evalGlobBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
 	// Fast path: prefix pattern 'prefix*' → HasPrefix (case-sensitive)
 	if strings.HasSuffix(pattern, "*") && !strings.Contains(pattern[:len(pattern)-1], "*") && !strings.Contains(pattern, "?") {
 		prefix := pattern[:len(pattern)-1]
-		sel := make([]uint16, 0, n)
+		sel := getSel(n)
 		for i := 0; i < n; i++ {
 			if isNull(leftCol, i) {
 				continue
@@ -3205,7 +3260,7 @@ func evalGlobBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
 
 	// General path: convert GLOB pattern to regex (case-sensitive)
 	re := globToRegex(pattern)
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	for i := 0; i < n; i++ {
 		if isNull(leftCol, i) {
 			continue
@@ -3261,7 +3316,7 @@ func evalBetweenBatch(e *PS.BetweenExpr, batch *UT.Batch, params []any) []uint16
 		return []uint16{}
 	}
 
-	sel := make([]uint16, 0, n)
+	sel := getSel(n)
 	switch typ {
 	case LX.T_INT_KW, LX.T_BIGINT:
 		exprInts := exprCol.Data.Ints
