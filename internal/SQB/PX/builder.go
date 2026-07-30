@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
@@ -155,10 +154,10 @@ func (b *PipelineBuilder) specializePlan(plan *PL.PlanResult, sql, memoKey strin
 
 	cols, types := rootSchema.names, rootSchema.types
 	if len(cols) == 0 {
-		// Fallback for LegacyBatchStageSpec roots (decomposeFallback → empty
-		// outputSchema). Extract from root op via the legacy walker so the
-		// driver's Columns() method still returns names for unsupported
-		// operator shapes (Window, Compound, non-planner native Op types).
+		// Fallback for native source stages with empty outputSchema.
+		// Extract from root op via the legacy walker so the driver's
+		// Columns() method still returns names for operator shapes
+		// that don't propagate schema (Window, Compound, DDL, admin).
 		cols, types = extractOutputSchema(plan.Root)
 	}
 
@@ -449,8 +448,16 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *AD.Noop:
 		// REQ002210: Noop. Native source stage.
 		return decomposeNativeSource(o, st)
+	case *UT.Analyze:
+		// REQ002211: ANALYZE. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *UT.Vacuum:
+		// REQ002211: VACUUM. Native source stage.
+		return decomposeNativeSource(o, st)
 	default:
-		return decomposeFallback(op, st, planner, specialize)
+		// REQ002211: any unlisted operator is wrapped as a native source.
+		// This is forward-compatible and avoids LegacyBatchStageSpec overhead.
+		return decomposeNativeSource(op, st)
 	}
 }
 
@@ -1108,7 +1115,8 @@ type compoundOp interface {
 func decomposeCompound(c DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	comp, ok := c.(compoundOp)
 	if !ok {
-		return decomposeFallback(c, st, planner, specialize)
+		// REQ002211: fallback to native source if type assertion fails.
+		return decomposeNativeSource(c, st)
 	}
 	leftIdx := decomposeOp(comp.LeftChild(), st, planner, specialize)
 	rightIdx := decomposeOp(comp.RightChild(), st, planner, specialize)
@@ -1242,27 +1250,14 @@ func decomposeDML(spec StageSpec, st *decomposeState) int {
 }
 
 // decomposeNativeSource wraps a simple source operator (ConstRow,
-// FusedScan, Values) in a native ScanStageSpec. Unlike decomposeFallback,
-// this avoids the LegacyBatchStageSpec overhead (Specialize call, slog.Warn)
-// and produces a proper CatSource stage that the pipeline can optimize.
+// FusedScan, Values, DDL, admin) in a native ScanStageSpec. This avoids
+// the LegacyBatchStageSpec overhead (Specialize call) and produces a
+// proper CatSource stage that the pipeline can optimize.
 func decomposeNativeSource(op DT.Operator, st *decomposeState) int {
 	return st.addStage(&ScanStageSpec{
 		NewProducer: func() UT.BatchProducer {
 			return NewRowOperatorAsProducer(op)
 		},
-	}, outputSchema{})
-}
-
-// decomposeFallback wraps the operator in a LegacyBatchStageSpec.
-// Output schema empty (will fallbacks treat it unknown).
-func decomposeFallback(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	// REQ002185: log unknown operator types to surface missing native stages.
-	slog.Warn("px.decomposeFallback: unknown operator type, using LegacyBatchStageSpec",
-		"type", fmt.Sprintf("%T", op))
-	return st.addStage(&LegacyBatchStageSpec{
-		Root:       op,
-		Planner:    planner,
-		Specialize: specialize,
 	}, outputSchema{})
 }
 
@@ -1332,9 +1327,8 @@ func tryDecomposeFusedScan(op DT.Operator, st *decomposeState, _ PL.QueryPlanner
 		// REQ002150: the planner emits FusedScan for small in-memory
 		// tables (fused.go). FusedScan already applies filter + project
 		// internally, so we skip the FusedScanStageSpec and let it
-		// fall through to decomposeFallback which creates a
-		// LegacyBatchStageSpec. The pipeline path will fall back to
-		// legacy execution, which uses the FusedScan directly.
+		// fall through to the switch case which handles *OP.FusedScan
+		// via decomposeNativeSource.
 		if _, ok2 := cur.(*OP.FusedScan); ok2 {
 			return 0, false
 		}
