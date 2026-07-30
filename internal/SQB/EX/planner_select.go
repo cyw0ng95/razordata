@@ -6,7 +6,6 @@ import (
 
 	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 
-	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
@@ -794,8 +793,7 @@ func propagateLimitToNLJ(op DT.Operator, n int64) {
 	switch t := op.(type) {
 	case *OP.NestedLoopJoin:
 		t.SetLimit(n)
-	case *AD.AdaptiveOp:
-		propagateLimitToNLJ(t.Inner, n)
+	// REQ002171: AdaptiveOp removed.
 	}
 	type childer interface{ Child() DT.Operator }
 	if c, ok := op.(childer); ok {

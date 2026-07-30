@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -277,13 +276,12 @@ func TestDecomposePlan_FallbackToLegacy(t *testing.T) {
 	}
 }
 
-func TestDecomposePlan_UnwrapAdaptiveOp(t *testing.T) {
+func TestDecomposePlan_SeqScanDirect(t *testing.T) {
+	// REQ002171: AdaptiveOp removed — raw operator tree is used directly.
 	ss := OP.NewSeqScan("t1")
-	aop := AD.NewAdaptiveOp(ss, "test-hash")
 
-	stages, _, rootIdx, _ := decomposePlan(aop, nil, nil)
+	stages, _, rootIdx, _ := decomposePlan(ss, nil, nil)
 
-	// AdaptiveOp should be unwrapped, producing ScanStageSpec
 	if len(stages) != 1 {
 		t.Fatalf("expected 1 stage, got %d", len(stages))
 	}

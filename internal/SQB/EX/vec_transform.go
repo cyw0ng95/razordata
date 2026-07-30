@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
@@ -79,9 +78,6 @@ func tryVectorizePlan(root DT.Operator, p *Planner) DT.Operator {
 func transformRoot(root DT.Operator, p *Planner) UT.BatchProducer {
 	if root == nil {
 		return nil
-	}
-	if aop, ok := root.(*AD.AdaptiveOp); ok {
-		return transformOp(aop.Inner, p)
 	}
 	return transformOp(root, p)
 }
@@ -798,9 +794,7 @@ func tryPushPipeline(root DT.Operator, p *Planner) UT.BatchProducer {
 	}
 	// Unwrap AdaptiveOp (planner wraps the root).
 	inner := root
-	if aop, ok := root.(*AD.AdaptiveOp); ok {
-		inner = aop.Inner
-	}
+	inner = root
 
 	// Walk Limit → Project → Filter → SeqScan, each level optional.
 	var limitOp *OP.Limit
@@ -918,9 +912,7 @@ func tryFusedBatchScan(root DT.Operator, p *Planner) UT.BatchProducer {
 	}
 	// Unwrap AdaptiveOp (planner wraps the root).
 	inner := root
-	if aop, ok := root.(*AD.AdaptiveOp); ok {
-		inner = aop.Inner
-	}
+	inner = root
 
 	// Walk Limit → Project → Filter → SeqScan, each level optional.
 	var limitOp *OP.Limit

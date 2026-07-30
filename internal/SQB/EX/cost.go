@@ -1,7 +1,6 @@
 package EX
 
 import (
-	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -31,10 +30,7 @@ func (p *Planner) estimateCostLegacy(op DT.Operator) float64 {
 	if op == nil {
 		return 0
 	}
-	// Unwrap AdaptiveOp to estimate cost of the inner operator.
-	if aop, ok := op.(*AD.AdaptiveOp); ok {
-		return p.estimateCostLegacy(aop.Inner)
-	}
+	// REQ002171: AdaptiveOp removed — op is the raw operator.
 	switch v := op.(type) {
 	case *OP.SeqScan:
 		// In v1 we don't track row counts; assume 1.0 per row.
@@ -130,9 +126,7 @@ func (p *Planner) estimateCostWithParams(op DT.Operator, cp CostParams) float64 
 	if op == nil {
 		return 0
 	}
-	if aop, ok := op.(*AD.AdaptiveOp); ok {
-		return p.estimateCostWithParams(aop.Inner, cp)
-	}
+	// REQ002171: AdaptiveOp removed — op is the raw operator.
 	switch v := op.(type) {
 	case *OP.SeqScan:
 		rows := p.estimateRowCount(v.Table(), nil)

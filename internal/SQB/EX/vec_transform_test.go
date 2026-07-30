@@ -3,8 +3,7 @@ package EX
 import (
         "testing"
 
-        "github.com/cyw0ng95/razordata/internal/SQB/AD"
-        "github.com/cyw0ng95/razordata/internal/SQB/AG"
+"github.com/cyw0ng95/razordata/internal/SQB/AG"
         "github.com/cyw0ng95/razordata/internal/SQB/DT"
         "github.com/cyw0ng95/razordata/internal/SQB/OP"
         UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
@@ -282,48 +281,40 @@ func TestTryVectorizePlan_MaxAggregate(t *testing.T) {
 }
 
 // TestTryVectorizePlan_AdaptiveOpVectorizesInner — REQ001581.
-// Root cause of SLT select4 long-tail: vec_transform had no case
-// for *AD.AdaptiveOp, so the planner's AdaptiveOp wrapper caused
-// the entire tree to fall back to row execution. After the fix,
-// AdaptiveOp wrapping a vectorizable tree must yield a BatchProducer.
-func TestTryVectorizePlan_AdaptiveOpVectorizesInner(t *testing.T) {
+// TestTryVectorizePlan_VectorizesHashJoin verifies that tryVectorizePlan
+// produces a vectorized result for a HashJoin tree. REQ002171: AdaptiveOp
+// removed — raw operator tree is used directly.
+func TestTryVectorizePlan_VectorizesHashJoin(t *testing.T) {
 	inner := buildHashJoinTree()
-	aop := AD.NewAdaptiveOp(inner, "test-plan-hash")
 
-	result := tryVectorizePlan(aop, nil)
-	if result == aop {
-		t.Fatal("expected vectorized plan (AdaptiveOp must be bypassed), got the AdaptiveOp itself")
-	}
+	result := tryVectorizePlan(inner, nil)
 	if result == nil {
-		t.Fatal("expected non-nil result, got nil")
+		t.Fatal("expected non-nil vectorized result, got nil")
 	}
-	t.Logf("AdaptiveOp(HashJoin) result = %T", result)
+	t.Logf("HashJoin vectorized result = %T", result)
 }
 
-// TestTryVectorizePlan_AdaptiveOp_Nil — guard against nil dereference.
-func TestTryVectorizePlan_AdaptiveOp_Nil(t *testing.T) {
+// TestTryVectorizePlan_Nil — guard against nil dereference.
+func TestTryVectorizePlan_Nil(t *testing.T) {
 	if r := tryVectorizePlan(nil, nil); r != nil {
 		t.Fatalf("tryVectorizePlan(nil) = %v, want nil", r)
 	}
 }
 
-// TestTransformRoot_AdaptiveOp — explicit unit test of the helper.
-func TestTransformRoot_AdaptiveOp(t *testing.T) {
+// TestTransformRoot_VectorizesHashJoin verifies transformRoot produces
+// a BatchProducer for a HashJoin tree. REQ002171: AdaptiveOp removed.
+func TestTransformRoot_VectorizesHashJoin(t *testing.T) {
 	inner := buildHashJoinTree()
-	aop := AD.NewAdaptiveOp(inner, "test-plan-hash")
-	bp := transformRoot(aop, nil)
+	bp := transformRoot(inner, nil)
 	if bp == nil {
-		t.Fatal("transformRoot(AdaptiveOp) must yield a BatchProducer when inner is vectorizable")
+		t.Fatal("transformRoot(HashJoin) must yield a BatchProducer when inner is vectorizable")
 	}
-	// transformRoot unwraps AdaptiveOp and returns the vec inner;
-	// result type is BatchProducer (not *AD.AdaptiveOp).
-	t.Logf("transformRoot(AdaptiveOp) = %T", bp)
+	t.Logf("transformRoot(HashJoin) = %T", bp)
 }
 
-// TestTransformRoot_AdaptiveOp_NilInner — guards against nil dereference.
-func TestTransformRoot_AdaptiveOp_NilInner(t *testing.T) {
-	aop := AD.NewAdaptiveOp(nil, "nil-inner")
-	if got := transformRoot(aop, nil); got != nil {
-		t.Fatalf("transformRoot(AdaptiveOp{nil}) = %v, want nil", got)
+// TestTransformRoot_NilInner — guards against nil dereference.
+func TestTransformRoot_NilInner(t *testing.T) {
+	if got := transformRoot(nil, nil); got != nil {
+		t.Fatalf("transformRoot(nil) = %v, want nil", got)
 	}
 }

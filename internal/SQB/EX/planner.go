@@ -523,15 +523,7 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 		root = OP.NewValuesRowsOp(s.Rows)
 	}
 
-	// Wrap query plans in AdaptiveOp for hot-path specialization.
-	// DDL/DML operators (Insert/Update/Delete/CreateTable/DropTable)
-	// are typically one-shot and don't benefit from ADQC.
-	switch root.(type) {
-	case *WT.Insert, *WT.Update, *WT.Delete, *WT.CreateTable, *WT.DropTable:
-		// no adaptive wrapper for DDL/DML
-	default:
-		root = AD.NewAdaptiveOp(root, key)
-	}
+	// REQ002171: AdaptiveOp removed — PipelineBuilder replaces ADQC.
 
 	result := &plan{
 		root:    root,
@@ -816,9 +808,6 @@ func (p *Planner) estimateRowCountFromOp(op DT.Operator) float64 {
 	switch v := op.(type) {
 	case *OP.SeqScan:
 		return float64(p.estimateRowCount(v.Table(), nil))
-	}
-	if aop, ok := op.(*AD.AdaptiveOp); ok {
-		return p.estimateRowCountFromOp(aop.Inner)
 	}
 	if fl, ok := op.(interface{ Child() DT.Operator }); ok {
 		return p.estimateRowCountFromOp(fl.Child())
@@ -1226,14 +1215,6 @@ func isConstRowPlan(op DT.Operator) bool {
 	}
 	if _, ok := op.(*OP.PragmaResult); ok {
 		return true
-	}
-	if ad, ok := op.(*AD.AdaptiveOp); ok {
-		if _, ok := ad.Inner.(*OP.ConstRow); ok {
-			return true
-		}
-		if _, ok := ad.Inner.(*OP.PragmaResult); ok {
-			return true
-		}
 	}
 	return false
 }

@@ -3,7 +3,6 @@ package EX
 import (
 	"testing"
 
-	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -123,10 +122,10 @@ func TestTryFusedBatchScan_IneligibleFilterOnlyNoProjectOrLimit(t *testing.T) {
 	}
 }
 
-// TestTryFusedBatchScan_UnwrapsAdaptiveOp verifies that
-// tryFusedBatchScan correctly unwraps *AD.AdaptiveOp to inspect the
-// inner shape without panicking. REQ002003.
-func TestTryFusedBatchScan_UnwrapsAdaptiveOp(t *testing.T) {
+// TestTryFusedBatchScan_NoStore verifies that tryFusedBatchScan
+// handles a Limit→Project→Filter→SeqScan tree without panicking.
+// REQ002171: AdaptiveOp removed.
+func TestTryFusedBatchScan_NoStore(t *testing.T) {
 	ss, err := OP.NewSeqScanWithStore(nil, "kv")
 	if err != nil {
 		t.Skipf("NewSeqScanWithStore failed: %v", err)
@@ -142,11 +141,9 @@ func TestTryFusedBatchScan_UnwrapsAdaptiveOp(t *testing.T) {
 	filt := OP.NewFilter(ss, pred, nil)
 	proj := OP.NewProject(filt, []PS.Expr{&PS.Ident{Name: "a"}})
 	lim := OP.NewLimit(proj, 10)
-	aop := AD.NewAdaptiveOp(lim, "test_hash")
 
-	// Should not panic; returns nil (no store) or a FusedBatchScan.
-	got := tryFusedBatchScan(aop, nil)
-	_ = got // either nil (gated) or *OP.FusedBatchScan — both acceptable
+	got := tryFusedBatchScan(lim, nil)
+	_ = got
 }
 
 // TestTryFusedBatchScan_NilRoot verifies that a nil root returns nil

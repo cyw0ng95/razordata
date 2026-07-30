@@ -20,26 +20,7 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		return nil
 	}
 
-	// Unwrap AdaptiveOp to show inner operator in EXPLAIN output.
-	if aop, ok := op.(*AD.AdaptiveOp); ok {
-		inner := buildPlanNodeTree(aop.Inner, planner)
-		if inner != nil {
-			state := "interpreted"
-			st := AD.AdqcState(aop.State())
-			if st == AD.AdqcCompiling {
-				state = "compiling"
-			} else if st == AD.AdqcCompiled {
-				state = "compiled"
-			}
-			if inner.Detail != "" {
-				inner.Detail += " [" + state + "]"
-			} else {
-				inner.Detail = "[" + state + "]"
-			}
-		}
-		return inner
-	}
-
+	// REQ002171: AdaptiveOp removed — raw operator tree is used directly.
 	node := &AD.PlanNode{
 		Type: operatorType(op),
 	}
@@ -390,9 +371,6 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 
 // operatorType returns a human-readable type string for an operator.
 func operatorType(op DT.Operator) string {
-	if aop, ok := op.(*AD.AdaptiveOp); ok {
-		return operatorType(aop.Inner)
-	}
 	switch op.(type) {
 	case *OP.SeqScan:
 		return "Scan"

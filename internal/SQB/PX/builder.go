@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -262,9 +261,7 @@ func decomposePlan(root DT.Operator, planner PL.QueryPlanner, specialize Special
 		return nil, nil, 0, outputSchema{}
 	}
 	inner := root
-	if aop, ok := root.(*AD.AdaptiveOp); ok {
-		inner = aop.Inner
-	}
+	// REQ002171: AdaptiveOp removed — root is the raw operator.
 	// REQ002156: detect bushy join shapes (nested joins) and fall back
 	// to a single LegacyBatchStageSpec. Native stage decomposition
 	// doesn't yet handle transitive predicates across nested joins
@@ -296,14 +293,7 @@ func hasBushyJoin(op DT.Operator) bool {
 	if op == nil {
 		return false
 	}
-	// Unwrap AdaptiveOp
-	for {
-		if aop, ok := op.(*AD.AdaptiveOp); ok {
-			op = aop.Inner
-		} else {
-			break
-		}
-	}
+	// REQ002171: AdaptiveOp removed — op is the raw operator.
 	type leftRighter interface {
 		LeftChild() DT.Operator
 		RightChild() DT.Operator
@@ -1393,9 +1383,7 @@ func extractOutputSchema(root DT.Operator) ([]string, []LX.TokenType) {
 	}
 
 	// Unwrap AdaptiveOp.
-	if aop, ok := root.(*AD.AdaptiveOp); ok {
-		root = aop.Inner
-	}
+	
 
 	switch o := root.(type) {
 	case *OP.SeqScan:

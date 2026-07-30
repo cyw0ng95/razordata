@@ -3,7 +3,6 @@ package EX
 import (
 	"testing"
 
-	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -106,10 +105,9 @@ func TestTryPushPipeline_IneligibleBareSeqScan(t *testing.T) {
 	}
 }
 
-// TestTryPushPipeline_UnwrapsAdaptiveOp verifies that tryPushPipeline
-// correctly unwraps *AD.AdaptiveOp to inspect the inner shape.
-// REQ002002.
-func TestTryPushPipeline_UnwrapsAdaptiveOp(t *testing.T) {
+// TestTryPushPipeline_FilterTree verifies that tryPushPipeline
+// handles a Filter→SeqScan tree without panicking. REQ002171.
+func TestTryPushPipeline_FilterTree(t *testing.T) {
 	ss, err := OP.NewSeqScanWithStore(nil, "kv")
 	if err != nil {
 		t.Skipf("NewSeqScanWithStore failed: %v", err)
@@ -123,13 +121,8 @@ func TestTryPushPipeline_UnwrapsAdaptiveOp(t *testing.T) {
 		Op:    LX.T_EQ,
 	}
 	filt := OP.NewFilter(ss, pred, nil)
-	// Wrap in AdaptiveOp — tryPushPipeline should still detect the shape
-	// (and return nil because of the missing-store check above, OR return
-	// a push adapter if the store IS present).
-	aop := AD.NewAdaptiveOp(filt, "test_hash")
-	// Just verify it doesn't panic and returns either nil or a valid adapter.
-	got := tryPushPipeline(aop, nil)
-	_ = got // either nil (gated) or *OP.PushToPullAdapter — both acceptable
+	got := tryPushPipeline(filt, nil)
+	_ = got
 }
 
 // TestTryVectorizePlan_FallsBackToPullForIneligiblePush verifies

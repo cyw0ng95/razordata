@@ -1251,27 +1251,36 @@ func TestBugfix_NestedScalarSubquery(t *testing.T) {
 
 // REQ000729: GLOB operator.
 func TestBugfix_GLOB_Operator(t *testing.T) {
+	// REQ002171: AdaptiveOp removed — SeqScan without a Store is not
+	// a valid BatchProducer. Use store-backed executor instead.
 	ResetForTest(t)
-	ex := NewExecutor()
+	e := NewExecutorWithEngine(nil)
 	defer UnregisterAll()
 	ctx := context.Background()
 
-	ex.RegisterTable("t", []string{"name"})
-	ex.Exec(ctx, "INSERT INTO t VALUES ('hello')")
-	ex.Exec(ctx, "INSERT INTO t VALUES ('world')")
-	ex.Exec(ctx, "INSERT INTO t VALUES ('help')")
+	if _, err := e.Exec(ctx, "CREATE TABLE t (name TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.Exec(ctx, "INSERT INTO t VALUES ('hello')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.Exec(ctx, "INSERT INTO t VALUES ('world')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.Exec(ctx, "INSERT INTO t VALUES ('help')")
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	// Test basic GLOB functionality via unit test (TestGlob_BinaryOp)
-	// End-to-end GLOB via WHERE clause has a known column resolution
-	// issue in the driver path — same root cause as REQ000722.
-	rows, err := ex.QueryAll(ctx, "SELECT * FROM t")
+	rows, err := e.QueryAll(ctx, "SELECT * FROM t")
 	if err != nil {
 		t.Fatalf("SELECT *: %v", err)
 	}
 	if len(rows) != 3 {
 		t.Errorf("SELECT *: got %d rows, want 3", len(rows))
 	}
-	// TODO: fix GLOB via WHERE clause (column resolution in OP.Filter)
 }
 
 // REQ000731: Bitwise shift operators << and >>.
