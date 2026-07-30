@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/cyw0ng95/razordata/internal/SQB/AD"
 	"github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -441,6 +442,12 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 		return decomposeNativeSource(o, st)
 	case *WT.DropMatViewOperator:
 		// REQ002208: MatView. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *AD.AdaptiveOp:
+		// REQ002209: AdaptiveOp. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *AD.Noop:
+		// REQ002210: Noop. Native source stage.
 		return decomposeNativeSource(o, st)
 	default:
 		return decomposeFallback(op, st, planner, specialize)
