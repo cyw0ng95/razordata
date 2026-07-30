@@ -366,18 +366,18 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *WT.Delete:
 		return decomposeDML(&DeleteStageSpec{Delete: o}, st)
 	case *OP.ConstRow:
-		// ConstRow is a trivially cheap operator (COUNT(*) fast path).
-		// Use LegacyBatchStageSpec — no native stage needed.
-		return decomposeFallback(op, st, planner, specialize)
+		// ConstRow is a trivially cheap one-shot operator (COUNT(*) fast path).
+		// Use native ScanStageSpec — wraps directly as a source stage.
+		return decomposeNativeSource(o, st)
 	case *OP.FusedScan:
 		// FusedScan is an internal optimization that already applies
-		// filter + project. Use LegacyBatchStageSpec — it's already
-		// efficient enough and doesn't need a native stage.
-		return decomposeFallback(op, st, planner, specialize)
+		// filter + project in a tight loop. Use native ScanStageSpec —
+		// it's already efficient and doesn't need LegacyBatch machinery.
+		return decomposeNativeSource(o, st)
 	case *OP.Values:
-		// ValuesOp produces constant rows from a VALUES clause.
-		// Use LegacyBatchStageSpec — no native stage needed.
-		return decomposeFallback(op, st, planner, specialize)
+		// Values produces constant rows from a VALUES clause.
+		// Use native ScanStageSpec — wraps directly as a source stage.
+		return decomposeNativeSource(o, st)
 	default:
 		return decomposeFallback(op, st, planner, specialize)
 	}
@@ -1168,6 +1168,18 @@ func isJoinOp(op DT.Operator) bool {
 // handles that at the executor layer.
 func decomposeDML(spec StageSpec, st *decomposeState) int {
 	return st.addStage(spec, outputSchema{})
+}
+
+// decomposeNativeSource wraps a simple source operator (ConstRow,
+// FusedScan, Values) in a native ScanStageSpec. Unlike decomposeFallback,
+// this avoids the LegacyBatchStageSpec overhead (Specialize call, slog.Warn)
+// and produces a proper CatSource stage that the pipeline can optimize.
+func decomposeNativeSource(op DT.Operator, st *decomposeState) int {
+	return st.addStage(&ScanStageSpec{
+		NewProducer: func() UT.BatchProducer {
+			return NewRowOperatorAsProducer(op)
+		},
+	}, outputSchema{})
 }
 
 // decomposeFallback wraps the operator in a LegacyBatchStageSpec.
