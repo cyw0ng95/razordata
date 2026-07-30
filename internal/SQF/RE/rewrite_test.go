@@ -1325,7 +1325,7 @@ func TestRewriteInsertFoldsConstants(t *testing.T) {
 
 // REQ000637: cloneExprSlice(nil) returns nil.
 func TestCloneExprSliceNil(t *testing.T) {
-	if got := cloneExprSlice(nil); got != nil {
+	if got, _ := cloneExprSlice(nil); got != nil {
 		t.Errorf("expected nil, got %v", got)
 	}
 }
@@ -1499,7 +1499,7 @@ func BenchmarkRewriteExpr_ConstantFold(b *testing.B) {
 	selectStmt := stmt.(*PS.Select)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = RewriteExpr(selectStmt.Cols[0])
+		_, _ = RewriteExpr(selectStmt.Cols[0])
 	}
 }
 
@@ -1508,7 +1508,7 @@ func BenchmarkRewriteExpr_DeepTree(b *testing.B) {
 	selectStmt := stmt.(*PS.Select)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = RewriteExpr(selectStmt.Cols[0])
+		_, _ = RewriteExpr(selectStmt.Cols[0])
 	}
 }
 

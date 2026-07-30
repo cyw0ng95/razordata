@@ -620,8 +620,9 @@ func TestParse_Pragma(t *testing.T) {
 func TestParse_PragmaWithValue(t *testing.T) {
 	stmt := mustParse(t, "PRAGMA journal_mode = WAL")
 	ps := stmt.(*PragmaStmt)
-	if ps.Value != "WAL" {
-		t.Errorf("value=%q, want WAL", ps.Value)
+	// REQ002108: lexer lowercases T_IDENT tokens.
+	if ps.Value != "wal" {
+		t.Errorf("value=%q, want wal", ps.Value)
 	}
 }
 

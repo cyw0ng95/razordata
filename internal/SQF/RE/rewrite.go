@@ -7,9 +7,6 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
-// Rewrite returns a semantically equivalent AST with constant
-// expressions folded, boolean identities simplified, and trivial
-// subqueries flattened. The original statement is not mutated.
 func Rewrite(stmt PS.Stmt) (PS.Stmt, error) {
 	switch s := stmt.(type) {
 	case *PS.Select:
@@ -27,33 +24,34 @@ func Rewrite(stmt PS.Stmt) (PS.Stmt, error) {
 	case *PS.DropTable:
 		return rewriteDropTable(s), nil
 	case *PS.AnalyzeStmt, *PS.VacuumStmt, *PS.PragmaStmt, *PS.ExplainStmt, *PS.TruncateStmt, *PS.ReindexStmt, *PS.DropViewStmt, *PS.DropTriggerStmt, *PS.DropIndexStmt, *PS.CreateIndexStmt, *PS.CreateViewStmt, *PS.TriggerStmt, *PS.AlterTableStmt, *PS.WithStmt:
-		// DDL/admin/CTE statements pass through unchanged
 		return s, nil
 	}
 	return nil, fmt.Errorf("re: unknown statement type %T", stmt)
 }
 
 func rewriteSelect(s *PS.Select) *PS.Select {
+	cols, colsChanged := cloneExprSlice(s.Cols)
+	where, whereChanged := RewriteExpr(s.Where)
+	orderBy, obChanged := cloneOrderBy(s.OrderBy)
+	limit, limitChanged := RewriteExpr(s.Limit)
+	offset, offsetChanged := RewriteExpr(s.Offset)
+	having, havingChanged := RewriteExpr(s.Having)
+	groupBy, gbChanged := cloneExprSlice(s.GroupBy)
+
+	if !colsChanged && !whereChanged && !obChanged && !limitChanged && !offsetChanged && !havingChanged && !gbChanged {
+		return s
+	}
 	out := *s
-	out.Cols = cloneExprSlice(s.Cols)
-	out.Where = RewriteExpr(s.Where)
-	out.OrderBy = cloneOrderBy(s.OrderBy)
-	out.Limit = RewriteExpr(s.Limit)
-	out.Offset = RewriteExpr(s.Offset)
-	// REQ002053: also rewrite GroupBy and Having expressions.
-	// Without this, constant folding inside GROUP BY/HAVING is
-	// skipped, and expressions like SUM(col) inside HAVING bypass
-	// the rewriter entirely.
-	out.Having = RewriteExpr(s.Having)
-	out.GroupBy = cloneExprSlice(s.GroupBy)
+	out.Cols = cols
+	out.Where = where
+	out.OrderBy = orderBy
+	out.Limit = limit
+	out.Offset = offset
+	out.Having = having
+	out.GroupBy = groupBy
 	return &out
 }
 
-// rewriteCompound recursively rewrites a UNION/INTERSECT/EXCEPT
-// chain. REQ000383: each leaf SELECT and the trailing clauses
-// are normalized. Since the rewriter itself never errors, this
-// does not return an error — but it calls Rewrite recursively
-// which does. The caller handles errors.
 func rewriteCompound(s *PS.CompoundStmt) (PS.Stmt, error) {
 	out := *s
 	left, err := Rewrite(s.Left)
@@ -66,9 +64,9 @@ func rewriteCompound(s *PS.CompoundStmt) (PS.Stmt, error) {
 		return nil, err
 	}
 	out.Right = right
-	out.OrderBy = cloneOrderBy(s.OrderBy)
-	out.Limit = RewriteExpr(s.Limit)
-	out.Offset = RewriteExpr(s.Offset)
+	out.OrderBy, _ = cloneOrderBy(s.OrderBy)
+	out.Limit, _ = RewriteExpr(s.Limit)
+	out.Offset, _ = RewriteExpr(s.Offset)
 	return &out, nil
 }
 
@@ -79,7 +77,7 @@ func rewriteInsert(s *PS.Insert) *PS.Insert {
 	for i, row := range s.Values {
 		cp := make([]PS.Expr, len(row))
 		for j, c := range row {
-			cp[j] = RewriteExpr(c)
+			cp[j], _ = RewriteExpr(c)
 		}
 		out.Values[i] = cp
 	}
@@ -88,17 +86,17 @@ func rewriteInsert(s *PS.Insert) *PS.Insert {
 
 func rewriteUpdate(s *PS.Update) *PS.Update {
 	out := *s
-	out.Where = RewriteExpr(s.Where)
+	out.Where, _ = RewriteExpr(s.Where)
 	out.Set = make([]PS.Pair, len(s.Set))
 	for i, p := range s.Set {
-		out.Set[i] = PS.Pair{Col: p.Col, Val: RewriteExpr(p.Val)}
+		out.Set[i] = PS.Pair{Col: p.Col, Val: RewriteExprUnchanged(p.Val)}
 	}
 	return &out
 }
 
 func rewriteDelete(s *PS.Delete) *PS.Delete {
 	out := *s
-	out.Where = RewriteExpr(s.Where)
+	out.Where, _ = RewriteExpr(s.Where)
 	return &out
 }
 
@@ -107,7 +105,7 @@ func rewriteCreateTable(s *PS.CreateTable) *PS.CreateTable {
 	out.Cols = make([]PS.ColDef, len(s.Cols))
 	for i, c := range s.Cols {
 		cp := c
-		cp.Default = RewriteExpr(c.Default)
+		cp.Default, _ = RewriteExpr(c.Default)
 		out.Cols[i] = cp
 	}
 	return &out
@@ -118,140 +116,160 @@ func rewriteDropTable(s *PS.DropTable) *PS.DropTable {
 	return &out
 }
 
-func cloneExprSlice(in []PS.Expr) []PS.Expr {
+func cloneExprSlice(in []PS.Expr) ([]PS.Expr, bool) {
 	if in == nil {
-		return nil
+		return nil, false
 	}
+	changed := false
 	out := make([]PS.Expr, len(in))
 	for i, e := range in {
-		out[i] = RewriteExpr(e)
+		rewritten, rc := RewriteExpr(e)
+		out[i] = rewritten
+		if rc {
+			changed = true
+		}
 	}
-	return out
+	if !changed {
+		return in, false
+	}
+	return out, true
 }
 
-func cloneOrderBy(in []PS.OrderItem) []PS.OrderItem {
+func cloneOrderBy(in []PS.OrderItem) ([]PS.OrderItem, bool) {
 	if in == nil {
-		return nil
+		return nil, false
 	}
+	changed := false
 	out := make([]PS.OrderItem, len(in))
 	for i, o := range in {
-		out[i] = PS.OrderItem{Expr: RewriteExpr(o.Expr), Desc: o.Desc, Collation: o.Collation, NullsOrder: o.NullsOrder}
+		expr, ec := RewriteExpr(o.Expr)
+		out[i] = PS.OrderItem{Expr: expr, Desc: o.Desc, Collation: o.Collation, NullsOrder: o.NullsOrder}
+		if ec {
+			changed = true
+		}
 	}
-	return out
+	if !changed {
+		return in, false
+	}
+	return out, true
 }
 
-// RewriteExpr returns a simplified expression. The original tree
-// is not mutated.
-func RewriteExpr(e PS.Expr) PS.Expr {
+// RewriteExpr returns a simplified expression. The original tree is not mutated.
+// REQ002109: returns (newExpr, changed) where changed=true if the expression was modified.
+func RewriteExpr(e PS.Expr) (PS.Expr, bool) {
 	if e == nil {
-		return nil
+		return nil, false
 	}
 	switch v := e.(type) {
 	case *PS.NumberLiteral, *PS.FloatLiteral, *PS.StringLiteral,
 		*PS.BoolLiteral, *PS.NullLiteral, *PS.Ident, *PS.QualifiedName,
 		*PS.Param, *PS.StarExpr:
-		return v
+		return v, false
 	case *PS.UnaryExpr:
 		return simplifyUnary(v)
 	case *PS.BinaryExpr:
 		return simplifyBinary(v)
 	case *PS.AggregateFunc:
-		arg := RewriteExpr(v.Arg)
-		if arg != v.Arg {
+		arg, argChanged := RewriteExpr(v.Arg)
+		if argChanged {
 			cp := *v
 			cp.Arg = arg
-			return &cp
+			return &cp, true
 		}
-		return v
+		return v, false
 	case *PS.FunctionCall:
 		args := make([]PS.Expr, len(v.Args))
 		changed := false
 		for i, a := range v.Args {
-			args[i] = RewriteExpr(a)
-			if args[i] != a {
+			ra, rc := RewriteExpr(a)
+			args[i] = ra
+			if rc {
 				changed = true
 			}
 		}
 		if !changed {
-			return v
+			return v, false
 		}
 		cp := *v
 		cp.Args = args
-		return &cp
+		return &cp, true
 	case *PS.AliasedExpr:
-		inner := RewriteExpr(v.Expr)
-		if inner != v.Expr {
+		inner, innerChanged := RewriteExpr(v.Expr)
+		if innerChanged {
 			cp := *v
 			cp.Expr = inner
-			return &cp
+			return &cp, true
 		}
-		return v
+		return v, false
 	case *PS.CastExpr:
-		inner := RewriteExpr(v.Expr)
-		if inner != v.Expr {
+		inner, innerChanged := RewriteExpr(v.Expr)
+		if innerChanged {
 			cp := *v
 			cp.Expr = inner
-			return &cp
+			return &cp, true
 		}
-		return v
+		return v, false
 	case *PS.ListExpr:
 		items := make([]PS.Expr, len(v.Items))
 		changed := false
 		for i, it := range v.Items {
-			items[i] = RewriteExpr(it)
-			if items[i] != it {
+			ri, rc := RewriteExpr(it)
+			items[i] = ri
+			if rc {
 				changed = true
 			}
 		}
 		if !changed {
-			return v
+			return v, false
 		}
 		cp := *v
 		cp.Items = items
-		return &cp
+		return &cp, true
 	case *PS.BetweenExpr:
-		expr := RewriteExpr(v.Expr)
-		low := RewriteExpr(v.Low)
-		high := RewriteExpr(v.High)
-		if expr != v.Expr || low != v.Low || high != v.High {
+		expr, ec := RewriteExpr(v.Expr)
+		low, lc := RewriteExpr(v.Low)
+		high, hc := RewriteExpr(v.High)
+		if ec || lc || hc {
 			cp := *v
 			cp.Expr = expr
 			cp.Low = low
 			cp.High = high
-			return &cp
+			return &cp, true
 		}
-		return v
+		return v, false
 	case *PS.CaseExpr:
-		expr := RewriteExpr(v.Expr)
-		elseExpr := RewriteExpr(v.Else)
+		expr, ec := RewriteExpr(v.Expr)
+		elseExpr, elc := RewriteExpr(v.Else)
 		whens := make([]PS.WhenClause, len(v.WhenList))
-		changed := false
+		wc := false
 		for i, w := range v.WhenList {
-			whens[i] = PS.WhenClause{Cond: RewriteExpr(w.Cond), Then: RewriteExpr(w.Then)}
-			if whens[i].Cond != w.Cond || whens[i].Then != w.Then {
-				changed = true
+			cond, cc := RewriteExpr(w.Cond)
+			then, tc := RewriteExpr(w.Then)
+			whens[i] = PS.WhenClause{Cond: cond, Then: then}
+			if cc || tc {
+				wc = true
 			}
 		}
-		if expr != v.Expr || elseExpr != v.Else || changed {
+		if ec || elc || wc {
 			cp := *v
 			cp.Expr = expr
 			cp.Else = elseExpr
 			cp.WhenList = whens
-			return &cp
+			return &cp, true
 		}
-		return v
+		return v, false
 	case *PS.InExpr:
 		return simplifyIn(v)
 	case *PS.ExistsExpr:
-		return v
+		return v, false
 	case *PS.SubqueryExpr:
-		return v
+		return v, false
 	}
-	return e
+	return e, false
 }
 
-func simplifyUnary(v *PS.UnaryExpr) PS.Expr {
-	operand := RewriteExpr(v.Operand)
+func simplifyUnary(v *PS.UnaryExpr) (PS.Expr, bool) {
+	operand, operandChanged := RewriteExpr(v.Operand)
 	var folded PS.Expr
 	switch v.Op {
 	case LX.T_MINUS:
@@ -259,143 +277,161 @@ func simplifyUnary(v *PS.UnaryExpr) PS.Expr {
 	case LX.T_PLUS:
 		folded = operand
 	case LX.T_NOT:
-		// Do NOT fold `NOT NULL` to `NULL`: the resulting
-		// UnaryExpr must survive rewriting so that
-		// `x IS NOT NULL` (parsed as T_IS between x and
-		// UnaryExpr{T_NOT, NULL}) keeps its structure.
-		// The constant fold would collapse it to a
-		// NullLiteral, which then makes `is(x, NULL)`
-		// return the wrong result. See REQ000361.
 		if _, isNull := operand.(*PS.NullLiteral); isNull {
-			if operand != v.Operand {
+			if operandChanged {
 				cp := *v
 				cp.Operand = operand
-				return &cp
+				return &cp, true
 			}
-			return v
+			return v, false
 		}
 		folded = constantFoldNot(operand)
 		if folded == nil {
 			if b, ok := operand.(*PS.BoolLiteral); ok {
 				folded = &PS.BoolLiteral{Val: !b.Val}
 			} else if u, ok := operand.(*PS.UnaryExpr); ok && u.Op == LX.T_NOT {
-				return u.Operand
+				return u.Operand, true
 			}
 		}
 	}
 	if folded != nil {
-		return folded
+		return folded, true
 	}
-	if operand != v.Operand {
+	if operandChanged {
 		cp := *v
 		cp.Operand = operand
-		return &cp
+		return &cp, true
 	}
-	return v
+	return v, false
 }
 
-func simplifyBinary(v *PS.BinaryExpr) PS.Expr {
-	left := RewriteExpr(v.Left)
-	right := RewriteExpr(v.Right)
+func simplifyBinary(v *PS.BinaryExpr) (PS.Expr, bool) {
+	left, leftChanged := RewriteExpr(v.Left)
+	right, rightChanged := RewriteExpr(v.Right)
 	if folded := constantFoldBinary(v.Op, left, right); folded != nil {
-		return folded
+		return folded, true
 	}
 	if v.Op == LX.T_AND {
 		if l, ok := left.(*PS.BoolLiteral); ok {
 			if l.Val {
-				return right
+				return right, true
 			}
-			return left
+			return left, true
 		}
 		if r, ok := right.(*PS.BoolLiteral); ok {
 			if r.Val {
-				return left
+				return left, true
 			}
-			return right
+			return right, true
 		}
 		if equalLiteral(left, right) && (isLiteral(left) || isLiteral(right)) {
 			if _, ok := left.(*PS.NullLiteral); ok {
-				return left
+				return left, true
 			}
-			return left
+			return left, true
 		}
 	}
 	if v.Op == LX.T_OR {
 		if l, ok := left.(*PS.BoolLiteral); ok {
 			if l.Val {
-				return left
+				return left, true
 			}
-			return right
+			return right, true
 		}
 		if r, ok := right.(*PS.BoolLiteral); ok {
 			if r.Val {
-				return right
+				return right, true
 			}
-			return left
+			return left, true
 		}
 		if equalLiteral(left, right) && (isLiteral(left) || isLiteral(right)) {
-			return left
+			return left, true
 		}
 	}
 	if v.Op == LX.T_EQ {
 		if isLiteral(left) && isLiteral(right) && equalLiteral(left, right) {
-			return &PS.BoolLiteral{Val: true}
+			return &PS.BoolLiteral{Val: true}, true
 		}
 	}
 	if v.Op == LX.T_NE {
 		if isLiteral(left) && isLiteral(right) && equalLiteral(left, right) {
-			return &PS.BoolLiteral{Val: false}
+			return &PS.BoolLiteral{Val: false}, true
 		}
 	}
-	if left != v.Left || right != v.Right {
+	if leftChanged || rightChanged {
 		cp := *v
 		cp.Left = left
 		cp.Right = right
-		return &cp
+		return &cp, true
 	}
-	return v
+	return v, false
 }
 
-func simplifyIn(v *PS.InExpr) PS.Expr {
-	target := RewriteExpr(v.Expr)
+func simplifyIn(v *PS.InExpr) (PS.Expr, bool) {
+	target, targetChanged := RewriteExpr(v.Expr)
 	if v.Subquery == nil {
 		list := make([]PS.Expr, len(v.List))
 		changed := false
 		for i, it := range v.List {
-			list[i] = RewriteExpr(it)
-			if list[i] != it {
+			ri, rc := RewriteExpr(it)
+			list[i] = ri
+			if rc {
 				changed = true
 			}
 		}
-		if target != v.Expr || changed {
-			cp := *v
-			cp.Expr = target
-			cp.List = list
-			return &cp
+		if !targetChanged && !changed {
+			return v, false
 		}
-		return v
+		cp := *v
+		cp.Expr = target
+		cp.List = list
+		return &cp, true
 	}
 	folded, ok := flattenSubquery(v.Subquery)
-	if !ok {
-		if target != v.Expr {
-			cp := *v
-			cp.Expr = target
-			return &cp
-		}
-		return v
-	}
-	if target != v.Expr {
+	if ok {
 		cp := *v
 		cp.Expr = target
 		cp.List = folded
 		cp.Subquery = nil
-		return &cp
+		return &cp, true
 	}
-	cp := *v
-	cp.List = folded
-	cp.Subquery = nil
-	return &cp
+	if targetChanged {
+		cp := *v
+		cp.Expr = target
+		return &cp, true
+	}
+	return v, false
 }
+
+func RewriteExprUnchanged(e PS.Expr) PS.Expr {
+	result, _ := RewriteExpr(e)
+	return result
+}
+
+func cloneExprSliceUnchanged(in []PS.Expr) []PS.Expr {
+	if in == nil {
+		return nil
+	}
+	out := make([]PS.Expr, len(in))
+	for i, e := range in {
+		out[i] = RewriteExprUnchanged(e)
+	}
+	return out
+}
+
+func cloneOrderByUnchanged(in []PS.OrderItem) []PS.OrderItem {
+	if in == nil {
+		return nil
+	}
+	out := make([]PS.OrderItem, len(in))
+	for i, o := range in {
+		out[i] = PS.OrderItem{Expr: RewriteExprUnchanged(o.Expr), Desc: o.Desc, Collation: o.Collation, NullsOrder: o.NullsOrder}
+	}
+	return out
+}
+
+var _ = cloneExprSliceUnchanged
+var _ = cloneOrderByUnchanged
 
 func constantFoldUnaryMinus(operand PS.Expr) PS.Expr {
 	switch v := operand.(type) {

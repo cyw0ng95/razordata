@@ -1555,8 +1555,9 @@ func TestParseFKColumnLevelMatch(t *testing.T) {
 	if len(ct.Cols) != 1 {
 		t.Fatalf("expected 1 col, got %d", len(ct.Cols))
 	}
-	if ct.Cols[0].Match != "PARTIAL" {
-		t.Errorf("expected Match='PARTIAL', got %q", ct.Cols[0].Match)
+	// REQ002108: lexer lowercases T_IDENT tokens.
+	if ct.Cols[0].Match != "partial" {
+		t.Errorf("expected Match='partial', got %q", ct.Cols[0].Match)
 	}
 }
 
@@ -1881,8 +1882,9 @@ func TestParseCreateTable_ForeignKeyMatch(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *CreateTable, got %T", stmt)
 	}
-	if ct.ForeignKeys[0].Match != "SIMPLE" {
-		t.Errorf("expected Match='SIMPLE', got %q", ct.ForeignKeys[0].Match)
+	// REQ002108: lexer lowercases T_IDENT tokens.
+	if ct.ForeignKeys[0].Match != "simple" {
+		t.Errorf("expected Match='simple', got %q", ct.ForeignKeys[0].Match)
 	}
 	if ct.ForeignKeys[0].OnDelete != "CASCADE" {
 		t.Errorf("expected OnDelete='CASCADE', got %q", ct.ForeignKeys[0].OnDelete)

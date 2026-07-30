@@ -37,7 +37,7 @@ func (p *ConstantFoldingPass) Apply(plan *OC.Plan, ctx *OC.Context) (*OC.Plan, e
 		if !ok {
 			return op
 		}
-		folded := RE.RewriteExpr(expr)
+		folded, _ := RE.RewriteExpr(expr)
 		if boolLit, ok := folded.(*PS.BoolLiteral); ok {
 			if boolLit.Val {
 				if parent, ok := op.(pl.Parent); ok {

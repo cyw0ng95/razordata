@@ -481,7 +481,7 @@ func (p *Parser) parseFromClause() (from string, fromAlias string, joins []JoinC
 					err = err2
 					return
 				}
-				usingCols = append(usingCols, strings.ToLower(p.current.Lexeme))
+				usingCols = append(usingCols, p.current.Lexeme)
 				p.advance()
 				if p.current.Type != LX.T_COMMA {
 					break

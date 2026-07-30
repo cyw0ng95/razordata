@@ -46,9 +46,15 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		loc := p.loc()
 		p.advance()
 		return &StarExpr{Loc: loc}, nil
-	case LX.T_IDENT, LX.T_EXCLUDED:
+case LX.T_IDENT, LX.T_EXCLUDED:
 		loc := p.loc()
-		name := strings.ToLower(p.current.Lexeme)
+		// REQ002108: lexer already lowercases T_IDENT Lexeme.
+		name := p.current.Lexeme
+		// T_EXCLUDED is a keyword token, not T_IDENT — the lexer
+		// preserves its original case, so lowercase it here.
+		if p.current.Type == LX.T_EXCLUDED {
+			name = strings.ToLower(name)
+		}
 		p.advance()
 		// REQ000808: hex string literal X'...'
 		if strings.EqualFold(name, "X") && p.current.Type == LX.T_STRING {
@@ -80,7 +86,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			if err := p.expect(LX.T_IDENT); err != nil {
 				return nil, err
 			}
-			mid := strings.ToLower(p.current.Lexeme)
+			mid := p.current.Lexeme
 			p.advance()
 			// REQ000750: check for three-part name (db.table.col)
 			if p.current.Type == LX.T_DOT {
@@ -88,7 +94,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 				if err := p.expect(LX.T_IDENT); err != nil {
 					return nil, err
 				}
-				col := strings.ToLower(p.current.Lexeme)
+				col := p.current.Lexeme
 				p.advance()
 				return &QualifiedName{Loc: loc, Database: name, Table: mid, Name: col, SlotIdx: -1}, nil
 			}
@@ -138,7 +144,8 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		p.advance()
 		return rf, nil
 	case LX.T_COUNT, LX.T_SUM, LX.T_AVG:
-		name := strings.ToUpper(p.current.Lexeme)
+		// REQ002108: lexer provides canonical uppercase Lexeme from tokenTypeNames.
+		name := p.current.Lexeme
 		p.advance()
 		agg, args, err := p.parseAggregateFunc(name, false)
 		if err != nil {
@@ -149,7 +156,8 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		}
 		return agg, nil
 	case LX.T_MIN, LX.T_MAX:
-		name := strings.ToUpper(p.current.Lexeme)
+		// REQ002108: lexer provides canonical uppercase Lexeme from tokenTypeNames.
+		name := p.current.Lexeme
 		p.advance()
 		agg, args, err := p.parseAggregateFunc(name, true)
 		if err != nil {

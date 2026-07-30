@@ -838,18 +838,63 @@ func (l *Lexer) scanIdent() Token {
 		l.advanceRune()
 	}
 
-	ident := l.input[start:l.pos]
+ident := l.input[start:l.pos]
 
-	// REQ001145: trie-based keyword lookup. allocation-free,
-	// case-insensitive (the trie folds inline), no ToUpper
-	// needed. Returns 0 if no keyword matches the full ident
-	// (or a prefix where the next char is still an ident
-	// char — those are not keywords, they're idents).
+	// REQ001145: trie-based keyword lookup.
 	if kwLen, kwType := lookupKeyword(ident); kwLen > 0 && kwLen == len(ident) {
+		// REQ002108: for aggregate/function keywords, use canonical
+		// uppercase Lexeme from tokenTypeNames so the parser doesn't
+		// need to call strings.ToUpper. For other keywords, keep the
+		// original input text (lexer preserves original case).
+		switch kwType {
+		case T_COUNT, T_SUM, T_AVG, T_MIN, T_MAX:
+			return Token{Type: kwType, Lexeme: tokenTypeNames[kwType], Line: startLine, Col: startCol}
+		}
 		return Token{Type: kwType, Lexeme: ident, Line: startLine, Col: startCol}
 	}
 
-	return Token{Type: T_IDENT, Lexeme: ident, Line: startLine, Col: startCol}
+	// REQ002108: pre-lowercase identifiers so the parser doesn't need
+	// to call strings.ToLower on every T_IDENT.
+	return Token{Type: T_IDENT, Lexeme: toLowerIdent(ident), Line: startLine, Col: startCol}
+}
+
+// toLowerIdent returns a lowercased copy of ident. REQ002108.
+// Uses a stack buffer for small identifiers (<64 bytes) to avoid heap alloc.
+func toLowerIdent(ident string) string {
+	// Fast path: already lowercase.
+	allLower := true
+	for i := 0; i < len(ident); i++ {
+		if ident[i] >= 'A' && ident[i] <= 'Z' {
+			allLower = false
+			break
+		}
+	}
+	if allLower {
+		return ident
+	}
+	var buf [64]byte
+	if len(ident) <= len(buf) {
+		for i := 0; i < len(ident); i++ {
+			c := ident[i]
+			if c >= 'A' && c <= 'Z' {
+				buf[i] = c + 32
+			} else {
+				buf[i] = c
+			}
+		}
+		return string(buf[:len(ident)])
+	}
+	// Fallback for long identifiers.
+	out := make([]byte, len(ident))
+	for i := 0; i < len(ident); i++ {
+		c := ident[i]
+		if c >= 'A' && c <= 'Z' {
+			out[i] = c + 32
+		} else {
+			out[i] = c
+		}
+	}
+	return string(out)
 }
 
 func (l *Lexer) scanNumber() Token {

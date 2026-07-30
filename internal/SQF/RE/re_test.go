@@ -425,9 +425,9 @@ func TestFormatSelectCoverageREQ000163(t *testing.T) {
 }
 
 func TestRewriteExprCoverageREQ000163(t *testing.T) {
-	_ = RewriteExpr(nil)
-	_ = RewriteExpr(&PS.FunctionCall{Name: "F", Args: []PS.Expr{&PS.NumberLiteral{Val: 1}}})
-	_ = RewriteExpr(&PS.CastExpr{Expr: &PS.NumberLiteral{Val: 1}, Type: &PS.TypeInfo{Type: LX.T_INT_KW}})
+	_, _ = RewriteExpr(nil)
+	_, _ = RewriteExpr(&PS.FunctionCall{Name: "F", Args: []PS.Expr{&PS.NumberLiteral{Val: 1}}})
+	_, _ = RewriteExpr(&PS.CastExpr{Expr: &PS.NumberLiteral{Val: 1}, Type: &PS.TypeInfo{Type: LX.T_INT_KW}})
 }
 
 func TestSplitOrInferredType(t *testing.T) {

@@ -94,14 +94,14 @@ func (p *Parser) parseTableRef() (string, error) {
 	if err := p.expect(LX.T_IDENT); err != nil {
 		return "", err
 	}
-	first := strings.ToLower(p.current.Lexeme)
+	first := p.current.Lexeme
 	p.advance()
 	if p.current.Type == LX.T_DOT {
 		p.advance()
 		if err := p.expect(LX.T_IDENT); err != nil {
 			return "", err
 		}
-		table := strings.ToLower(p.current.Lexeme)
+		table := p.current.Lexeme
 		p.advance()
 		return table, nil
 	}
