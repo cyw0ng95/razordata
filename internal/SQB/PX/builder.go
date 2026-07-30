@@ -859,15 +859,15 @@ func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner
 				allResolved = false
 				break
 			}
-			// DISTINCT aggregates require a dedup stage that isn't yet
-			// implemented in the pure-PX pipeline; bail to legacy path.
+			// REQ002183: DISTINCT, GROUP_CONCAT, and STRING_AGG are natively
+			// supported by UnifiedAccum. Currently falls back to
+			// LegacyBatchStageSpec because the AggregateStage does not
+			// yet handle these correctly in all scenarios (e.g., the
+			// AggGroupConcat result type and DISTINCT dedup cache).
 			if spec.Distinct {
 				allResolved = false
 				break
 			}
-			// GROUP_CONCAT / STRING_AGG have sep arg + concat semantics
-			// not yet fully implemented in the native AggregateStage
-			// accumulators; bail.
 			switch spec.Kind {
 			case AggGroupConcat, AggStringAgg:
 				allResolved = false
