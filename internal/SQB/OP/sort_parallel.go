@@ -33,8 +33,9 @@ type SortKey struct {
 // For small datasets (≤1024 rows), uses sequential sort to
 // avoid partition overhead.
 // REQ000145 satisfied (partial): Parallel sort via sample sort.
+// REQ002172: VectorizedSeqScan removed — use UT.BatchProducer.
 type ParallelSort struct {
-	source     *VectorizedSeqScan
+	source     UT.BatchProducer
 	keys       []SortKey
 	keyIndices []int
 	pool       *UT.WorkerPool
@@ -45,7 +46,7 @@ type ParallelSort struct {
 
 // NewParallelSort creates a parallel sort. If pool is nil,
 // uses sequential sort.
-func NewParallelSort(source *VectorizedSeqScan, keys []SortKey, pool *UT.WorkerPool) *ParallelSort {
+func NewParallelSort(source UT.BatchProducer, keys []SortKey, pool *UT.WorkerPool) *ParallelSort {
 	return &ParallelSort{
 		source: source,
 		keys:   keys,

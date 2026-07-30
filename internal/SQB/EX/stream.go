@@ -397,9 +397,7 @@ func (e *Executor) QueryStreamFromAST(ctx context.Context, stmt PS.Stmt, args ..
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(plan.Root, execCtx)
-	// Attempt vectorized execution for eligible query plans.
-	plan.Root = tryVectorizePlan(plan.Root, e.planner)
-
+	// REQ002172: tryVectorizePlan removed — raw operator tree used directly.
 	// Read first row to discover schema
 	firstRow, firstErr := plan.Root.Next(ctx)
 	if firstErr != nil {
@@ -591,8 +589,7 @@ func (e *Executor) QueryStreamCompiled(ctx context.Context, cp *CompiledPlan, ar
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(plan.Root, execCtx)
-	plan.Root = tryVectorizePlan(plan.Root, e.planner)
-
+	// REQ002172: tryVectorizePlan removed — raw operator tree used directly.
 	// Read first row to discover schema
 	firstRow, firstErr := plan.Root.Next(ctx)
 	if firstErr != nil {

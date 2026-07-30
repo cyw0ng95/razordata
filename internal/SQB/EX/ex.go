@@ -494,15 +494,11 @@ func (e *Executor) initPipelineBuilderEnabled() {
 		if p == nil {
 			return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(root))
 		}
-		// REQ002149: propagate the planner to the tree before vectorization.
-		// This was moved here from Build() to avoid modifying the shared
-		// plan tree cached in the planner's memo cache.
+		// REQ002172: tryVectorizePlan removed — PipelineBuilder's native
+		// StageSpecs handle vectorization. The LegacyBatchStageSpec
+		// fallback uses the raw operator tree wrapped in RowOperatorAsProducer.
 		propagatePlanner(root, p)
-		vec := tryVectorizePlan(root, p)
-		if bp, ok := vec.(UT.BatchProducer); ok {
-			return bp
-		}
-		return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(vec))
+		return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(root))
 	}
 	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize)
 	// Enable pure pipeline path by default. This activates the BuildPipeline-based
@@ -1071,7 +1067,7 @@ func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, e
 	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(plan.Root, execCtx)
 	// Attempt vectorized execution for eligible query plans.
-	plan.Root = tryVectorizePlan(plan.Root, e.planner)
+	// REQ002172: tryVectorizePlan removed — raw operator tree used directly.
 	defer plan.Root.Close()
 	row, err := plan.Root.Next(ctx)
 	if err != nil {
@@ -1319,7 +1315,7 @@ func (e *Executor) CompilePlan(sql string) (*CompiledPlan, error) {
 		ResolvePlanSlots(plan.Root)
 		// REQ001614: tryVectorizePlan always succeeds — falls back to
 		// ScalarBatchProducer wrapping when vectorization is not applicable.
-		plan.Root = tryVectorizePlan(plan.Root, e.planner)
+		// REQ002172: tryVectorizePlan removed.
 		cp.plan = plan
 		return cp, nil
 

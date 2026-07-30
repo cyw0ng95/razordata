@@ -5,8 +5,8 @@ import (
 	"sync"
 
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
-	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
+	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 // WindowStageSpec creates WindowStage instances for window function
@@ -40,10 +40,11 @@ type WindowStage struct {
 	args     []PS.Expr
 	cols     []string
 
-	mu     sync.Mutex
-	closed bool
-	inner  *AG.VectorizedWindowOperator
-	childBP *stageBatchProducer
+	mu       sync.Mutex
+	closed   bool
+	inner    *AG.WindowOperator
+	childBP  *stageBatchProducer
+	producer *RowOperatorAsProducer
 }
 
 // SetChild sets the child stage.
@@ -66,9 +67,14 @@ func (w *WindowStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	}
 	if w.inner == nil {
 		w.childBP = &stageBatchProducer{stage: w.child}
-		w.inner = AG.NewVectorizedWindowOperator(w.childBP, w.funcName, w.args, w.spec, w.cols)
+		// REQ002172: use row-based WindowOperator instead of VectorizedWindowOperator.
+		// Convert batch producer to row operator via BatchToRowAdapter.
+		rowInput := UT.NewBatchToRowAdapter(w.childBP)
+		rowOp := AG.NewWindowOperator(rowInput, w.funcName, w.args, w.spec, w.cols)
+		w.inner = rowOp
+		w.producer = NewRowOperatorAsProducer(rowOp)
 	}
-	return w.inner.NextBatch(ctx)
+	return w.producer.NextBatch(ctx)
 }
 
 // Reset returns to pre-execution state.

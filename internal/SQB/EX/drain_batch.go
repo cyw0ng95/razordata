@@ -44,7 +44,8 @@ func (e *Executor) drainPipeline(ctx context.Context, plan *pl.PlanResult) (rows
 			err = fmt.Errorf("ex: pipeline panic: %v", r)
 		}
 	}()
-	vec := tryVectorizePlan(plan.Root, e.planner)
+	// REQ002172: tryVectorizePlan removed — use raw operator tree.
+	vec := plan.Root
 	spec := &PX.PipelineSpec{
 		RootIdx: 0,
 		Stages: []PX.StageSpec{
