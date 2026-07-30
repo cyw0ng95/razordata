@@ -403,6 +403,45 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *WT.DropIndex:
 		// REQ002202: Index DDL. Native source stage.
 		return decomposeNativeSource(o, st)
+	case *WT.Trigger:
+		// REQ002203: Trigger DDL. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.DropTrigger:
+		// REQ002203: Trigger DDL. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.Explain:
+		// REQ002204: EXPLAIN. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.Pragma:
+		// REQ002205: Admin. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.Truncate:
+		// REQ002205: Admin. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.Reindex:
+		// REQ002205: Admin. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.DropView:
+		// REQ002206: View/attach. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.AttachOp:
+		// REQ002206: View/attach. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.DetachOp:
+		// REQ002206: View/attach. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.UnsupportedOp:
+		// REQ002207: Unsupported op. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.CreateMatViewOperator:
+		// REQ002208: MatView. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.RefreshMatViewOperator:
+		// REQ002208: MatView. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.DropMatViewOperator:
+		// REQ002208: MatView. Native source stage.
+		return decomposeNativeSource(o, st)
 	default:
 		return decomposeFallback(op, st, planner, specialize)
 	}
