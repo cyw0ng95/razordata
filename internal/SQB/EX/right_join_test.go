@@ -97,14 +97,42 @@ func TestRightJoin_LeftEmpty(t *testing.T) {
 	}
 }
 
-// TestLeftJoin_RightEmpty is a known-failing case tracked as REQ002169:
-// LEFT JOIN with an empty right table returns 0 rows because the block
-// NLJ path (nextBlock) short-circuits before emitting unmatched left
-// rows. The nullRightRow fix from REQ002166 is correct but unreachable
-// via this path until nextBlock handles empty-right. Skipped here to
-// keep the suite green; see REQ002169.
+// TestLeftJoin_RightEmpty verifies REQ002169: LEFT JOIN with an empty
+// right table must return all left rows with NULL right columns instead
+// of returning 0 rows.
 func TestLeftJoin_RightEmpty(t *testing.T) {
-	t.Skip("REQ002169: LEFT JOIN with empty right returns 0 rows (nextBlock short-circuit)")
+	e := NewExecutorWithEngine(nil)
+	ctx := context.Background()
+
+	if _, err := e.Exec(ctx, "CREATE TABLE lje1 (id INT, name TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Exec(ctx, "CREATE TABLE lje2 (id INT, role TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	// lje2 is created but no rows inserted (empty right table).
+	if _, err := e.Exec(ctx, "INSERT INTO lje1 VALUES (1, 'alice')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Exec(ctx, "INSERT INTO lje1 VALUES (2, 'bob')"); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := e.QueryAll(ctx, "SELECT lje1.name, lje2.role FROM lje1 LEFT JOIN lje2 ON lje1.id = lje2.id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows (left rows with NULL role), got %d", len(rows))
+	}
+	for _, r := range rows {
+		if !r.Data[1].IsNull() {
+			t.Errorf("expected NULL role for unmatched row, got %v", r.Data[1])
+		}
+		if r.Data[0].S != "alice" && r.Data[0].S != "bob" {
+			t.Errorf("unexpected name: %v", r.Data[0])
+		}
+	}
 }
 
 // TestRightJoin_LeftEmpty_BothSidesPopulated verifies the non-empty

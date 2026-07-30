@@ -975,7 +975,41 @@ func (j *NestedLoopJoin) nextBlock(ctx context.Context) (Row, error) {
 	// left-primary order so LEFT JOIN results match NLJ ordering.
 	// REQ000802+: use blkDataBuf to eliminate per-row Data allocations.
 	if len(j.blkRightRows) == 0 {
-		// Right side empty — no matches possible; move to next batch.
+		// REQ002169: right side empty. For LEFT JOIN, emit each left row
+		// with a NULL right row instead of short-circuiting to the next
+		// batch (which would silently drop all left rows).
+		if j.leftOuter {
+			nullRow := j.nullRightRow()
+			blkDataPerRowEmpty := len(j.blkLeftBatch[0].Data) + len(nullRow.Data)
+			for _, l := range j.blkLeftBatch {
+				j.rowID++
+				nljDebugRowFlow(j.leftTbl, j.rowID, true)
+				j.rowID++
+				nljDebugRowFlow("output", j.rowID, false)
+				off := len(j.blkDataBuf)
+				j.blkDataBuf = j.blkDataBuf[:off+blkDataPerRowEmpty]
+				dataSlice := j.blkDataBuf[off : off+blkDataPerRowEmpty : off+blkDataPerRowEmpty]
+				result := Row{
+					Cols:     j.blkSharedCols,
+					Types:    j.blkSharedTypes,
+					Data:     dataSlice,
+					ColIndex: j.blkSharedColIndex,
+				}
+				copy(result.Data, l.Data)
+				copy(result.Data[len(l.Data):], nullRow.Data)
+				j.blkResultBuf = append(j.blkResultBuf, result)
+				if j.limitRemaining > 0 && int64(len(j.blkResultBuf)) >= j.limitRemaining {
+					break
+				}
+			}
+			j.blkLeftBatch = j.blkLeftBatch[:0]
+			if len(j.blkResultBuf) == 0 {
+				return j.nextBlock(ctx)
+			}
+			j.blkResultPos = 1
+			return j.blkResultBuf[0], nil
+		}
+		// INNER/CROSS: no matches possible; move to next batch.
 		j.blkLeftBatch = j.blkLeftBatch[:0]
 		return j.nextBlock(ctx)
 	}
