@@ -378,6 +378,9 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 		// Values produces constant rows from a VALUES clause.
 		// Use native ScanStageSpec — wraps directly as a source stage.
 		return decomposeNativeSource(o, st)
+	case *OP.ValuesRows:
+		// REQ002193: multi-row VALUES statements. Native source stage.
+		return decomposeNativeSource(o, st)
 	default:
 		return decomposeFallback(op, st, planner, specialize)
 	}
@@ -1446,7 +1449,6 @@ func extractOutputSchema(root DT.Operator) ([]string, []LX.TokenType) {
 	}
 
 	// Unwrap AdaptiveOp.
-	
 
 	switch o := root.(type) {
 	case *OP.SeqScan:
