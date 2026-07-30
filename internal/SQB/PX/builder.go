@@ -365,6 +365,19 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 		return decomposeDML(&UpdateStageSpec{Update: o}, st)
 	case *WT.Delete:
 		return decomposeDML(&DeleteStageSpec{Delete: o}, st)
+	case *OP.ConstRow:
+		// ConstRow is a trivially cheap operator (COUNT(*) fast path).
+		// Use LegacyBatchStageSpec — no native stage needed.
+		return decomposeFallback(op, st, planner, specialize)
+	case *OP.FusedScan:
+		// FusedScan is an internal optimization that already applies
+		// filter + project. Use LegacyBatchStageSpec — it's already
+		// efficient enough and doesn't need a native stage.
+		return decomposeFallback(op, st, planner, specialize)
+	case *OP.Values:
+		// ValuesOp produces constant rows from a VALUES clause.
+		// Use LegacyBatchStageSpec — no native stage needed.
+		return decomposeFallback(op, st, planner, specialize)
 	default:
 		return decomposeFallback(op, st, planner, specialize)
 	}

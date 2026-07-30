@@ -69,6 +69,11 @@ run_step "internal" "go test ./internal/..." \
   go test ./internal/... -count=1 -timeout 180s "$@"
 quick_fail
 
+# REQ002140: shadow validation — compare pipeline vs legacy results
+run_step "px_validate" "go test -tags px_validate ./internal/..." \
+  go test -tags px_validate ./internal/... -count=1 -timeout 180s "$@"
+quick_fail
+
 # Fast: SQL parser/rewriter tests (no SLT corpus needed)
 run_step "sqlcmp" "go test ./tests/sqlcmp/ -run 'Test(DDL|DML|Select|Lexer|Rewriter)'" \
   go test ./tests/sqlcmp/ -count=1 -timeout 30s -run 'Test(DDL|DML|Select|Lexer|Rewriter)' "$@"
