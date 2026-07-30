@@ -100,4 +100,58 @@ func compactColumn(col UT.Column, sel []uint16, physicalSize int) UT.Column {
 		}
 	}
 	return out
+}// truncateBatchInPlace slices each column's Data slice to the first
+// n logical rows. Handles both plain batches and batches with a
+// selection vector (resolves physical indices via Sel). No new
+// allocations — the underlying arrays remain owned by the batch
+// and are released via Put. Mirrors the truncation logic in
+// VectorizedLimit.NextBatch but operates in place.
+func truncateBatchInPlace(batch *UT.Batch, n int) {
+	if n < 0 {
+		return
+	}
+	if n == 0 {
+		batch.Size = 0
+		batch.Sel = nil
+		return
+	}
+	// When the batch has a selection vector, the logical rows are
+	// Sel[0..Size); truncating to n logical rows means keeping only
+	// the first n entries of Sel.
+	if batch.Sel != nil {
+		if n < len(batch.Sel) {
+			batch.Sel = batch.Sel[:n]
+		}
+		batch.Size = n
+		return
+	}
+	// Plain batch: slice each column's Data arrays in place.
+	for i := range batch.Cols {
+		col := &batch.Cols[i]
+		if col.Type == 0 {
+			break
+		}
+		if col.Nulls != nil && n < len(col.Nulls) {
+			col.Nulls = col.Nulls[:n]
+		}
+		switch col.Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			if col.Data.Ints != nil && n < len(col.Data.Ints) {
+				col.Data.Ints = col.Data.Ints[:n]
+			}
+		case LX.T_FLOAT_KW:
+			if col.Data.Floats != nil && n < len(col.Data.Floats) {
+				col.Data.Floats = col.Data.Floats[:n]
+			}
+		case LX.T_BOOL:
+			if col.Data.Bools != nil && n < len(col.Data.Bools) {
+				col.Data.Bools = col.Data.Bools[:n]
+			}
+		case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+			if col.Data.Strs != nil && n < len(col.Data.Strs) {
+				col.Data.Strs = col.Data.Strs[:n]
+			}
+		}
+	}
+	batch.Size = n
 }
