@@ -227,6 +227,13 @@ func (j *BatchHashCrossJoin) materializeLeft(ctx context.Context) error {
 	copy(j.outputColTypes, j.leftTypes)
 	copy(j.outputColTypes[j.leftN:], j.rightTypes)
 
+	// REQ002044: if hash table is nil (right side was empty), skip
+	// the probe loop to avoid nil pointer dereference.
+	if j.ht == nil {
+		j.leftBuilt = true
+		return nil
+	}
+
 	// Pre-compute all match pairs.
 	for li := 0; li < totalRows; li++ {
 		if isColNull(&j.leftCols[j.leftKey], li) {
