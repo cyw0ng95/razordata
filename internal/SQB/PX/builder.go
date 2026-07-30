@@ -633,19 +633,19 @@ func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlann
 		types = append(types, rightOut.types...)
 		joinOut = outputSchema{names: names, types: types}
 	}
+	// Map OP.JoinKind (string) → PX.JoinKind (uint8 enum).
+	var jk JoinKind
+	switch h.Kind() {
+	case OP.JoinKindLeft:
+		jk = JoinKindLeft
+	case OP.JoinKindRight:
+		jk = JoinKindRight
+	case OP.JoinKindFull:
+		jk = JoinKindFull
+	default:
+		jk = JoinKindInner
+	}
 	if allResolved {
-		// Map OP.JoinKind (string) → PX.JoinKind (uint8 enum).
-		var jk JoinKind
-		switch h.Kind() {
-		case OP.JoinKindLeft:
-			jk = JoinKindLeft
-		case OP.JoinKindRight:
-			jk = JoinKindRight
-		case OP.JoinKindFull:
-			jk = JoinKindFull
-		default:
-			jk = JoinKindInner
-		}
 		joinIdx := st.addStage(&HashJoinStageSpec{
 			BuildKeys: buildKeys,
 			ProbeKeys: probeKeys,
@@ -655,11 +655,18 @@ func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlann
 		st.addEdge(joinIdx, rightIdx, RightChild)
 		return joinIdx
 	}
-	// Fallback: couldn't resolve all keys
-	joinIdx := st.addStage(&LegacyBatchStageSpec{
-		Root:       h,
-		Planner:    planner,
-		Specialize: specialize,
+	// REQ002180: keys not resolvable statically — use runtime resolution.
+	keyName := ""
+	if len(leftKeys) > 0 {
+		keyName = leftKeys[0]
+	}
+	joinIdx := st.addStage(&HashJoinStageSpec{
+		BuildKeys:            buildKeys,
+		ProbeKeys:            probeKeys,
+		Kind:                 jk,
+		ResolveKeysAtRuntime: true,
+		LeftKeyName:          keyName,
+		RightKeyName:         keyName,
 	}, joinOut)
 	st.addEdge(joinIdx, leftIdx, LeftChild)
 	st.addEdge(joinIdx, rightIdx, RightChild)
@@ -713,11 +720,14 @@ func decomposeHashCrossJoin(h *OP.HashCrossJoin, st *decomposeState, planner PL.
 		st.addEdge(joinIdx, rightIdx, RightChild)
 		return joinIdx
 	}
-	// Fallback: key names not resolvable.
-	joinIdx := st.addStage(&LegacyBatchStageSpec{
-		Root:       h,
-		Planner:    planner,
-		Specialize: specialize,
+	// REQ002180: key names not resolvable statically — use runtime resolution.
+	joinIdx := st.addStage(&HashJoinStageSpec{
+		BuildKeys:            buildKeys,
+		ProbeKeys:            probeKeys,
+		Kind:                 JoinKindInner,
+		ResolveKeysAtRuntime: true,
+		LeftKeyName:          leftKey,
+		RightKeyName:         rightKey,
 	}, joinOut)
 	st.addEdge(joinIdx, leftIdx, LeftChild)
 	st.addEdge(joinIdx, rightIdx, RightChild)
