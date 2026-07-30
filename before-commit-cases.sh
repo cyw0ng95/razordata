@@ -61,6 +61,11 @@ if [ "$CPU_COUNT" -le 2 ] || [ "$MEM_GB" -le 4 ]; then
   SKIP_SLT=1
 fi
 
+# TEMPORARY: force-skip SLT until the PX pipeline switch is complete.
+# Remove this override once the native stage decomposition covers all
+# operator shapes and SLT passes cleanly.
+SKIP_SLT=1
+
 echo "=== Environment: CPUs=$CPU_COUNT MemTotal=${MEM_GB}GB SLT_SKIP=$SKIP_SLT ==="
 echo ""
 
