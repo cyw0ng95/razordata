@@ -391,6 +391,12 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *OP.BitmapHeapScan:
 		// REQ002196: BitmapHeapScan. Native source stage.
 		return decomposeNativeSource(o, st)
+	case *WT.CreateTable:
+		// REQ002201: DDL. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.DropTable:
+		// REQ002201: DDL. Native source stage.
+		return decomposeNativeSource(o, st)
 	default:
 		return decomposeFallback(op, st, planner, specialize)
 	}
