@@ -778,9 +778,10 @@ func decomposeNestedLoopJoin(n *OP.NestedLoopJoin, st *decomposeState, planner P
 		return semiIdx
 	}
 
-	// For other join types (INNER, LEFT, RIGHT, FULL, CROSS), use
-	// fallback to NLJ which correctly handles these semantics via the
-	// row-based operator.
+	// REQ002182: for other join types (INNER, LEFT, RIGHT, FULL, CROSS),
+	// use NLJStage which wraps the row-based NLJ via SpecializeFunc.
+	// Currently falls back to LegacyBatchStageSpec because the NLJStage
+	// does not yet handle the RegisterTable test setup correctly.
 	joinIdx := st.addStage(&LegacyBatchStageSpec{
 		Root:       n,
 		Planner:    planner,
