@@ -966,12 +966,9 @@ func decomposeDistinct(d *OP.Distinct, st *decomposeState, planner PL.QueryPlann
 		st.addEdge(idx, childIdx, SingleChild)
 		return idx
 	}
-	// Fallback: child schema unknown.
-	idx := st.addStage(&LegacyBatchStageSpec{
-		Root:       d,
-		Planner:    planner,
-		Specialize: specialize,
-	}, schema)
+	// REQ002184: child schema unknown — use all columns as distinct keys.
+	// The DistinctStage will determine column count from the first batch.
+	idx := st.addStage(&DistinctStageSpec{KeyCols: nil}, schema)
 	st.addEdge(idx, childIdx, SingleChild)
 	return idx
 }

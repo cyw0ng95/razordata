@@ -224,7 +224,15 @@ func (d *DistinctStage) extractKey(batch *UT.Batch, rowIdx int) string {
 	}
 
 	var buf []byte
-	for _, colIdx := range d.keyCols {
+	// REQ002184: when keyCols is empty (unknown schema), use all columns.
+	cols := d.keyCols
+	if len(cols) == 0 {
+		cols = make([]int, 0, len(batch.Cols))
+		for i := range batch.Cols {
+			cols = append(cols, i)
+		}
+	}
+	for _, colIdx := range cols {
 		if colIdx < 0 || colIdx >= len(batch.Cols) {
 			continue
 		}
