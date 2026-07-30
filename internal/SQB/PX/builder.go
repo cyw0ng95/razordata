@@ -981,11 +981,23 @@ func decomposeWindow(w *AG.WindowOperator, st *decomposeState) int {
 // decomposeCompound creates a native CompoundStageSpec for set operations
 // (UNION, UNION ALL, INTERSECT, EXCEPT). Output schema is taken from the
 // left child. REQ002128.
-func decomposeCompound(c *OP.CompoundOp, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	leftIdx := decomposeOp(c.LeftChild(), st, planner, specialize)
-	rightIdx := decomposeOp(c.RightChild(), st, planner, specialize)
+// compoundOp is the interface for operators that can be decomposed
+// into a CompoundStageSpec. REQ002178: accept DT.Operator interface.
+type compoundOp interface {
+	LeftChild() DT.Operator
+	RightChild() DT.Operator
+	CompoundOpType() PS.CompoundOp
+}
+
+func decomposeCompound(c DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+	comp, ok := c.(compoundOp)
+	if !ok {
+		return decomposeFallback(c, st, planner, specialize)
+	}
+	leftIdx := decomposeOp(comp.LeftChild(), st, planner, specialize)
+	rightIdx := decomposeOp(comp.RightChild(), st, planner, specialize)
 	leftOut := st.childOutput(leftIdx)
-	idx := st.addStage(&CompoundStageSpec{Op: c.CompoundOpType()}, leftOut)
+	idx := st.addStage(&CompoundStageSpec{Op: comp.CompoundOpType()}, leftOut)
 	st.addEdge(idx, leftIdx, LeftChild)
 	st.addEdge(idx, rightIdx, RightChild)
 	return idx
@@ -1653,21 +1665,17 @@ func (s *LegacyBatchStage) Close() error {
 
 // --- RowOperatorAsProducer ---
 
-// RowOperatorAsProducer adapts a PL.Operator to produce
-// single-row batches. This is the minimal adapter for
-// non-vectorizable operators (DML, etc.). Exported for use
-// by the Executor's PipelineBuilder specialize function. REQ002132.
-//
-// Calls op.Next() at most once: row-based operators are typically
-// stateful and not safe to call Next() multiple times (e.g., ALTER TABLE
-// re-executes the schema mutation on every call). Pipeline draining
-// must not drive Next() in a loop.
+// RowOperatorAsProducer adapts a DT.Operator to produce
+// batches of 1 row each. Used by LegacyBatchStageSpec to convert
+// row-based operators (DML, legacy ops) into the BatchProducer
+// interface expected by the PipelineExecutor.
+// REQ002177: uses DT.Operator (alias for PL.Operator).
 type RowOperatorAsProducer struct {
-	Op PL.Operator
+	Op DT.Operator
 }
 
 // NewRowOperatorAsProducer creates a RowOperatorAsProducer.
-func NewRowOperatorAsProducer(op PL.Operator) *RowOperatorAsProducer {
+func NewRowOperatorAsProducer(op DT.Operator) *RowOperatorAsProducer {
 	return &RowOperatorAsProducer{Op: op}
 }
 
@@ -1736,7 +1744,7 @@ func propagatePlannerToTree(root DT.Operator, planner PL.QueryPlanner) {
 		return
 	}
 	if w, ok := root.(interface {
-		WithPlanner(PL.QueryPlanner) PL.Operator
+		WithPlanner(PL.QueryPlanner) DT.Operator
 	}); ok {
 		w.WithPlanner(planner)
 	}
