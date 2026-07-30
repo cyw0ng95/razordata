@@ -388,6 +388,9 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *OP.MergeJoin:
 		// REQ002195: MergeJoin. Native source stage.
 		return decomposeNativeSource(o, st)
+	case *OP.BitmapHeapScan:
+		// REQ002196: BitmapHeapScan. Native source stage.
+		return decomposeNativeSource(o, st)
 	default:
 		return decomposeFallback(op, st, planner, specialize)
 	}
