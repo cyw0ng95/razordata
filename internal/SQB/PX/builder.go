@@ -251,29 +251,80 @@ func (s *decomposeState) childOutput(childIdx int) outputSchema {
 }
 
 // decomposePlan walks the PL.Operator tree bottom-up and produces
-// StageSpecs + edges. Returns (stages, edges, rootIdx, rootSchema) where
-// rootSchema is the root stage's output column names and types (populated
-// by the per-type decompose step). Returns empty schema for unsupported
-// operators (callers must fall back to extractOutputSchema(plan.Root)
-// or legacy path).
+// a PipelineSpec — a list of StageSpecs + EdgeSpecs describing how
+// stages connect. Returns the stages, edges, root-stage index, and
+// the root stage's outputSchema.
+// REQ002156: if the plan tree contains nested joins (bushy join shape),
+// fall back to a single LegacyBatchStageSpec for the entire tree to
+// preserve correctness of transitive/bridge predicates.
 func decomposePlan(root DT.Operator, planner PL.QueryPlanner, specialize SpecializeFunc) ([]StageSpec, []EdgeSpec, int, outputSchema) {
 	if root == nil {
 		return nil, nil, 0, outputSchema{}
 	}
-
-	// Unwrap AdaptiveOp — the inner operator is the actual plan.
+	inner := root
 	if aop, ok := root.(*AD.AdaptiveOp); ok {
-		root = aop.Inner
+		inner = aop.Inner
 	}
-
+	// REQ002156: detect bushy join shapes (nested joins) and fall back
+	// to a single LegacyBatchStageSpec. Native stage decomposition
+	// doesn't yet handle transitive predicates across nested joins
+	// correctly, and the pipeline build process can have side effects
+	// on the planner's memo cache that affect subsequent legacy
+	// execution.
+	if hasBushyJoin(inner) {
+		state := &decomposeState{}
+		idx := state.addStage(&LegacyBatchStageSpec{
+			Root:       root,
+			Planner:    planner,
+			Specialize: specialize,
+		}, outputSchema{})
+		return state.stages, state.edges, idx, outputSchema{}
+	}
 	state := &decomposeState{}
-	rootIdx := decomposeOp(root, state, planner, specialize)
+	rootIdx := decomposeOp(inner, state, planner, specialize)
 	schema := outputSchema{}
 	if rootIdx >= 0 && rootIdx < len(state.stageOutput) {
 		schema = state.stageOutput[rootIdx]
 	}
 	return state.stages, state.edges, rootIdx, schema
 }
+
+// hasBushyJoin reports whether the operator tree contains nested joins.
+// REQ002156: bushy join shapes (e.g. NLJ(HashJoin(HashJoin(...)))) are
+// not yet handled correctly by native stage decomposition.
+func hasBushyJoin(op DT.Operator) bool {
+	if op == nil {
+		return false
+	}
+	// Unwrap AdaptiveOp
+	for {
+		if aop, ok := op.(*AD.AdaptiveOp); ok {
+			op = aop.Inner
+		} else {
+			break
+		}
+	}
+	type leftRighter interface {
+		LeftChild() DT.Operator
+		RightChild() DT.Operator
+	}
+	lr, isJoin := op.(leftRighter)
+	if !isJoin {
+		return false
+	}
+	// Check if either child is also a join (bushy shape).
+	leftJoin := isJoinOp(lr.LeftChild())
+	rightJoin := isJoinOp(lr.RightChild())
+	if leftJoin || rightJoin {
+		return true
+	}
+	// Recurse into children to find deeper nesting.
+	return hasBushyJoin(lr.LeftChild()) || hasBushyJoin(lr.RightChild())
+}
+
+// decomposeHashJoin native HashJoinStageSpec. Resolves left/right key
+// names against left/right child schemas. Falls back to LegacyBatchStageSpec
+// if names not resolvable. REQ002124.
 
 // decomposeOp recursively decomposes a single operator into stages.
 // Returns the index of the stage that produces output for this operator.
@@ -526,11 +577,43 @@ func decomposeOffset(o *OP.Offset, st *decomposeState, planner PL.QueryPlanner, 
 // decomposeHashJoin native HashJoinStageSpec. Resolves left/right key
 // names against left/right child schemas. Falls back to LegacyBatchStageSpec
 // if names not resolvable. REQ002124.
+// REQ002156: if either child is itself a join (bushy join shape), fall
+// back to LegacyBatchStageSpec for the entire subtree — native stage
+// decomposition doesn't yet handle transitive/bridge predicates across
+// nested joins correctly.
 func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	leftIdx := decomposeOp(h.LeftChild(), st, planner, specialize)
 	rightIdx := decomposeOp(h.RightChild(), st, planner, specialize)
 	leftOut := st.childOutput(leftIdx)
 	rightOut := st.childOutput(rightIdx)
+
+	// REQ002156: bushy join shape — fall back to LegacyBatchStageSpec
+	// for the entire subtree so the legacy execution path handles
+	// transitive predicates correctly.
+	if isJoinOp(h.LeftChild()) || isJoinOp(h.RightChild()) {
+		leftSchema := leftOut
+		rightSchema := rightOut
+		var joinOut outputSchema
+		if leftSchema.resolved() && rightSchema.resolved() {
+			n1, n2 := len(leftSchema.names), len(rightSchema.names)
+			names := make([]string, 0, n1+n2)
+			types := make([]LX.TokenType, 0, n1+n2)
+			names = append(names, leftSchema.names...)
+			types = append(types, leftSchema.types...)
+			names = append(names, rightSchema.names...)
+			types = append(types, rightSchema.types...)
+			joinOut = outputSchema{names: names, types: types}
+		}
+		joinIdx := st.addStage(&LegacyBatchStageSpec{
+			Root:       h,
+			Planner:    planner,
+			Specialize: specialize,
+		}, joinOut)
+		st.addEdge(joinIdx, leftIdx, LeftChild)
+		st.addEdge(joinIdx, rightIdx, RightChild)
+		return joinIdx
+	}
+
 	leftKeys := h.LeftKeys()
 	rightKeys := h.RightKeys()
 
@@ -1028,6 +1111,18 @@ func aggFuncReturnType(k AccumKind) LX.TokenType {
 		return LX.T_TEXT
 	}
 	return LX.T_TEXT
+}
+
+// isJoinOp reports whether op is a join operator (HashJoin, HashCrossJoin,
+// or NestedLoopJoin). REQ002156: used to detect bushy join shapes that
+// should fall back to LegacyBatchStageSpec for correct handling of
+// transitive/bridge predicates across nested joins.
+func isJoinOp(op DT.Operator) bool {
+	switch op.(type) {
+	case *OP.HashJoin, *OP.HashCrossJoin, *OP.NestedLoopJoin:
+		return true
+	}
+	return false
 }
 
 // decomposeDML creates a DML StageSpec (Insert/Update/Delete). Output

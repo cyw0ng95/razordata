@@ -61,6 +61,33 @@ func NullValue() DT.Value { return AP.NullValue() }
 // valueToString converts a Value to its string representation without
 // going through fmt.Sprint (no reflection, no boxing). REQ001015.
 // REQ001066: delegates to Value.String() for the per-kind switch.
+// hasManyTableRefs reports whether sql references more than a few
+// tables (heuristic for bushy join detection). REQ002156: queries with
+// many table refs produce bushy join plans that the PX pipeline build
+// process corrupts via planner.Plan() memo cache side effects.
+// We count comma-separated table names in the FROM clause as a
+// lightweight pre-check before calling Build().
+func hasManyTableRefs(sql string) bool {
+	upper := strings.ToUpper(sql)
+	fromIdx := strings.Index(upper, " FROM ")
+	if fromIdx < 0 {
+		return false
+	}
+	afterFrom := sql[fromIdx+6:]
+	// Find the next clause boundary (WHERE, GROUP, ORDER, LIMIT, HAVING, UNION)
+	boundaries := []string{" WHERE ", " GROUP ", " ORDER ", " LIMIT ", " HAVING ", " UNION ", " INTERSECT ", " EXCEPT "}
+	end := len(afterFrom)
+	for _, b := range boundaries {
+		if i := strings.Index(strings.ToUpper(afterFrom), b); i >= 0 && i < end {
+			end = i
+		}
+	}
+	fromClause := afterFrom[:end]
+	// Count comma-separated table names (or join clauses).
+	parts := strings.Split(fromClause, ",")
+	return len(parts) >= 4
+}
+
 func valueToString(v DT.Value) string {
 	return v.String()
 }
@@ -1104,8 +1131,19 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 // caller should fall through to the legacy path. Panics are converted
 // to fallback (returns false) so latent bugs don't crash production.
 // REQ002129/2132.
+// REQ002156: pre-check for bushy join shapes (multiple table references
+// with equi-join predicates) to avoid calling planner.Plan() which
+// corrupts the memo cache for complex multi-join queries. The fallback
+// path uses the same planner.Plan() via planWithCache, so if we call
+// Build() first, the cached plan is already corrupted.
 func (e *Executor) queryAllBuildPipeline(ctx context.Context, sql string, args []any) ([]DT.Row, bool) {
 	if !e.usePipelineFastPath() {
+		return nil, false
+	}
+	// REQ002156: skip pipeline build for queries with many table
+	// references — these produce bushy join plans that corrupt the
+	// planner's memo cache.
+	if hasManyTableRefs(sql) {
 		return nil, false
 	}
 	defer func() {
