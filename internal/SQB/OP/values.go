@@ -152,6 +152,9 @@ func (v *Values) SetExecCtx(ec *pl.ExecContext) { v.execCtx = ec }
 // ColNames returns the pre-computed column names for this Values operator.
 func (v *Values) ColNames() []string { return v.colNames }
 
+// Cols returns the expression columns for this Values operator.
+func (v *Values) Cols() []PS.Expr { return v.cols }
+
 func (v *Values) WithPlanner(p pl.QueryPlanner) pl.Operator {
 	if v == nil {
 		return nil

@@ -284,6 +284,13 @@ func decomposePlan(root DT.Operator, planner PL.QueryPlanner, specialize Special
 	return state.stages, state.edges, rootIdx, schema, err
 }
 
+// DecomposePlan is the exported entry point for decomposePlan.
+// Exported for REQ002256 shadow-mode testing (QP package compares output).
+func DecomposePlan(root DT.Operator, planner PL.QueryPlanner, specialize SpecializeFunc) ([]StageSpec, []EdgeSpec, int, outputSchema) {
+	stages, edges, rootIdx, schema, _ := decomposePlan(root, planner, specialize)
+	return stages, edges, rootIdx, schema
+}
+
 // decomposeHashJoin native HashJoinStageSpec. Resolves left/right key
 // names against left/right child schemas. Falls back to a native
 // ScanStageSpec if names not resolvable. REQ002124.
