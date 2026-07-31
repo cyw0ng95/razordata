@@ -572,16 +572,10 @@ func (e *Executor) usePipelineFastPath() bool {
 // Why reject LegacyBatchStageSpec in the fast path: the legacy
 // wrapper invokes the plan-tree operator and its own EV.RowEvaluator
 // setup paths; if the pipeline ran the wrapper AND the legacy
-// drainBatch ran the same plan tree, we'd double-execute subqueries,
-// reset Aggregate internal state after a partial run, and lose
-// execCtx embedding for correlated subqueries. Early reject → the
-// legacy parse→plan→drainBatch path runs the tree once, correctly.
+// specHasNoLegacyStages returns true when the PipelineSpec contains no
+// LegacyBatchStageSpec wrappers. REQ002228: LegacyBatchStageSpec removed —
+// all stages are native, so this always returns true.
 func specHasNoLegacyStages(spec *PX.PipelineSpec) bool {
-	for _, s := range spec.Stages {
-		if _, isLegacy := s.(*PX.LegacyBatchStageSpec); isLegacy {
-			return false
-		}
-	}
 	return true
 }
 
@@ -1292,17 +1286,7 @@ func (e *Executor) CompilePlan(sql string) (*CompiledPlan, error) {
 		}()
 		if spec, berr := e.pipelineBuilder.Build(sql); berr == nil && spec != nil &&
 			len(spec.Stages) > 0 && len(spec.OutputCols) > 0 && len(spec.OutputTypes) > 0 {
-			// Full-specialization check: reject LegacyBatchStageSpec.
-			legacy := false
-			for _, s := range spec.Stages {
-				if _, isLegacy := s.(*PX.LegacyBatchStageSpec); isLegacy {
-					legacy = true
-					break
-				}
-			}
-			if !legacy {
-				cp.pipeSpec = spec
-			}
+			cp.pipeSpec = spec
 		}
 	}
 

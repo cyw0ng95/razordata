@@ -49,14 +49,12 @@ func (e *Executor) drainPipeline(ctx context.Context, plan *pl.PlanResult) (rows
 	spec := &PX.PipelineSpec{
 		RootIdx: 0,
 		Stages: []PX.StageSpec{
-			&PX.LegacyBatchStageSpec{
-				Root:    vec,
-				Planner: e.planner,
-				Specialize: func(root DT.Operator, _ pl.QueryPlanner) UT.BatchProducer {
-					if bp, ok := root.(UT.BatchProducer); ok {
+			&PX.ScanStageSpec{
+				NewProducer: func() UT.BatchProducer {
+					if bp, ok := vec.(UT.BatchProducer); ok {
 						return bp
 					}
-					return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(root))
+					return PX.NewRowOperatorAsProducer(vec)
 				},
 			},
 		},

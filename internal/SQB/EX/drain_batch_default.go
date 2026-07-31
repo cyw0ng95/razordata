@@ -15,22 +15,9 @@ import (
 )
 
 // drainPlanExecCtx drains all rows and threads execCtx through each row.
-// REQ002133: unified pipeline drain path. Considers the same
-// `usePipelineFastPath()` gate as every other EX entry point for
-// consistency. When the fast path is active AND plan.Root is already a
-// BatchProducer (vectorized path via tryVectorizePlan), wrap it in a
-// LegacyBatchStageSpec → PipelineExecutor.Execute(). The pipeline
-// executor handles RowArena allocation and DT.WithExecContext row
-// embedding (Pipeline.Execute now does what drainBatchProducer did).
-//
-// When the fast path is off (default today), or for row-based roots
-// (non-BatchProducer operators — correlated subqueries, DISTINCT
-// aggregates, complex expressions where RowOperatorAsProducer loses
-// ValueKind metadata), call the legacy drainBatch which falls through
-// to drainPlanRows. The RowOperatorAsProducer adapter loses type-
-// specific metadata (e.g. ValueKind-preserving row.Cols[]) that
-// EV.Equal/CompareRows rely on, so row-based roots still go through
-// the direct drainPlanRows path until the adapter is lossless.
+// REQ002133: unified pipeline drain path. Uses ScanStageSpec wrapping
+// the BatchProducer directly. When the fast path is off or the root is
+// not a BatchProducer, falls back to drainBatch.
 func (e *Executor) drainPlanExecCtx(ctx context.Context, plan *pl.PlanResult, execCtx *DT.ExecContext) ([]DT.Row, error) {
 	if plan == nil || plan.Root == nil {
 		return nil, errors.New("ex: drainPlanExecCtx: nil plan")
@@ -40,12 +27,8 @@ func (e *Executor) drainPlanExecCtx(ctx context.Context, plan *pl.PlanResult, ex
 			spec := &PX.PipelineSpec{
 				RootIdx: 0,
 				Stages: []PX.StageSpec{
-					&PX.LegacyBatchStageSpec{
-						Root:    plan.Root,
-						Planner: e.planner,
-						Specialize: func(_ DT.Operator, _ pl.QueryPlanner) UT.BatchProducer {
-							return bp
-						},
+					&PX.ScanStageSpec{
+						NewProducer: func() UT.BatchProducer { return bp },
 					},
 				},
 			}
@@ -58,7 +41,7 @@ func (e *Executor) drainPlanExecCtx(ctx context.Context, plan *pl.PlanResult, ex
 			}
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Warn("px.drainPlanExecCtx legacy fallback (panic)",
+					slog.Warn("px.drainPlanExecCtx pipeline panic, falling back",
 						"err", fmt.Sprintf("%v", r))
 				}
 			}()
