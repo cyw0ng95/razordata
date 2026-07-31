@@ -525,6 +525,13 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 
 	// REQ002171: AdaptiveOp removed — PipelineBuilder replaces ADQC.
 
+	// REQ002189: propagate the planner into the operator tree at plan
+	// creation time so that subsequent calls to Plan() from the memo
+	// cache do not mutate the cached tree during pipeline execution
+	// (propagatePlanner was previously called in the specialize closure,
+	// which mutated the shared cached root on every pipeline execution).
+	propagatePlanner(root, p)
+
 	result := &plan{
 		root:    root,
 		cost:    p.estimateCost(root),

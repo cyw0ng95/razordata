@@ -497,7 +497,10 @@ func (e *Executor) initPipelineBuilderEnabled() {
 		// REQ002172: tryVectorizePlan removed — PipelineBuilder's native
 		// StageSpecs handle vectorization. The LegacyBatchStageSpec
 		// fallback uses the raw operator tree wrapped in RowOperatorAsProducer.
-		propagatePlanner(root, p)
+		// REQ002189: propagatePlanner removed from here — now called during
+		// Plan() at plan creation time (planner.go:533), so the memoized plan
+		// tree already has the correct planner on all operators. Removing the
+		// call here prevents per-execution mutation of the cached plan tree.
 		return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(root))
 	}
 	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize)

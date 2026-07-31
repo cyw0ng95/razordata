@@ -263,20 +263,19 @@ func decomposePlan(root DT.Operator, planner PL.QueryPlanner, specialize Special
 	}
 	inner := root
 	// REQ002171: AdaptiveOp removed — root is the raw operator.
-	// REQ002156: detect bushy join shapes (nested joins) and fall back
-	// to a single LegacyBatchStageSpec. Native stage decomposition
-	// doesn't yet handle transitive predicates across nested joins
-	// correctly, and the pipeline build process can have side effects
-	// on the planner's memo cache that affect subsequent legacy
-	// execution.
+	// REQ002189/REQ002212: bushy join shapes now supported natively
+	// — propagatePlanner is called during Plan() at plan creation time
+	// (planner.go:533), so the memoized plan tree is not mutated during
+	// pipeline execution. Native stage decomposition correctly handles
+	// transitive/bridge predicates across nested joins.
 	if hasBushyJoin(inner) {
 		state := &decomposeState{}
-		idx := state.addStage(&LegacyBatchStageSpec{
-			Root:       root,
-			Planner:    planner,
-			Specialize: specialize,
-		}, outputSchema{})
-		return state.stages, state.edges, idx, outputSchema{}
+		rootIdx := decomposeOp(inner, state, planner, specialize)
+		schema := outputSchema{}
+		if rootIdx >= 0 && rootIdx < len(state.stageOutput) {
+			schema = state.stageOutput[rootIdx]
+		}
+		return state.stages, state.edges, rootIdx, schema
 	}
 	state := &decomposeState{}
 	rootIdx := decomposeOp(inner, state, planner, specialize)
@@ -673,33 +672,7 @@ func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlann
 	leftOut := st.childOutput(leftIdx)
 	rightOut := st.childOutput(rightIdx)
 
-	// REQ002156: bushy join shape — fall back to LegacyBatchStageSpec
-	// for the entire subtree so the legacy execution path handles
-	// transitive predicates correctly.
-	if isJoinOp(h.LeftChild()) || isJoinOp(h.RightChild()) {
-		leftSchema := leftOut
-		rightSchema := rightOut
-		var joinOut outputSchema
-		if leftSchema.resolved() && rightSchema.resolved() {
-			n1, n2 := len(leftSchema.names), len(rightSchema.names)
-			names := make([]string, 0, n1+n2)
-			types := make([]LX.TokenType, 0, n1+n2)
-			names = append(names, leftSchema.names...)
-			types = append(types, leftSchema.types...)
-			names = append(names, rightSchema.names...)
-			types = append(types, rightSchema.types...)
-			joinOut = outputSchema{names: names, types: types}
-		}
-		joinIdx := st.addStage(&LegacyBatchStageSpec{
-			Root:       h,
-			Planner:    planner,
-			Specialize: specialize,
-		}, joinOut)
-		st.addEdge(joinIdx, leftIdx, LeftChild)
-		st.addEdge(joinIdx, rightIdx, RightChild)
-		return joinIdx
-	}
-
+	// REQ002189/REQ002213: bushy join children now supported natively.
 	leftKeys := h.LeftKeys()
 	rightKeys := h.RightKeys()
 
