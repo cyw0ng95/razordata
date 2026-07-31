@@ -247,164 +247,26 @@ func (fp *FilterProject) ReplaceLiterals(vals []any) {
 	fp.compiledFilterFn = nil
 }
 
-// REQ000869: batchBufPool reuses []Row backing arrays across Filter
-// instances. Filters are created per query and hold batchBuf/batchEmit
-// slices; returning them to this pool in Close() allows the next query's
-// Filter to reuse the capacity instead of re-allocating.
-// REQ002014: retainedBatchBufs keeps a small set of buffers alive across
-// GC cycles. sync.Pool clears on every GC, which caused high miss rates
-// for large (2048-row) buffers — they got collected faster than they
-// were refilled under GC pressure. The retained slice holds up to
-// retainedBatchBufCount buffers permanently; Get first tries sync.Pool,
-// then retained, then allocates. Put fills retained first, then pool.
-var batchBufPool = sync.Pool{
-	New: func() any {
-		b := make([]Row, 0, filterBatchSize)
-		return &b
-	},
-}
-
-var retainedBatchBufs []*[]Row
-var retainedBatchBufMu sync.Mutex
-
-const retainedBatchBufCount = 8
-
-// getBatchBuf gets a buffer from the pool, trying retained buffers first
-// (which survive GC), then sync.Pool, then allocating fresh. REQ002014.
-func getBatchBuf() *[]Row {
-	retainedBatchBufMu.Lock()
-	if n := len(retainedBatchBufs); n > 0 {
-		b := retainedBatchBufs[n-1]
-		retainedBatchBufs = retainedBatchBufs[:n-1]
-		retainedBatchBufMu.Unlock()
-		*b = (*b)[:0]
-		return b
-	}
-	retainedBatchBufMu.Unlock()
-	if b, ok := batchBufPool.Get().(*[]Row); ok && b != nil {
-		*b = (*b)[:0]
-		return b
-	}
-	b := make([]Row, 0, filterBatchSize)
-	return &b
-}
-
-// putBatchBuf returns a buffer: fills retained first (up to cap), then
-// sync.Pool. Only buffers with cap >= filterBatchSize are kept.
-// REQ002014.
-func putBatchBuf(b *[]Row) {
-	if cap(*b) < filterBatchSize {
-		return
-	}
-	*b = (*b)[:0]
-	retainedBatchBufMu.Lock()
-	if len(retainedBatchBufs) < retainedBatchBufCount {
-		retainedBatchBufs = append(retainedBatchBufs, b)
-		retainedBatchBufMu.Unlock()
-		return
-	}
-	retainedBatchBufMu.Unlock()
-	batchBufPool.Put(b)
-}
+// REQ002244: batchBufPool uses a generic retainedPool that survives GC.
+var batchBufPool = newRetainedPool(filterBatchSize, 8,
+	func() []Row { return make([]Row, 0, filterBatchSize) },
+	func(b *[]Row) { *b = (*b)[:0] },
+)
 
 // WarmFilterBatchPool pre-allocates n filter batch buffers and places
 // them in the retained set to eliminate cold-start pool misses.
-// REQ002014.
-func WarmFilterBatchPool(n int) {
-	if n <= 0 {
-		return
-	}
-	retainedBatchBufMu.Lock()
-	defer retainedBatchBufMu.Unlock()
-	for i := 0; i < n && len(retainedBatchBufs) < retainedBatchBufCount; i++ {
-		b := make([]Row, 0, filterBatchSize)
-		retainedBatchBufs = append(retainedBatchBufs, &b)
-	}
-}
+func WarmFilterBatchPool(n int) { batchBufPool.warm(n) }
 
-// REQ001091: projectDataBufPool reuses Project.dataBuf slices across
-// queries. Each Project carves a non-overlapping sub-slice [off:off:off+dataPerRow]
-// from dataBuf for every output row. Allocating a fresh 64*dataPerRow
-// buffer per query dominates allocations in workloads like select4
-// (~3857 allocs per run); pooling cuts the per-query allocation to
-// zero when the pool is warm. Chunk size 64*8=512 values matches the
-// common 8-column output of REQ000802's Project fast-path.
-var projectDataBufPool = sync.Pool{
-	New: func() any {
-		b := make([]Value, 0, projectDataBufChunkSize)
-		return &b
-	},
-}
-
-// REQ002022: retainedProjectDataBufs keeps a small set of Project data
-// buffers alive across GC cycles. sync.Pool clears on every GC, which
-// caused high miss rates for the 512-value buffers — they got collected
-// faster than they were refilled under GC pressure. The retained slice
-// holds up to retainedProjectDataBufCount buffers permanently; Get first
-// tries retained, then sync.Pool, then allocates. Put fills retained first,
-// then pool. Mirrors the REQ002014 pattern used for batchBufPool.
-var retainedProjectDataBufs []*[]Value
-var retainedProjectDataBufMu sync.Mutex
-
-const retainedProjectDataBufCount = 8
-
-// getProjectDataBuf gets a buffer from the pool, trying retained buffers
-// first (which survive GC), then sync.Pool, then allocating fresh.
-// REQ002022.
-func getProjectDataBuf() *[]Value {
-	retainedProjectDataBufMu.Lock()
-	if n := len(retainedProjectDataBufs); n > 0 {
-		b := retainedProjectDataBufs[n-1]
-		retainedProjectDataBufs = retainedProjectDataBufs[:n-1]
-		retainedProjectDataBufMu.Unlock()
-		*b = (*b)[:0]
-		return b
-	}
-	retainedProjectDataBufMu.Unlock()
-	if b, ok := projectDataBufPool.Get().(*[]Value); ok && b != nil {
-		*b = (*b)[:0]
-		return b
-	}
-	b := make([]Value, 0, projectDataBufChunkSize)
-	return &b
-}
-
-// putProjectDataBuf returns a buffer: fills retained first (up to cap),
-// then sync.Pool. Only buffers with cap >= projectDataBufChunkSize are
-// kept. REQ002022.
-func putProjectDataBuf(b *[]Value) {
-	if cap(*b) < projectDataBufChunkSize {
-		return
-	}
-	*b = (*b)[:0]
-	retainedProjectDataBufMu.Lock()
-	if len(retainedProjectDataBufs) < retainedProjectDataBufCount {
-		retainedProjectDataBufs = append(retainedProjectDataBufs, b)
-		retainedProjectDataBufMu.Unlock()
-		return
-	}
-	retainedProjectDataBufMu.Unlock()
-	projectDataBufPool.Put(b)
-}
+// REQ002244: projectDataBufPool uses a generic retainedPool that survives GC.
+var projectDataBufPool = newRetainedPool(projectDataBufChunkSize, 8,
+	func() []Value { return make([]Value, 0, projectDataBufChunkSize) },
+	func(b *[]Value) { *b = (*b)[:0] },
+)
 
 // WarmProjectDataPool pre-allocates n Project data buffers and places
 // them in the retained set to eliminate cold-start pool misses.
-// REQ002022.
-func WarmProjectDataPool(n int) {
-	if n <= 0 {
-		return
-	}
-	retainedProjectDataBufMu.Lock()
-	defer retainedProjectDataBufMu.Unlock()
-	for i := 0; i < n && len(retainedProjectDataBufs) < retainedProjectDataBufCount; i++ {
-		b := make([]Value, 0, projectDataBufChunkSize)
-		retainedProjectDataBufs = append(retainedProjectDataBufs, &b)
-	}
-}
+func WarmProjectDataPool(n int) { projectDataBufPool.warm(n) }
 
-// projectDataBufChunkSize is the initial capacity (in values) of a
-// pooled Project.dataBuf. 512 values covers 64 rows × 8 cols which is
-// the modal Project output shape. REQ001091.
 const projectDataBufChunkSize = 512
 
 // REQ001707: pooled backing arrays for prefixCols, compiledExprs, and
@@ -516,8 +378,8 @@ func NewFilter(child Operator, predicate PS.Expr, schema *DT.StoreSchema) *Filte
 
 	// REQ002014: use getBatchBuf which checks retained buffers first
 	// (GC-resistant), then sync.Pool, then allocates fresh.
-	buf := getBatchBuf()
-	emit := getBatchBuf()
+	buf := batchBufPool.get()
+	emit := batchBufPool.get()
 	return &Filter{
 		child:     child,
 		predicate: predicate,
@@ -947,8 +809,8 @@ func (f *Filter) Close() error {
 	f.closed.Store(true)
 	// REQ002014: use putBatchBuf which fills retained set first (GC-resistant),
 	// then sync.Pool. Only buffers with cap >= filterBatchSize are kept.
-	putBatchBuf(&f.batchBuf)
-	putBatchBuf(&f.batchEmit)
+	batchBufPool.put(&f.batchBuf)
+	batchBufPool.put(&f.batchEmit)
 	return f.child.Close()
 }
 
@@ -996,7 +858,7 @@ func NewProject(child Operator, cols []PS.Expr) *Project {
 	// Projects share a backing array across queries.
 	// REQ002022: use getProjectDataBuf which checks retained buffers
 	// first (GC-resistant), then sync.Pool, then allocates fresh.
-	dataBufPtr := getProjectDataBuf()
+	dataBufPtr := projectDataBufPool.get()
 	var dataBuf []Value
 	if dataBufPtr != nil {
 		dataBuf = (*dataBufPtr)[:0]
@@ -1204,7 +1066,7 @@ func (p *Project) Close() error {
 	// (GC-resistant), then sync.Pool.
 	if cap(p.dataBuf) >= projectDataBufChunkSize {
 		buf := p.dataBuf[:0]
-		putProjectDataBuf(&buf)
+		projectDataBufPool.put(&buf)
 	}
 	p.dataBuf = nil
 	p.dataPerRow = 0
