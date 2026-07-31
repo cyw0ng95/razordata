@@ -120,7 +120,7 @@ func (f *FusedBatchScan) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		if f.limit >= 0 {
 			logical := int64(out.LogicalSize())
 			if logical > f.remaining {
-				truncateBatchInPlace(out, int(f.remaining))
+				UT.TruncateBatchInPlace(out, int(f.remaining))
 				f.remaining = 0
 				return out, nil
 			}
@@ -149,7 +149,7 @@ func (f *FusedBatchScan) applyProjection(batch *UT.Batch) *UT.Batch {
 		// When the filter set a selection vector, compact the column
 		// to the selected logical rows so the output is densely packed.
 		if batch.Sel != nil {
-			col = compactColumn(col, batch.Sel, batch.Size)
+			col = UT.CompactColumn(col, batch.Sel, batch.Size)
 		}
 		output.Cols[i] = col
 	}

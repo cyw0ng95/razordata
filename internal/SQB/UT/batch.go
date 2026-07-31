@@ -730,6 +730,107 @@ func (b *Batch) ColNames() []string {
 	return out
 }
 
+// CompactColumn creates a new Column containing only the rows
+// selected by sel. Returns the original column when sel is empty.
+func CompactColumn(col Column, sel []uint16, physicalSize int) Column {
+	n := len(sel)
+	if n == 0 {
+		return col
+	}
+	out := Column{Name: col.Name, Type: col.Type}
+	switch col.Type {
+	case LX.T_INT_KW, LX.T_BIGINT:
+		out.Data.Ints = make([]int64, n)
+		for j, idx := range sel {
+			if int(idx) < len(col.Data.Ints) {
+				out.Data.Ints[j] = col.Data.Ints[idx]
+			}
+		}
+	case LX.T_FLOAT_KW:
+		out.Data.Floats = make([]float64, n)
+		for j, idx := range sel {
+			if int(idx) < len(col.Data.Floats) {
+				out.Data.Floats[j] = col.Data.Floats[idx]
+			}
+		}
+	case LX.T_BOOL:
+		out.Data.Bools = make([]bool, n)
+		for j, idx := range sel {
+			if int(idx) < len(col.Data.Bools) {
+				out.Data.Bools[j] = col.Data.Bools[idx]
+			}
+		}
+	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+		out.Data.Strs = make([]string, n)
+		for j, idx := range sel {
+			if int(idx) < len(col.Data.Strs) {
+				out.Data.Strs[j] = col.Data.Strs[idx]
+			}
+		}
+	default:
+		return col
+	}
+	if col.Nulls != nil {
+		out.Nulls = make([]bool, n)
+		for j, idx := range sel {
+			if int(idx) < physicalSize && int(idx) < len(col.Nulls) {
+				out.Nulls[j] = col.Nulls[idx]
+			}
+		}
+	}
+	return out
+}
+
+// TruncateBatchInPlace slices each column's data arrays and the
+// selection vector in place to keep only the first n logical rows.
+// No new allocations — the underlying arrays remain owned by the
+// batch and are released via Put.
+func TruncateBatchInPlace(batch *Batch, n int) {
+	if n < 0 {
+		return
+	}
+	if n == 0 {
+		batch.Size = 0
+		batch.Sel = nil
+		return
+	}
+	if batch.Sel != nil {
+		if n < len(batch.Sel) {
+			batch.Sel = batch.Sel[:n]
+		}
+		batch.Size = n
+		return
+	}
+	for i := range batch.Cols {
+		col := &batch.Cols[i]
+		if col.Type == 0 {
+			break
+		}
+		if col.Nulls != nil && n < len(col.Nulls) {
+			col.Nulls = col.Nulls[:n]
+		}
+		switch col.Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			if col.Data.Ints != nil && n < len(col.Data.Ints) {
+				col.Data.Ints = col.Data.Ints[:n]
+			}
+		case LX.T_FLOAT_KW:
+			if col.Data.Floats != nil && n < len(col.Data.Floats) {
+				col.Data.Floats = col.Data.Floats[:n]
+			}
+		case LX.T_BOOL:
+			if col.Data.Bools != nil && n < len(col.Data.Bools) {
+				col.Data.Bools = col.Data.Bools[:n]
+			}
+		case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+			if col.Data.Strs != nil && n < len(col.Data.Strs) {
+				col.Data.Strs = col.Data.Strs[:n]
+			}
+		}
+	}
+	batch.Size = n
+}
+
 // ToRows materializes the (possibly Sel-filtered) Batch to a
 // `[]pl.Row`, sharing Cols across all rows so downstream callers
 // see stable column names without copy. The Data slice per row is

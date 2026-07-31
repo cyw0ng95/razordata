@@ -191,7 +191,7 @@ func TestCompactColumn_Int(t *testing.T) {
 	col.Data.Ints = []int64{10, 20, 30, 40, 50}
 	col.Nulls = []bool{false, false, true, false, false}
 	sel := []uint16{1, 3}
-	out := compactColumn(col, sel, 5)
+	out := UT.CompactColumn(col, sel, 5)
 	if len(out.Data.Ints) != 2 {
 		t.Fatalf("expected 2 ints, got %d", len(out.Data.Ints))
 	}
@@ -207,7 +207,7 @@ func TestCompactColumn_Float(t *testing.T) {
 	col := UT.Column{Name: "f", Type: LX.T_FLOAT_KW}
 	col.Data.Floats = []float64{1.1, 2.2, 3.3}
 	sel := []uint16{0, 2}
-	out := compactColumn(col, sel, 3)
+	out := UT.CompactColumn(col, sel, 3)
 	if len(out.Data.Floats) != 2 {
 		t.Fatalf("expected 2 floats, got %d", len(out.Data.Floats))
 	}
@@ -219,7 +219,7 @@ func TestCompactColumn_Float(t *testing.T) {
 func TestCompactColumn_EmptySel(t *testing.T) {
 	col := UT.Column{Name: "v", Type: LX.T_INT_KW}
 	col.Data.Ints = []int64{1, 2, 3}
-	out := compactColumn(col, nil, 3)
+	out := UT.CompactColumn(col, nil, 3)
 	// Empty sel returns the column as-is.
 	if out.Data.Ints[0] != 1 {
 		t.Fatalf("expected identity compact, got %v", out.Data.Ints)

@@ -147,7 +147,7 @@ func (f *FusedScanStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 							physicalSize = int(batch.Sel[j]) + 1
 						}
 					}
-					col = compactColumn(col, batch.Sel[:batch.Size], physicalSize)
+					col = UT.CompactColumn(col, batch.Sel[:batch.Size], physicalSize)
 				}
 				out.Cols[i] = col
 			}
@@ -160,7 +160,7 @@ func (f *FusedScanStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		if f.limit >= 0 {
 			logical := out.LogicalSize()
 			if int64(logical) > f.remaining {
-				truncateBatchInPlace(out, int(f.remaining))
+				UT.TruncateBatchInPlace(out, int(f.remaining))
 				f.remaining = 0
 			} else {
 				f.remaining -= int64(logical)
@@ -263,53 +263,3 @@ func materializeBatch(batch *UT.Batch) {
 	batch.Sel = nil
 }
 
-// truncateBatchInPlace slices each column's data arrays and the
-// selection vector in place to keep only the first n logical rows.
-// No new allocations — the underlying arrays remain owned by the
-// batch and are released via Put.
-func truncateBatchInPlace(batch *UT.Batch, n int) {
-	if n < 0 {
-		return
-	}
-	if n == 0 {
-		batch.Size = 0
-		batch.Sel = nil
-		return
-	}
-	if batch.Sel != nil {
-		if n < len(batch.Sel) {
-			batch.Sel = batch.Sel[:n]
-		}
-		batch.Size = n
-		return
-	}
-	// Plain batch: slice each column in place.
-	for i := range batch.Cols {
-		col := &batch.Cols[i]
-		if col.Type == 0 {
-			break
-		}
-		if col.Nulls != nil && n < len(col.Nulls) {
-			col.Nulls = col.Nulls[:n]
-		}
-		switch col.Type {
-		case LX.T_INT_KW, LX.T_BIGINT:
-			if col.Data.Ints != nil && n < len(col.Data.Ints) {
-				col.Data.Ints = col.Data.Ints[:n]
-			}
-		case LX.T_FLOAT_KW:
-			if col.Data.Floats != nil && n < len(col.Data.Floats) {
-				col.Data.Floats = col.Data.Floats[:n]
-			}
-		case LX.T_BOOL:
-			if col.Data.Bools != nil && n < len(col.Data.Bools) {
-				col.Data.Bools = col.Data.Bools[:n]
-			}
-		case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
-			if col.Data.Strs != nil && n < len(col.Data.Strs) {
-				col.Data.Strs = col.Data.Strs[:n]
-			}
-		}
-	}
-	batch.Size = n
-}

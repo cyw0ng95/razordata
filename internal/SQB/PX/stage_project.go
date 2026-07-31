@@ -3,7 +3,6 @@ package PX
 import (
 	"context"
 
-	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -101,7 +100,7 @@ func (p *ProjectStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 					physicalSize = int(childBatch.Sel[j]) + 1
 				}
 			}
-			col = compactColumn(col, childBatch.Sel[:childBatch.Size], physicalSize)
+			col = UT.CompactColumn(col, childBatch.Sel[:childBatch.Size], physicalSize)
 		}
 		output.Cols[i] = col
 	}
@@ -129,55 +128,3 @@ func (p *ProjectStage) Close() error {
 	return nil
 }
 
-// compactColumn creates a new Column containing only the rows
-// identified by sel from the source column. Used when the child
-// batch has a selection vector and the output must contain only
-// the logically valid rows.
-func compactColumn(col UT.Column, sel []uint16, physicalSize int) UT.Column {
-	n := len(sel)
-	if n == 0 {
-		return col
-	}
-	out := UT.Column{Name: col.Name, Type: col.Type}
-	switch col.Type {
-	case LX.T_INT_KW, LX.T_BIGINT:
-		out.Data.Ints = make([]int64, n)
-		for j, idx := range sel {
-			if int(idx) < len(col.Data.Ints) {
-				out.Data.Ints[j] = col.Data.Ints[idx]
-			}
-		}
-	case LX.T_FLOAT_KW:
-		out.Data.Floats = make([]float64, n)
-		for j, idx := range sel {
-			if int(idx) < len(col.Data.Floats) {
-				out.Data.Floats[j] = col.Data.Floats[idx]
-			}
-		}
-	case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
-		out.Data.Strs = make([]string, n)
-		for j, idx := range sel {
-			if int(idx) < len(col.Data.Strs) {
-				out.Data.Strs[j] = col.Data.Strs[idx]
-			}
-		}
-	case LX.T_BOOL:
-		out.Data.Bools = make([]bool, n)
-		for j, idx := range sel {
-			if int(idx) < len(col.Data.Bools) {
-				out.Data.Bools[j] = col.Data.Bools[idx]
-			}
-		}
-	default:
-		return col
-	}
-	if col.Nulls != nil {
-		out.Nulls = make([]bool, n)
-		for j, idx := range sel {
-			if int(idx) < physicalSize && int(idx) < len(col.Nulls) {
-				out.Nulls[j] = col.Nulls[idx]
-			}
-		}
-	}
-	return out
-}

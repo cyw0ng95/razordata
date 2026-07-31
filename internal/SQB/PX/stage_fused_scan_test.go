@@ -197,12 +197,12 @@ func TestTruncateBatchInPlace(t *testing.T) {
 	batch := makeIntBatch([]int64{10, 20, 30, 40, 50})
 	batch.Pooled = false
 
-	truncateBatchInPlace(batch, 3)
+	UT.TruncateBatchInPlace(batch, 3)
 	if batch.Size != 3 {
 		t.Fatalf("expected 3 rows, got %d", batch.Size)
 	}
 
-	truncateBatchInPlace(batch, 0)
+	UT.TruncateBatchInPlace(batch, 0)
 	if batch.Size != 0 {
 		t.Fatalf("expected 0 rows, got %d", batch.Size)
 	}
@@ -214,7 +214,7 @@ func TestTruncateBatchInPlace_WithSel(t *testing.T) {
 	batch.Sel = []uint16{0, 2, 4, 1, 3}
 	batch.Size = 5
 
-	truncateBatchInPlace(batch, 3)
+	UT.TruncateBatchInPlace(batch, 3)
 	if batch.Size != 3 {
 		t.Fatalf("expected 3 rows, got %d", batch.Size)
 	}
@@ -228,7 +228,7 @@ func TestTruncateBatchInPlace_Negative(t *testing.T) {
 	batch.Pooled = false
 	original := batch.Size
 
-	truncateBatchInPlace(batch, -1)
+	UT.TruncateBatchInPlace(batch, -1)
 	if batch.Size != original {
 		t.Fatalf("negative n should be no-op, got size %d", batch.Size)
 	}
