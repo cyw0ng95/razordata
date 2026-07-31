@@ -133,31 +133,31 @@ func wrapEXError(err error) error {
 	case errors.Is(err, DT.ErrNoRows):
 		return AP.New(AP.KindNotFound, "no more rows")
 	case errors.Is(err, EV.ErrEval):
-		return AP.WrapAt(AP.KindSyntax, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindSyntax, "SYS/SE", EC.LayerSQL, err)
 	case errors.Is(err, EV.ErrEvalDivByZero):
-		return AP.WrapAt(AP.KindTypeMismatch, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindTypeMismatch, "SYS/SE", EC.LayerSQL, err)
 	case errors.Is(err, EV.ErrTypeMismatch):
-		return AP.WrapAt(AP.KindTypeMismatch, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindTypeMismatch, "SYS/SE", EC.LayerSQL, err)
 	case errors.Is(err, EX.ErrClosed):
-		return AP.WrapAt(AP.KindClosed, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindClosed, "SYS/SE", EC.LayerSQL, err)
 	case errors.Is(err, OP.ErrTableNotRegisteredForStorage):
-		return AP.WrapAt(AP.KindNotFound, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindNotFound, "SYS/SE", EC.LayerSQL, err)
 	case errors.Is(err, OP.ErrNoPKForStorage):
-		return AP.WrapAt(AP.KindConstraint, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindConstraint, "SYS/SE", EC.LayerSQL, err)
 	case errors.Is(err, EV.ErrSubquery):
-		return AP.WrapAt(AP.KindSyntax, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindSyntax, "SYS/SE", EC.LayerSQL, err)
 	case errors.Is(err, EV.ErrTriggerAbort):
-		return AP.WrapAt(AP.KindConstraint, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindConstraint, "SYS/SE", EC.LayerSQL, err)
 	case errors.Is(err, EX.ErrMultiDatabaseNotSupported):
-		return AP.WrapAt(AP.KindInvalidOptions, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindInvalidOptions, "SYS/SE", EC.LayerSQL, err)
 	case errors.Is(err, OP.ErrNoEngine):
-		return AP.WrapAt(AP.KindClosed, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindClosed, "SYS/SE", EC.LayerSQL, err)
 	case errors.Is(err, UT.ErrDecimalOverflow):
-		return AP.WrapAt(AP.KindTypeMismatch, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindTypeMismatch, "SYS/SE", EC.LayerSQL, err)
 	case errors.Is(err, UT.ErrDecimalScale):
-		return AP.WrapAt(AP.KindTypeMismatch, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindTypeMismatch, "SYS/SE", EC.LayerSQL, err)
 	default:
-		return AP.WrapAt(AP.KindIO, "SYS/SE", AP.LayerSQL, err)
+		return EC.WrapAt(AP.KindIO, "SYS/SE", EC.LayerSQL, err)
 	}
 }
 

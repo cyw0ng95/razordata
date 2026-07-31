@@ -261,11 +261,6 @@ func (r *Row) Len() int { return len(r.Cols) }
 // New code should import LOG/EC directly.
 type Error = EC.Error
 type Kind = EC.Kind
-type Code = EC.Code
-type SQLSTATE = EC.SQLSTATE
-type Module = EC.Module
-type Layer = EC.Layer
-type Classification = EC.Classification
 
 // Re-exported Kind constants from LOG/EC.
 const (
@@ -306,16 +301,16 @@ const (
 
 // Re-exported Layer constants from LOG/EC.
 const (
-	LayerSQL    Layer = EC.LayerSQL
-	LayerTXN    Layer = EC.LayerTXN
-	LayerENG    Layer = EC.LayerENG
-	LayerWAL    Layer = EC.LayerWAL
-	LayerFIL    Layer = EC.LayerFIL
-	LayerMEM    Layer = EC.LayerMEM
-	LayerLOG    Layer = EC.LayerLOG
-	LayerIO     Layer = EC.LayerIO
-	LayerConfig Layer = EC.LayerConfig
-	LayerINT    Layer = EC.LayerINT
+	LayerSQL    EC.Layer = EC.LayerSQL
+	LayerTXN    EC.Layer = EC.LayerTXN
+	LayerENG    EC.Layer = EC.LayerENG
+	LayerWAL    EC.Layer = EC.LayerWAL
+	LayerFIL    EC.Layer = EC.LayerFIL
+	LayerMEM    EC.Layer = EC.LayerMEM
+	LayerLOG    EC.Layer = EC.LayerLOG
+	LayerIO     EC.Layer = EC.LayerIO
+	LayerConfig EC.Layer = EC.LayerConfig
+	LayerINT    EC.Layer = EC.LayerINT
 )
 
 // Re-exported Op constants from LOG/EC.
@@ -341,30 +336,15 @@ const (
 
 // Re-exported constructors from LOG/EC.
 // Deprecated: import LOG/EC directly.
-func New(kind Kind, msg string) *Error                  { return EC.New(kind, msg) }
-func Newf(kind Kind, format string, args ...any) *Error { return EC.Newf(kind, format, args...) }
-func Wrap(kind Kind, err error) *Error                  { return EC.Wrap(kind, err) }
-func Wrapf(kind Kind, err error, format string, args ...any) *Error {
-	return EC.Wrapf(kind, err, format, args...)
-}
-func WrapAt(kind Kind, module Module, layer Layer, err error) *Error {
-	return EC.WrapAt(kind, module, layer, err)
-}
-func SetEmit(fn func(*Error))    { EC.SetEmit(fn) }
-func CodeOf(k Kind) Code         { return EC.CodeOf(k) }
-func SQLStateOf(k Kind) SQLSTATE { return EC.SQLStateOf(k) }
+func New(kind Kind, msg string) *Error { return EC.New(kind, msg) }
+func Wrap(kind Kind, err error) *Error { return EC.Wrap(kind, err) }
 
 // Re-exported helpers from LOG/EC.
 // Deprecated: import LOG/EC directly.
-func IsKind(err error, kind Kind) bool          { return EC.IsKind(err, kind) }
-func IsCode(err error, code Code) bool          { return EC.IsCode(err, code) }
-func IsSQLState(err error, state SQLSTATE) bool { return EC.IsSQLState(err, state) }
-func ModuleOf(err error) Module                 { return EC.ModuleOf(err) }
-func LayerOf(err error) Layer                   { return EC.LayerOf(err) }
-func Classify(err error) Classification         { return EC.Classify(err) }
-func IsRetryable(err error) bool                { return EC.IsRetryable(err) }
-func IsFatal(err error) bool                    { return EC.IsFatal(err) }
-func AsError(err error, target **Error) bool    { return EC.AsError(err, target) }
+func IsKind(err error, kind Kind) bool       { return EC.IsKind(err, kind) }
+func IsRetryable(err error) bool             { return EC.IsRetryable(err) }
+func IsFatal(err error) bool                 { return EC.IsFatal(err) }
+func AsError(err error, target **Error) bool { return EC.AsError(err, target) }
 
 // Value kind constants for the tagged-union Value type (REQ000776/REQ000862).
 // REQ002085: ValueKind, kind constants, and Value are aliased from SYS/CT.
