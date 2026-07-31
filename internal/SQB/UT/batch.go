@@ -220,50 +220,16 @@ type columnDataPool struct {
 	floats [MaxColumns][][]float64
 	strs   [MaxColumns][][]string
 	bools  [MaxColumns][][]bool
+	// REQ002168: O(1) dedup via pointer set. Avoids linear scan in
+	// containsIntPtr/StrPtr/FloatPtr/BoolPtr which dominated 96% of
+	// SelectAll benchmark CPU time (47% ints, 25% strs, 24% floats).
+	intSet   [MaxColumns]map[unsafe.Pointer]struct{}
+	floatSet [MaxColumns]map[unsafe.Pointer]struct{}
+	strSet   [MaxColumns]map[unsafe.Pointer]struct{}
+	boolSet  [MaxColumns]map[unsafe.Pointer]struct{}
 }
 
 var colDataPool = &columnDataPool{}
-
-// REQ002168: dedup helpers — compare backing-array pointers to detect
-// when the same slice is already pooled. Without this, struct-copy
-// aliasing (e.g. `output.Cols[i] = resultCols[i]`) causes two batches
-// to return the SAME backing array via Put(), and a later getInts
-// hands the same memory to two different batches → silent corruption.
-func containsIntPtr(pool [][]int64, ptr unsafe.Pointer) bool {
-	for _, s := range pool {
-		if len(s) > 0 && unsafe.Pointer(unsafe.SliceData(s)) == ptr {
-			return true
-		}
-	}
-	return false
-}
-
-func containsFloatPtr(pool [][]float64, ptr unsafe.Pointer) bool {
-	for _, s := range pool {
-		if len(s) > 0 && unsafe.Pointer(unsafe.SliceData(s)) == ptr {
-			return true
-		}
-	}
-	return false
-}
-
-func containsStrPtr(pool [][]string, ptr unsafe.Pointer) bool {
-	for _, s := range pool {
-		if len(s) > 0 && unsafe.Pointer(unsafe.SliceData(s)) == ptr {
-			return true
-		}
-	}
-	return false
-}
-
-func containsBoolPtr(pool [][]bool, ptr unsafe.Pointer) bool {
-	for _, s := range pool {
-		if len(s) > 0 && unsafe.Pointer(unsafe.SliceData(s)) == ptr {
-			return true
-		}
-	}
-	return false
-}
 
 func (p *columnDataPool) getInts(cols, n int) []int64 {
 	p.mu.Lock()
@@ -271,6 +237,7 @@ func (p *columnDataPool) getInts(cols, n int) []int64 {
 	for i := range p.ints[cols] {
 		if cap(p.ints[cols][i]) >= n {
 			s := p.ints[cols][i][:n]
+			delete(p.intSet[cols], unsafe.Pointer(unsafe.SliceData(p.ints[cols][i])))
 			last := len(p.ints[cols]) - 1
 			p.ints[cols][i] = p.ints[cols][last]
 			p.ints[cols][last] = nil
@@ -290,10 +257,14 @@ func (p *columnDataPool) putInts(cols int, s []int64) {
 	if cols >= MaxColumns {
 		return
 	}
-	// REQ002168: skip if this backing array is already pooled.
-if containsIntPtr(p.ints[cols], unsafe.Pointer(unsafe.SliceData(s))) {
+	ptr := unsafe.Pointer(unsafe.SliceData(s))
+	if p.intSet[cols] == nil {
+		p.intSet[cols] = make(map[unsafe.Pointer]struct{})
+	}
+	if _, ok := p.intSet[cols][ptr]; ok {
 		return
 	}
+	p.intSet[cols][ptr] = struct{}{}
 	p.ints[cols] = append(p.ints[cols], s)
 }
 
@@ -306,10 +277,14 @@ func (p *columnDataPool) putFloats(cols int, s []float64) {
 	if cols >= MaxColumns {
 		return
 	}
-	// REQ002168: skip if this backing array is already pooled.
-	if containsFloatPtr(p.floats[cols], unsafe.Pointer(unsafe.SliceData(s))) {
+	ptr := unsafe.Pointer(unsafe.SliceData(s))
+	if p.floatSet[cols] == nil {
+		p.floatSet[cols] = make(map[unsafe.Pointer]struct{})
+	}
+	if _, ok := p.floatSet[cols][ptr]; ok {
 		return
 	}
+	p.floatSet[cols][ptr] = struct{}{}
 	p.floats[cols] = append(p.floats[cols], s)
 }
 
@@ -322,10 +297,14 @@ func (p *columnDataPool) putStrs(cols int, s []string) {
 	if cols >= MaxColumns {
 		return
 	}
-	// REQ002168: skip if this backing array is already pooled.
-	if containsStrPtr(p.strs[cols], unsafe.Pointer(unsafe.SliceData(s))) {
+	ptr := unsafe.Pointer(unsafe.SliceData(s))
+	if p.strSet[cols] == nil {
+		p.strSet[cols] = make(map[unsafe.Pointer]struct{})
+	}
+	if _, ok := p.strSet[cols][ptr]; ok {
 		return
 	}
+	p.strSet[cols][ptr] = struct{}{}
 	p.strs[cols] = append(p.strs[cols], s)
 }
 
@@ -338,10 +317,14 @@ func (p *columnDataPool) putBools(cols int, s []bool) {
 	if cols >= MaxColumns {
 		return
 	}
-	// REQ002168: skip if this backing array is already pooled.
-	if containsBoolPtr(p.bools[cols], unsafe.Pointer(unsafe.SliceData(s))) {
+	ptr := unsafe.Pointer(unsafe.SliceData(s))
+	if p.boolSet[cols] == nil {
+		p.boolSet[cols] = make(map[unsafe.Pointer]struct{})
+	}
+	if _, ok := p.boolSet[cols][ptr]; ok {
 		return
 	}
+	p.boolSet[cols][ptr] = struct{}{}
 	p.bools[cols] = append(p.bools[cols], s)
 }
 
@@ -351,6 +334,7 @@ func (p *columnDataPool) getFloats(cols, n int) []float64 {
 	for i := range p.floats[cols] {
 		if cap(p.floats[cols][i]) >= n {
 			s := p.floats[cols][i][:n]
+			delete(p.floatSet[cols], unsafe.Pointer(unsafe.SliceData(p.floats[cols][i])))
 			last := len(p.floats[cols]) - 1
 			p.floats[cols][i] = p.floats[cols][last]
 			p.floats[cols][last] = nil
@@ -367,6 +351,7 @@ func (p *columnDataPool) getStrs(cols, n int) []string {
 	for i := range p.strs[cols] {
 		if cap(p.strs[cols][i]) >= n {
 			s := p.strs[cols][i][:n]
+			delete(p.strSet[cols], unsafe.Pointer(unsafe.SliceData(p.strs[cols][i])))
 			last := len(p.strs[cols]) - 1
 			p.strs[cols][i] = p.strs[cols][last]
 			p.strs[cols][last] = nil
@@ -383,6 +368,7 @@ func (p *columnDataPool) getBools(cols, n int) []bool {
 	for i := range p.bools[cols] {
 		if cap(p.bools[cols][i]) >= n {
 			s := p.bools[cols][i][:n]
+			delete(p.boolSet[cols], unsafe.Pointer(unsafe.SliceData(p.bools[cols][i])))
 			last := len(p.bools[cols]) - 1
 			p.bools[cols][i] = p.bools[cols][last]
 			p.bools[cols][last] = nil

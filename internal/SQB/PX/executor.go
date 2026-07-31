@@ -155,6 +155,11 @@ type PipelineStream struct {
 	closeMu sync.Mutex
 	closed  bool
 	execCtx *DT.ExecContext // cached for fast-path check in Next()
+	// Cached column count from the first batch to avoid re-scanning
+	// Cols array on every row (batchRowToRow hot path). REQ002218.
+	nCols int
+	// Reusable row data buffer to avoid per-row make([]DT.Value, nCols).
+	rowData []DT.Value
 }
 
 // Next returns the next row from the stream.
@@ -186,20 +191,43 @@ func (s *PipelineStream) Next() (DT.Row, error) {
 			}
 			s.batch = batch
 			s.rowPos = 0
+			// Cache column count from the first batch.
+			if s.nCols == 0 {
+				s.nCols = countCols(batch)
+				if cap(s.rowData) < s.nCols {
+					s.rowData = make([]DT.Value, s.nCols)
+				}
+			}
 		}
 
-		// Convert batch row to DT.Row
+		// Convert batch row to DT.Row using cached buffer.
 		phys := s.rowPos
 		if s.batch.Sel != nil && s.rowPos < len(s.batch.Sel) {
 			phys = int(s.batch.Sel[s.rowPos])
 		}
-		row := batchRowToRow(s.batch, phys)
+		row := DT.Row{
+			Data: s.rowData[:s.nCols],
+		}
+		for c := 0; c < s.nCols; c++ {
+			row.Data[c] = UT.ToValue(s.batch.Cols[c], phys)
+		}
 		if s.execCtx != nil {
 			DT.WithExecContext(&row, s.execCtx)
 		}
 		s.rowPos++
 		return row, nil
 	}
+}
+
+// countCols counts the number of populated columns in a batch.
+// REQ002218: cached by PipelineStream to avoid re-scanning on every row.
+func countCols(batch *UT.Batch) int {
+	for i := range batch.Cols {
+		if batch.Cols[i].Type == 0 && batch.Cols[i].Name == "" {
+			return i
+		}
+	}
+	return len(batch.Cols)
 }
 
 // Close stops the stream and releases resources.

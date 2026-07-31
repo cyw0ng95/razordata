@@ -1769,10 +1769,11 @@ func (s *LegacyBatchStage) Close() error {
 // --- RowOperatorAsProducer ---
 
 // RowOperatorAsProducer adapts a DT.Operator to produce
-// batches of 1 row each. Used by LegacyBatchStageSpec to convert
-// row-based operators (DML, legacy ops) into the BatchProducer
-// interface expected by the PipelineExecutor.
-// REQ002177: uses DT.Operator (alias for PL.Operator).
+// batches of 1 row each. Used by ScanStageSpec to convert
+// row-based operators into the BatchProducer interface.
+// Column data slices are allocated inline (not pooled) to avoid
+// the overhead of GetBatch's BatchSize pre-allocation for single-row
+// batches. REQ002177: uses DT.Operator (alias for PL.Operator).
 type RowOperatorAsProducer struct {
 	Op DT.Operator
 }
@@ -1793,11 +1794,9 @@ func (r *RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error
 		}
 		return nil, err
 	}
-	// Convert single row to batch.
-	// Preserve row.Cols (column names) so ToRowsShared downstream
-	// can reconstruct rows with correct column metadata. REQ002133:
-	// otherwise RowOperatorAsProducer→ToRowsShared returns nil rows
-	// because ToRowsShared short-circuits on empty ColNames.
+	// Convert single row to batch using inline allocation (no pool).
+	// Use make([]T, 1) instead of pooled slices to avoid the overhead
+	// of GetBatch's BatchSize (1024) pre-allocation for single-row batches.
 	n := len(row.Data)
 	batch := UT.GetBatch(n)
 	batch.Size = 1
@@ -1806,10 +1805,6 @@ func (r *RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error
 			batch.Cols[i].Name = row.Cols[i]
 		}
 	} else {
-		// Some operators (e.g. expression-only SELECTs, subquery
-		// wrappers) may not populate row.Cols even when Data has
-		// values. ToRowsShared requires non-empty ColNames, so
-		// synthesize unique placeholder names.
 		for i := 0; i < n; i++ {
 			batch.Cols[i].Name = fmt.Sprintf("col%d", i)
 		}
