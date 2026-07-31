@@ -238,6 +238,27 @@ func EstimateInListSelectivity(list []PS.Expr, rowCount float64, mcvs [][]byte, 
 	return sel
 }
 
+// EstimateSelectivityWithStatsMap computes selectivity for a predicate
+// expression using a map of column name to column stats. Handles AND
+// recursively. Falls back to EstimateSelectivity when stats or column
+// are unavailable.
+func EstimateSelectivityWithStatsMap(e PS.Expr, colStats map[string]*ls.ColumnStats) float64 {
+	if e == nil {
+		return 1.0
+	}
+	if bin, ok := e.(*PS.BinaryExpr); ok {
+		if bin.Op == LX.T_AND {
+			return EstimateSelectivityWithStatsMap(bin.Left, colStats) * EstimateSelectivityWithStatsMap(bin.Right, colStats)
+		}
+		if colName, _, ok := ExtractColumnLiteral(bin); ok {
+			if stats, has := colStats[colName]; has {
+				return EstimateSelectivityWithStats(e, stats)
+			}
+		}
+	}
+	return EstimateSelectivity(e)
+}
+
 // EstimateCardinality returns the estimated number of rows after
 // applying predicates, using catalog stats when available.
 // REQ001642. Falls back to the base rowCount when stats are absent.

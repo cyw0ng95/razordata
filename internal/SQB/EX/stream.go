@@ -9,7 +9,6 @@ import (
 
 	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 
-	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -168,53 +167,12 @@ func estimateRowCount(sel *PS.Select, p *Planner) int64 {
 		return 100 // unknown; use threshold boundary
 	}
 	// Apply simple selectivity factors for WHERE predicates
-	selectivity := estimateWhereSelectivity(sel.Where, ts.ColStats)
+	selectivity := CO.EstimateSelectivityWithStatsMap(sel.Where, ts.ColStats)
 	estimated := int64(float64(ts.RowCount) * selectivity)
 	if estimated <= 0 {
 		estimated = 1
 	}
 	return estimated
-}
-
-// estimateWhereSelectivity returns a multiplier (0.0 - 1.0) for WHERE
-// predicates. Returns 1.0 (no filtering) when selectivity cannot be
-// estimated. Handles AND recursively. REQ001655: uses column stats
-// when available for better range selectivity estimation.
-func estimateWhereSelectivity(e PS.Expr, colStats map[string]*ls.ColumnStats) float64 {
-	if e == nil {
-		return 1.0
-	}
-	if bin, ok := e.(*PS.BinaryExpr); ok {
-		if bin.Op == LX.T_AND {
-			return estimateWhereSelectivity(bin.Left, colStats) * estimateWhereSelectivity(bin.Right, colStats)
-		}
-		// REQ001655: use column stats for range/equality predicates.
-		if colName, ok := extractColumnName(bin); ok {
-			if stats, has := colStats[colName]; has {
-				return CO.EstimateSelectivityWithStats(e, stats)
-			}
-		}
-	}
-	return CO.EstimateSelectivity(e)
-}
-
-// extractColumnName extracts the column name from a binary expression
-// where one side is a column reference and the other is a literal.
-// Returns the column name and true if found. REQ001655.
-func extractColumnName(bin *PS.BinaryExpr) (string, bool) {
-	if ident, ok := bin.Left.(*PS.Ident); ok {
-		return ident.Name, true
-	}
-	if ident, ok := bin.Right.(*PS.Ident); ok {
-		return ident.Name, true
-	}
-	if qn, ok := bin.Left.(*PS.QualifiedName); ok {
-		return qn.Name, true
-	}
-	if qn, ok := bin.Right.(*PS.QualifiedName); ok {
-		return qn.Name, true
-	}
-	return "", false
 }
 
 func (e *Executor) QueryStream(ctx context.Context, sql string, args ...any) (*streamIterator, error) {
