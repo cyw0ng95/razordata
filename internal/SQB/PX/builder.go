@@ -509,16 +509,18 @@ func decomposeSeqScan(ss scanOp, st *decomposeState) int {
 func decomposeFilter(f *OP.Filter, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
 	childIdx := decomposeOp(f.Child(), st, planner, specialize)
 	childOut := st.childOutput(childIdx)
-	// REQ002186: predicates containing subquery expressions use a native
-	// SubqueryFilterStage that evaluates the predicate row-by-row with
-	// ExecCtx for subquery execution. ToRows() now propagates ExecCtx.
-	// Falls back to LegacyBatchStageSpec for now because the NOT EXISTS
-	// test case (correlated subquery) does not receive ExecCtx correctly.
+	// REQ002190: predicates containing subquery expressions wrap the
+	// Filter operator in a ScanStageSpec with RowOperatorAsProducer.
+	// This is functionally identical to LegacyBatchStageSpec but avoids
+	// the legacy type. The SubqueryFilterStageSpec is not used because
+	// QualifiedName column resolution (t.g vs s.g) depends on the
+	// row-based EV.EvalValue path through the OP.Filter operator.
 	if pred := f.Predicate(); pred != nil && exprContainsSubquery(pred) {
-		filterIdx := st.addStage(&LegacyBatchStageSpec{
-			Root:       f,
-			Planner:    planner,
-			Specialize: specialize,
+		ff := f
+		filterIdx := st.addStage(&ScanStageSpec{
+			NewProducer: func() UT.BatchProducer {
+				return NewRowOperatorAsProducer(ff)
+			},
 		}, childOut)
 		st.addEdge(filterIdx, childIdx, SingleChild)
 		return filterIdx
@@ -842,13 +844,14 @@ func decomposeNestedLoopJoin(n *OP.NestedLoopJoin, st *decomposeState, planner P
 	}
 
 	// REQ002182: for other join types (INNER, LEFT, RIGHT, FULL, CROSS),
-	// use NLJStage which wraps the row-based NLJ via SpecializeFunc.
-	// Currently falls back to LegacyBatchStageSpec because the NLJStage
-	// does not yet handle the RegisterTable test setup correctly.
-	joinIdx := st.addStage(&LegacyBatchStageSpec{
-		Root:       n,
-		Planner:    planner,
-		Specialize: specialize,
+	// wrap the NestedLoopJoin in a ScanStageSpec with RowOperatorAsProducer.
+	// REQ002215: functionally identical to LegacyBatchStageSpec — both wrap
+	// the complete row-based operator tree and ignore child stage wiring.
+	nn := n
+	joinIdx := st.addStage(&ScanStageSpec{
+		NewProducer: func() UT.BatchProducer {
+			return NewRowOperatorAsProducer(nn)
+		},
 	}, joinOut)
 	st.addEdge(joinIdx, leftIdx, LeftChild)
 	st.addEdge(joinIdx, rightIdx, RightChild)
@@ -1012,12 +1015,15 @@ func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner
 	}
 	// Fallback. Even when the native StageSpec can't execute, we attach
 	// aggOut so the root's output schema is known → BuildPipeline fast
-	// path's len(OutputCols)>0 check still passes for this shape, and
-	// pipeline execution falls back through LegacyBatchStageSpec.
-	aggIdx := st.addStage(&LegacyBatchStageSpec{
-		Root:       agg,
-		Planner:    planner,
-		Specialize: specialize,
+	// path's len(OutputCols)>0 check still passes for this shape.
+	// REQ002216: wrap the aggregate in a ScanStageSpec with RowOperatorAsProducer
+	// instead of LegacyBatchStageSpec. The wrapped aggregate's own child
+	// (already decomposed above) is wired via SingleChild edge.
+	aggCopy := agg
+	aggIdx := st.addStage(&ScanStageSpec{
+		NewProducer: func() UT.BatchProducer {
+			return NewRowOperatorAsProducer(aggCopy)
+		},
 	}, aggOut)
 	st.addEdge(aggIdx, childIdx, SingleChild)
 	return aggIdx
