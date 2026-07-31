@@ -912,13 +912,34 @@ func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, e
 	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(op, execCtx)
 
-	// REQ002142: when the pipeline path is enabled, route DML through
-	// the PipelineExecutor. execDMLPipeline captures RowsAffected
-	// before closing the pipeline (Close resets state).
+	// REQ002268: when the pipeline path is enabled, route DML through
+	// the PipelineExecutor (execDMLPipeline/drain_batch.go removed).
+	// DDL (ALTER/CREATE/DROP) uses legacy single Next() to avoid
+	// pipeline re-execution breaking schema mutations.
 	if e.pipelineBuilder != nil {
-		res, err := e.execDMLPipeline(ctx, op)
+		if !isDMLOp(op) {
+			if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
+				return Result{}, err
+			}
+			res := Result{}
+			if a, ok := op.(interface{ RowsAffected() int64 }); ok {
+				res.RowsAffected = a.RowsAffected()
+			}
+			e.lastChanges = execCtx.LastChanges
+			e.totalChanges = execCtx.TotalChanges
+			return res, nil
+		}
+		spec, err := PX.BuildDMLPipelineSpec(op)
 		if err != nil {
 			return Result{}, err
+		}
+		executor := PX.NewPipelineExecutor(spec)
+		if _, err := executor.Execute(ctx); err != nil {
+			return Result{}, err
+		}
+		res := Result{}
+		if a, ok := op.(interface{ RowsAffected() int64 }); ok {
+			res.RowsAffected = a.RowsAffected()
 		}
 		e.lastChanges = execCtx.LastChanges
 		e.totalChanges = execCtx.TotalChanges
@@ -1116,7 +1137,12 @@ func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.
 	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(plan.Root, execCtx)
 	defer plan.Root.Close()
-	return e.drainPlanExecCtx(ctx, plan, execCtx)
+	// REQ002268: drainPlanExecCtx removed — use operator-based drain.
+	rows, err := drainPlanRows(ctx, plan.Root, execCtx)
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // queryAllBuildPipeline attempts the pure BuildPipeline path for
@@ -1419,9 +1445,19 @@ func (e *Executor) ExecCompiled(ctx context.Context, cp *CompiledPlan, args ...a
 	execCtx.RowArena = e.ensureArena()
 	propagateExecContext(plan.Root, execCtx)
 	defer plan.Root.Close()
+	// REQ002268: drainBatchProducer removed — use simple batch drain.
 	if bp, ok := plan.Root.(UT.BatchProducer); ok {
-		_, err := drainBatchProducer(ctx, bp, execCtx)
-		return Result{}, err
+		for {
+			batch, err := bp.NextBatch(ctx)
+			if err != nil {
+				return Result{}, err
+			}
+			if batch == nil {
+				break
+			}
+			batch.Put()
+		}
+		return Result{}, nil
 	}
 	if _, err := plan.Root.Next(ctx); err != nil && err != DT.ErrNoRows {
 		return Result{}, err
@@ -2114,3 +2150,36 @@ func (e *Executor) StmtCacheStats() *AD.CacheStats {
 
 // ResetGlobalStmtCache is a no-op — legacy stmtCache removed. REQ002145.
 func ResetGlobalStmtCache() {}
+
+// isDMLOp reports whether op is a true DML operator (INSERT/UPDATE/DELETE).
+// DDL operators (ALTER TABLE, CREATE TABLE, DROP TABLE) are not DML and
+// must use the legacy single Next() call to avoid pipeline re-execution
+// bugs. REQ002268: extracted from the deleted drain_batch.go.
+func isDMLOp(op OP.Operator) bool {
+	switch op.(type) {
+	case *WT.Insert, *WT.Update, *WT.Delete:
+		return true
+	}
+	return false
+}
+
+// drainPlanRows drains a row-based operator tree into []DT.Row via Next().
+// REQ002268: minimal replacement for the deleted drain_batch.go.
+func drainPlanRows(ctx context.Context, root OP.Operator, execCtx *DT.ExecContext) ([]DT.Row, error) {
+	out := make([]DT.Row, 0, OP.EngineBatchSize())
+	for {
+		row, err := root.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				break
+			}
+			return nil, err
+		}
+		if execCtx != nil {
+			DT.WithExecContext(&row, execCtx)
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
