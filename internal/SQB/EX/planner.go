@@ -21,6 +21,7 @@ import (
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	OC "github.com/cyw0ng95/razordata/internal/SQO/OC"
 	PF "github.com/cyw0ng95/razordata/internal/SQO/PF"
+	QP "github.com/cyw0ng95/razordata/internal/SQF/QP"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
@@ -90,6 +91,9 @@ type Planner struct {
 	// the field exists only to establish the SQF → SQO → SQB
 	// dependency order.
 	optimizer *OC.Optimizer
+	// REQ002256: qpOptimizer runs QP passes on the QueryPlan DAG
+	// built alongside the operator tree. Shadow-mode verified in tests.
+	qpOptimizer *QP.Optimizer
 	// REQ001448: outerAliases are the table names of the OUTER query
 	// passed to SubPlanner.PlanSubquery so candidate-join-key logic
 	// avoids columns belonging to the outer side. nil = no outer query.
@@ -147,7 +151,25 @@ func NewPlanner() *Planner {
 			AddPass(&PF.ColumnPruningPass{}).
 			AddPass(&PF.PredicatePushdownPass{}).
 			AddPass(&PF.LimitPushdownPass{}),
+		qpOptimizer: QP.NewOptimizer().
+			AddPass(&QP.ConstantFoldingPass{}).
+			AddPass(&QP.ColumnPruningPass{}).
+			AddPass(&QP.PredicatePushdownPass{}),
 	}
+}
+
+// runQPPasses builds a QueryPlan from the operator tree and runs the
+// QP optimizer passes. The QueryPlan is mutated in place. REQ002256.
+func (p *Planner) runQPPasses(op DT.Operator, stmt PS.Stmt) {
+	if p.qpOptimizer == nil || p.qpOptimizer.PassCount() == 0 {
+		return
+	}
+	qp := QP.BuildQueryPlan(op)
+	if qp == nil {
+		return
+	}
+	qp.Stmt = stmt
+	_ = p.qpOptimizer.Optimize(qp)
 }
 
 // runSQOPasses invokes the SQO optimizer on the built operator plan.
@@ -254,6 +276,10 @@ func NewPlannerWithStore(store DT.Store) *Planner {
 			AddPass(&PF.ColumnPruningPass{}).
 			AddPass(&PF.PredicatePushdownPass{}).
 			AddPass(&PF.LimitPushdownPass{}),
+		qpOptimizer: QP.NewOptimizer().
+			AddPass(&QP.ConstantFoldingPass{}).
+			AddPass(&QP.ColumnPruningPass{}).
+			AddPass(&QP.PredicatePushdownPass{}),
 	}
 }
 
@@ -276,6 +302,10 @@ func NewPlannerWithStats(store DT.Store, statsCatalog DT.StatsCatalog) *Planner 
 			AddPass(&PF.ColumnPruningPass{}).
 			AddPass(&PF.PredicatePushdownPass{}).
 			AddPass(&PF.LimitPushdownPass{}),
+		qpOptimizer: QP.NewOptimizer().
+			AddPass(&QP.ConstantFoldingPass{}).
+			AddPass(&QP.ColumnPruningPass{}).
+			AddPass(&QP.PredicatePushdownPass{}),
 	}
 }
 
