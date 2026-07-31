@@ -59,28 +59,6 @@ func ExtractEqualityAnySide(pred PS.Expr) (string, any, bool) {
 	return "", nil, false
 }
 
-// ExtractSingleEquality extracts (columnName, value, ok) from a
-// predicate of the form "col = literal". Accepts either side as the
-// column reference.
-// REQ001248, REQ001439.
-func ExtractSingleEquality(pred PS.Expr) (string, any, bool) {
-	bin, ok := pred.(*PS.BinaryExpr)
-	if !ok || bin.Op != LX.T_EQ {
-		return "", nil, false
-	}
-	if col, ok := bin.Left.(*PS.Ident); ok {
-		if v, ok := LiteralValue(bin.Right); ok {
-			return col.Name, v, true
-		}
-	}
-	if col, ok := bin.Right.(*PS.Ident); ok {
-		if v, ok := LiteralValue(bin.Left); ok {
-			return col.Name, v, true
-		}
-	}
-	return "", nil, false
-}
-
 // ExtractInListValues extracts (columnName, values, ok) from a
 // predicate of the form "col IN (val1, val2, ...)" where all values
 // are literals. Handles both *PS.InExpr and

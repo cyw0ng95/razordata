@@ -27,7 +27,7 @@ type FlusherOptions struct {
 // Flusher batches and persists WAL records to disk (R08).
 type Flusher interface {
 	Sync() error
-	BatchSync() error
+
 	SyncDir() error
 	Close() error
 }
@@ -144,11 +144,7 @@ func (f *flusher) Sync() error {
 	return nil
 }
 
-// BatchSync coordinates group commit (REQ000542).
-// It submits a sync request and waits for the batch to complete.
-func (f *flusher) BatchSync() error {
-	return f.Sync()
-}
+
 
 // SyncDir fsyncs the WAL directory (R10).
 func (f *flusher) SyncDir() error {

@@ -82,10 +82,10 @@ func (opFactory) NewAggregate(child pl.Operator, groupCols []string, aggs []pl.A
 	return AGNewAggregate(child, groupCols, exprs)
 }
 
-// NewHashAggregate wraps AG.NewHashAggregate.
+// NewHashAggregate wraps AG.NewAggregate.
 func (opFactory) NewHashAggregate(child pl.Operator, groupCols []string, aggs []pl.AggregateSpec) pl.Operator {
 	exprs := aggSpecsToExprs(aggs)
-	return AGNewHashAggregate(child, groupCols, exprs)
+	return AGNewAggregate(child, groupCols, exprs)
 }
 
 // NewSort wraps NewSort. pl.OrderSpec → PS.OrderItem.

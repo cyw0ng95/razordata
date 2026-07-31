@@ -23,11 +23,4 @@ func AGNewAggregate(child pl.Operator, groupCols []string, aggs []PS.Expr) pl.Op
 	return AG.NewAggregate(child, gc, aggs)
 }
 
-// AGNewHashAggregate wraps AG.NewAggregate. REQ002173: HashAggregate removed.
-func AGNewHashAggregate(child pl.Operator, groupCols []string, aggs []PS.Expr) pl.Operator {
-	gc := make([]PS.Expr, 0, len(groupCols))
-	for _, c := range groupCols {
-		gc = append(gc, &PS.QualifiedName{Name: c})
-	}
-	return AG.NewAggregate(child, gc, aggs)
-}
+

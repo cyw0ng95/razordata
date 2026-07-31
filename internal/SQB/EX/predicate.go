@@ -141,7 +141,7 @@ func tryApplyPointLookup(scan DT.Operator, pred PS.Expr) {
 		ss.WithPointLookup(col, values)
 		return
 	}
-	col, val, ok := CO.ExtractSingleEquality(pred)
+	col, val, ok := CO.ExtractEqualityAnySide(pred)
 	if ok {
 		ss.WithPointLookup(col, []any{val})
 	}

@@ -838,7 +838,7 @@ func (s *SeqScan) cloneRow(r Row, schema *tableSchemaEntry) Row {
 		// deep-copy Data even in shallow mode and mark DataStable so
 		// Filter.refillBatch can skip its defensive deep-copy.
 		if !s.shallow || s.needsStableData {
-			out.Data = getRowData(len(r.Data))
+			out.Data = make([]Value, len(r.Data))
 			copy(out.Data, r.Data)
 			out.DataStable = true
 		}

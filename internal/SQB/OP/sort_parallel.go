@@ -3,6 +3,7 @@ package OP
 import (
 	"context"
 	"slices"
+	"strconv"
 	"sync"
 
 	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
@@ -452,7 +453,7 @@ func batchToRows(batch *UT.Batch) []DT.Row {
 		if batch.Cols[i].Name != "" {
 			cols = append(cols, batch.Cols[i].Name)
 		} else {
-			cols = append(cols, "c"+ItoaSimple(i))
+			cols = append(cols, "c"+strconv.Itoa(i))
 		}
 		types = append(types, batch.Cols[i].Type)
 	}
@@ -472,16 +473,4 @@ func batchToRows(batch *UT.Batch) []DT.Row {
 	return rows
 }
 
-func ItoaSimple(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
-}
+
