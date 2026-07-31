@@ -324,3 +324,47 @@ func TestPipelineExecutor_PropagateAll(t *testing.T) {
 		t.Fatal("execCtx not propagated via executor")
 	}
 }
+
+func TestPipelineExecutor_BatchProducer(t *testing.T) {
+	spec := &PipelineSpec{
+		Stages: []StageSpec{
+			&mockStageSpec{
+				batches: []*UT.Batch{
+					makeIntBatch([]int64{1, 2, 3}),
+					makeIntBatch([]int64{4, 5}),
+				},
+				cat: CatSource,
+			},
+		},
+		RootIdx: 0,
+	}
+
+	exec := NewPipelineExecutor(spec)
+	defer exec.Close()
+
+	bp, err := exec.BatchProducer(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []int64
+	for {
+		batch, err := bp.NextBatch(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if batch == nil {
+			break
+		}
+		for i := 0; i < batch.Size; i++ {
+			got = append(got, batch.Value(0, i).(int64))
+		}
+	}
+	if len(got) != 5 {
+		t.Fatalf("expected 5 rows via BatchProducer, got %d", len(got))
+	}
+	for i, v := range got {
+		if v != int64(i+1) {
+			t.Fatalf("row %d = %d, want %d", i, v, i+1)
+		}
+	}
+}

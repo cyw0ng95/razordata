@@ -1,9 +1,13 @@
 package driver
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"testing"
+
+	EX "github.com/cyw0ng95/razordata/internal/SQB/EX"
+	PX "github.com/cyw0ng95/razordata/internal/SQB/PX"
 
 	_ "modernc.org/sqlite"
 )
@@ -432,5 +436,165 @@ func BenchmarkSQLite_SelfJoin(b *testing.B) {
 			rows.Scan(&id, &name)
 		}
 		rows.Close()
+	}
+}
+
+// ── Engine-level pipeline benches (bypass database/sql) ──
+// REQ002105: measure true PX pipeline performance in isolation. The
+// database/sql benches above pay the driver + BatchToRowAdapter + row
+// Next() chain tax; these call EX.Executor.QueryAll directly (no
+// database/sql) or drain the PipelineExecutor's BatchProducer directly
+// (no batch→row conversion) to expose the raw vectorized throughput.
+
+const benchRowsLarge = 10000
+
+// engineForBench creates a fresh :memory: engine and returns its Executor.
+func engineForBench(b *testing.B) *EX.Executor {
+	b.Helper()
+	eng, _, err := getOrCreateEngine(context.Background(), Config{Path: ":memory:"})
+	if err != nil {
+		b.Fatalf("getOrCreateEngine: %v", err)
+	}
+	ex := eng.Executor()
+	ctx := context.Background()
+	if _, err := ex.Exec(ctx, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, age INTEGER, score REAL)"); err != nil {
+		b.Fatalf("CREATE: %v", err)
+	}
+	return ex
+}
+
+// engineInsertRows inserts n rows through the engine executor directly.
+func engineInsertRows(b *testing.B, ex *EX.Executor, n int) {
+	b.Helper()
+	ctx := context.Background()
+	for i := 0; i < n; i++ {
+		if _, err := ex.Exec(ctx, "INSERT INTO t VALUES (?, ?, ?, ?)", i, fmt.Sprintf("user%d", i), 20+i%50, float64(i)*1.5); err != nil {
+			b.Fatalf("INSERT %d: %v", i, err)
+		}
+	}
+}
+
+// BenchmarkRazordata_Engine_SelectAll_QueryAll bypasses database/sql,
+// calling EX.Executor.QueryAll directly on the vectorized pipeline.
+func BenchmarkRazordata_Engine_SelectAll_QueryAll(b *testing.B) {
+	ex := engineForBench(b)
+	engineInsertRows(b, ex, benchRows)
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows, err := ex.QueryAll(ctx, "SELECT * FROM t")
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(rows) == 0 {
+			b.Fatal("no rows")
+		}
+	}
+}
+
+// BenchmarkRazordata_Engine_SelectAll_PipelineBatch bypasses both
+// database/sql and batch→row conversion, draining the pipeline's
+// BatchProducer (columnar batches) directly.
+func BenchmarkRazordata_Engine_SelectAll_PipelineBatch(b *testing.B) {
+	ex := engineForBench(b)
+	engineInsertRows(b, ex, benchRows)
+	ctx := context.Background()
+	spec, err := ex.BuildPipeline("SELECT * FROM t")
+	if err != nil {
+		b.Fatalf("BuildPipeline: %v", err)
+	}
+	if spec == nil {
+		b.Fatal("BuildPipeline returned nil spec")
+	}
+	exec := PX.NewPipelineExecutor(spec)
+	defer exec.Close()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bp, err := exec.BatchProducer(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+		n := 0
+		for {
+			batch, err := bp.NextBatch(ctx)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if batch == nil {
+				break
+			}
+			n += batch.Size
+			if batch.Pooled {
+				batch.Put()
+			}
+		}
+		if n == 0 {
+			b.Fatal("no batches drained")
+		}
+		if err := exec.Reset(ctx); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkRazordata_Engine_SelfJoin_10K_QueryAll forces the hash-join
+// stage path on a 10K-row table, measured through QueryAll.
+func BenchmarkRazordata_Engine_SelfJoin_10K_QueryAll(b *testing.B) {
+	ex := engineForBench(b)
+	engineInsertRows(b, ex, benchRowsLarge)
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows, err := ex.QueryAll(ctx, "SELECT a.id, b.name FROM t a INNER JOIN t b ON a.age = b.age WHERE a.id < b.id LIMIT 20")
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(rows) == 0 {
+			b.Fatal("no rows")
+		}
+	}
+}
+
+// BenchmarkRazordata_Engine_SelfJoin_10K_PipelineBatch drains the
+// hash-join pipeline's batches directly, bypassing row conversion.
+func BenchmarkRazordata_Engine_SelfJoin_10K_PipelineBatch(b *testing.B) {
+	ex := engineForBench(b)
+	engineInsertRows(b, ex, benchRowsLarge)
+	ctx := context.Background()
+	spec, err := ex.BuildPipeline("SELECT a.id, b.name FROM t a INNER JOIN t b ON a.age = b.age WHERE a.id < b.id LIMIT 20")
+	if err != nil {
+		b.Fatalf("BuildPipeline: %v", err)
+	}
+	if spec == nil {
+		b.Fatal("BuildPipeline returned nil spec")
+	}
+	exec := PX.NewPipelineExecutor(spec)
+	defer exec.Close()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bp, err := exec.BatchProducer(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+		n := 0
+		for {
+			batch, err := bp.NextBatch(ctx)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if batch == nil {
+				break
+			}
+			n += batch.Size
+			if batch.Pooled {
+				batch.Put()
+			}
+		}
+		if n == 0 {
+			b.Fatal("no batches drained")
+		}
+		if err := exec.Reset(ctx); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

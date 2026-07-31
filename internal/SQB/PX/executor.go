@@ -101,6 +101,23 @@ func (e *PipelineExecutor) ExecuteStream(ctx context.Context) (*PipelineStream, 
 	}, nil
 }
 
+// BatchProducer returns the pipeline's root stage as a BatchProducer,
+// letting callers drain columnar batches directly, bypassing the
+// batch→row conversion applied by Execute/ExecuteStream. This is the
+// true pipeline performance path measured by driver benches without
+// BatchToRowAdapter. Caller must Close the returned producer when done
+// (or Close the executor, which releases the same root stage).
+// REQ002105.
+func (e *PipelineExecutor) BatchProducer(ctx context.Context) (UT.BatchProducer, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	pipe, err := e.ensurePipeline(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return pipe.root, nil
+}
+
 // Reset returns the pipeline to pre-execution state for cache reuse.
 func (e *PipelineExecutor) Reset(ctx context.Context) error {
 	e.mu.Lock()
