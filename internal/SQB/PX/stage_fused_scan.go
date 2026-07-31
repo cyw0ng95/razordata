@@ -117,8 +117,13 @@ func (f *FusedScanStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			if sel != nil && len(sel) == batch.LogicalSize() {
 				// All rows match — no filtering needed.
 			} else if sel != nil {
+				// Partial match: compact the batch in place so
+				// downstream projection/aggregation sees a clean
+				// batch (Sel == nil) instead of a selection vector.
+				// Keeps the invariant that source batches are fully
+				// materialized. REQ002220.
 				batch.Sel = sel
-				batch.Size = len(sel)
+				materializeBatch(batch)
 			}
 		}
 
@@ -178,6 +183,84 @@ func (f *FusedScanStage) Close() error {
 		return f.source.Close()
 	}
 	return nil
+}
+
+// materializeBatch compacts a batch's column data in place to keep only
+// the rows identified by batch.Sel. After the call batch.Sel is nil and
+// batch.Size equals the number of selected rows. This restores the
+// invariant that batches flowing downstream are fully materialized
+// (no selection vector), which the projection/aggregation stages rely on.
+// REQ002220.
+func materializeBatch(batch *UT.Batch) {
+	sel := batch.Sel
+	if sel == nil {
+		return
+	}
+	n := len(sel)
+	if n == 0 {
+		batch.Size = 0
+		batch.Sel = nil
+		return
+	}
+	for i := range batch.Cols {
+		col := &batch.Cols[i]
+		if col.Type == 0 && col.Name == "" {
+			break
+		}
+		if col.Nulls != nil {
+			compacted := make([]bool, n)
+			for j, idx := range sel {
+				if int(idx) < len(col.Nulls) {
+					compacted[j] = col.Nulls[idx]
+				}
+			}
+			col.Nulls = compacted
+		}
+		switch col.Type {
+		case LX.T_INT_KW, LX.T_BIGINT:
+			if col.Data.Ints != nil {
+				compacted := make([]int64, n)
+				for j, idx := range sel {
+					if int(idx) < len(col.Data.Ints) {
+						compacted[j] = col.Data.Ints[idx]
+					}
+				}
+				col.Data.Ints = compacted
+			}
+		case LX.T_FLOAT_KW:
+			if col.Data.Floats != nil {
+				compacted := make([]float64, n)
+				for j, idx := range sel {
+					if int(idx) < len(col.Data.Floats) {
+						compacted[j] = col.Data.Floats[idx]
+					}
+				}
+				col.Data.Floats = compacted
+			}
+		case LX.T_BOOL:
+			if col.Data.Bools != nil {
+				compacted := make([]bool, n)
+				for j, idx := range sel {
+					if int(idx) < len(col.Data.Bools) {
+						compacted[j] = col.Data.Bools[idx]
+					}
+				}
+				col.Data.Bools = compacted
+			}
+		case LX.T_TEXT, LX.T_VARCHAR, LX.T_BLOB:
+			if col.Data.Strs != nil {
+				compacted := make([]string, n)
+				for j, idx := range sel {
+					if int(idx) < len(col.Data.Strs) {
+						compacted[j] = col.Data.Strs[idx]
+					}
+				}
+				col.Data.Strs = compacted
+			}
+		}
+	}
+	batch.Size = n
+	batch.Sel = nil
 }
 
 // truncateBatchInPlace slices each column's data arrays and the

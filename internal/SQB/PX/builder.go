@@ -1769,13 +1769,13 @@ func (s *LegacyBatchStage) Close() error {
 // --- RowOperatorAsProducer ---
 
 // RowOperatorAsProducer adapts a DT.Operator to produce
-// batches of 1 row each. Used by ScanStageSpec to convert
-// row-based operators into the BatchProducer interface.
-// Column data slices are allocated inline (not pooled) to avoid
-// the overhead of GetBatch's BatchSize pre-allocation for single-row
-// batches. REQ002177: uses DT.Operator (alias for PL.Operator).
+// batches of rows. It accumulates rows from the row-based operator
+// into batches of up to EngineBatchSize, reducing per-row batch
+// allocation overhead. REQ002133/REQ002218.
 type RowOperatorAsProducer struct {
-	Op DT.Operator
+	Op    DT.Operator
+	batch *UT.Batch
+	done  bool
 }
 
 // NewRowOperatorAsProducer creates a RowOperatorAsProducer.
@@ -1787,19 +1787,32 @@ func (r *RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if r.done {
+		return nil, nil
+	}
+
+	// If we have a saved batch from a previous fill, return it.
+	if r.batch != nil {
+		b := r.batch
+		r.batch = nil
+		return b, nil
+	}
+
+	// Read first row to determine schema.
 	row, err := r.Op.Next(ctx)
 	if err != nil {
 		if err == DT.ErrNoRows {
+			r.done = true
 			return nil, nil
 		}
 		return nil, err
 	}
-	// Convert single row to batch using inline allocation (no pool).
-	// Use make([]T, 1) instead of pooled slices to avoid the overhead
-	// of GetBatch's BatchSize (1024) pre-allocation for single-row batches.
+
 	n := len(row.Data)
 	batch := UT.GetBatch(n)
-	batch.Size = 1
+	batch.Size = 0
+
+	// Set column names from the first row.
 	if len(row.Cols) >= n {
 		for i := 0; i < n; i++ {
 			batch.Cols[i].Name = row.Cols[i]
@@ -1809,26 +1822,74 @@ func (r *RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error
 			batch.Cols[i].Name = fmt.Sprintf("col%d", i)
 		}
 	}
-	for i, v := range row.Data {
-		switch v.Kind {
-		case PL.KindInt:
-			batch.Cols[i].Data.Ints = []int64{v.I64}
-			batch.Cols[i].Type = LX.T_INT_KW
-		case PL.KindFloat:
-			batch.Cols[i].Data.Floats = []float64{v.F64}
-			batch.Cols[i].Type = LX.T_FLOAT_KW
-		case PL.KindText:
-			batch.Cols[i].Data.Strs = []string{v.S}
-			batch.Cols[i].Type = LX.T_TEXT
-		default:
-			batch.Cols[i].Nulls = []bool{true}
-			batch.Cols[i].Type = LX.T_NULL
-		}
+
+	// Fill the batch, accumulating rows from the operator.
+	r.fillBatch(ctx, batch, row, n)
+
+	if batch.Size == 0 {
+		batch.Put()
+		r.done = true
+		return nil, nil
 	}
 	return batch, nil
 }
 
+// fillBatch fills a batch with rows from the operator. row is the first
+// row already read; subsequent rows are read from r.Op.Next().
+func (r *RowOperatorAsProducer) fillBatch(ctx context.Context, batch *UT.Batch, firstRow DT.Row, nCols int) {
+	appendRow := func(row DT.Row) {
+		pos := batch.Size
+		for i := 0; i < nCols && i < len(row.Data); i++ {
+			v := row.Data[i]
+			switch v.Kind {
+			case PL.KindInt:
+				if batch.Cols[i].Data.Ints == nil {
+					batch.Cols[i].Data.Ints = UT.PoolGetInts(i, UT.BatchSize)
+					batch.Cols[i].Type = LX.T_INT_KW
+				}
+				batch.Cols[i].Data.Ints[pos] = v.I64
+			case PL.KindFloat:
+				if batch.Cols[i].Data.Floats == nil {
+					batch.Cols[i].Data.Floats = UT.PoolGetFloats(i, UT.BatchSize)
+					batch.Cols[i].Type = LX.T_FLOAT_KW
+				}
+				batch.Cols[i].Data.Floats[pos] = v.F64
+			case PL.KindText:
+				if batch.Cols[i].Data.Strs == nil {
+					batch.Cols[i].Data.Strs = UT.PoolGetStrs(i, UT.BatchSize)
+					batch.Cols[i].Type = LX.T_TEXT
+				}
+				batch.Cols[i].Data.Strs[pos] = v.S
+			default:
+				if batch.Cols[i].Nulls == nil {
+					batch.Cols[i].Nulls = make([]bool, UT.BatchSize)
+				}
+				batch.Cols[i].Nulls[pos] = true
+			}
+		}
+		batch.Size++
+	}
+
+	appendRow(firstRow)
+	limit := UT.BatchSize
+
+	for batch.Size < limit {
+		row, err := r.Op.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				r.done = true
+			}
+			return
+		}
+		appendRow(row)
+	}
+}
+
 func (r *RowOperatorAsProducer) Close() error {
+	if r.batch != nil {
+		r.batch.Put()
+		r.batch = nil
+	}
 	return r.Op.Close()
 }
 

@@ -227,6 +227,17 @@ type columnDataPool struct {
 	floatSet [MaxColumns]map[unsafe.Pointer]struct{}
 	strSet   [MaxColumns]map[unsafe.Pointer]struct{}
 	boolSet  [MaxColumns]map[unsafe.Pointer]struct{}
+	// REQ002221: global dedup sets. A projection stage produces output
+	// columns that alias source batch slices (shallow *PS.Ident copy),
+	// and both batches end up Put. Without cross-bucket dedup the same
+	// slice can live in two different column-index buckets, so
+	// PoolGetInts(0) and PoolGetInts(1) return the same array and the
+	// batch's columns alias each other. These sets pin each slice to at
+	// most one bucket until it is handed out.
+	intAll   map[unsafe.Pointer]struct{}
+	floatAll map[unsafe.Pointer]struct{}
+	strAll   map[unsafe.Pointer]struct{}
+	boolAll  map[unsafe.Pointer]struct{}
 }
 
 var colDataPool = &columnDataPool{}
@@ -237,7 +248,9 @@ func (p *columnDataPool) getInts(cols, n int) []int64 {
 	for i := range p.ints[cols] {
 		if cap(p.ints[cols][i]) >= n {
 			s := p.ints[cols][i][:n]
-			delete(p.intSet[cols], unsafe.Pointer(unsafe.SliceData(p.ints[cols][i])))
+			ptr := unsafe.Pointer(unsafe.SliceData(p.ints[cols][i]))
+			delete(p.intAll, ptr)
+			delete(p.intSet[cols], ptr)
 			last := len(p.ints[cols]) - 1
 			p.ints[cols][i] = p.ints[cols][last]
 			p.ints[cols][last] = nil
@@ -258,12 +271,23 @@ func (p *columnDataPool) putInts(cols int, s []int64) {
 		return
 	}
 	ptr := unsafe.Pointer(unsafe.SliceData(s))
+	if p.intAll == nil {
+		p.intAll = make(map[unsafe.Pointer]struct{})
+	}
+	if _, ok := p.intAll[ptr]; ok {
+		// Slice already owned by the pool under some column bucket.
+		// A projection stage may Put both the source batch and the
+		// output batch that aliases its slices — only the first Put
+		// owns the slice. REQ002221.
+		return
+	}
 	if p.intSet[cols] == nil {
 		p.intSet[cols] = make(map[unsafe.Pointer]struct{})
 	}
 	if _, ok := p.intSet[cols][ptr]; ok {
 		return
 	}
+	p.intAll[ptr] = struct{}{}
 	p.intSet[cols][ptr] = struct{}{}
 	p.ints[cols] = append(p.ints[cols], s)
 }
@@ -278,12 +302,19 @@ func (p *columnDataPool) putFloats(cols int, s []float64) {
 		return
 	}
 	ptr := unsafe.Pointer(unsafe.SliceData(s))
+	if p.floatAll == nil {
+		p.floatAll = make(map[unsafe.Pointer]struct{})
+	}
+	if _, ok := p.floatAll[ptr]; ok {
+		return
+	}
 	if p.floatSet[cols] == nil {
 		p.floatSet[cols] = make(map[unsafe.Pointer]struct{})
 	}
 	if _, ok := p.floatSet[cols][ptr]; ok {
 		return
 	}
+	p.floatAll[ptr] = struct{}{}
 	p.floatSet[cols][ptr] = struct{}{}
 	p.floats[cols] = append(p.floats[cols], s)
 }
@@ -298,12 +329,19 @@ func (p *columnDataPool) putStrs(cols int, s []string) {
 		return
 	}
 	ptr := unsafe.Pointer(unsafe.SliceData(s))
+	if p.strAll == nil {
+		p.strAll = make(map[unsafe.Pointer]struct{})
+	}
+	if _, ok := p.strAll[ptr]; ok {
+		return
+	}
 	if p.strSet[cols] == nil {
 		p.strSet[cols] = make(map[unsafe.Pointer]struct{})
 	}
 	if _, ok := p.strSet[cols][ptr]; ok {
 		return
 	}
+	p.strAll[ptr] = struct{}{}
 	p.strSet[cols][ptr] = struct{}{}
 	p.strs[cols] = append(p.strs[cols], s)
 }
@@ -318,12 +356,19 @@ func (p *columnDataPool) putBools(cols int, s []bool) {
 		return
 	}
 	ptr := unsafe.Pointer(unsafe.SliceData(s))
+	if p.boolAll == nil {
+		p.boolAll = make(map[unsafe.Pointer]struct{})
+	}
+	if _, ok := p.boolAll[ptr]; ok {
+		return
+	}
 	if p.boolSet[cols] == nil {
 		p.boolSet[cols] = make(map[unsafe.Pointer]struct{})
 	}
 	if _, ok := p.boolSet[cols][ptr]; ok {
 		return
 	}
+	p.boolAll[ptr] = struct{}{}
 	p.boolSet[cols][ptr] = struct{}{}
 	p.bools[cols] = append(p.bools[cols], s)
 }

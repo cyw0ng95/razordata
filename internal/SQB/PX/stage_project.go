@@ -91,18 +91,17 @@ func (p *ProjectStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		}
 		col.Name = p.names[i]
 
-		// If the child batch has a selection vector and the column
-		// contains more data than the logical size, compact it.
-		if childBatch.Sel != nil && childBatch.Size < childBatch.LogicalSize() {
-			if childBatch.Size > 0 {
-				physicalSize := 0
-				for j := 0; j < childBatch.Size && j < len(childBatch.Sel); j++ {
-					if int(childBatch.Sel[j])+1 > physicalSize {
-						physicalSize = int(childBatch.Sel[j]) + 1
-					}
+		// If the child batch has a selection vector, the shallow-copied
+		// column still contains unselected physical rows. Compact so the
+		// output is fully materialized. REQ002220.
+		if childBatch.Sel != nil && childBatch.Size > 0 {
+			physicalSize := 0
+			for j := 0; j < childBatch.Size && j < len(childBatch.Sel); j++ {
+				if int(childBatch.Sel[j])+1 > physicalSize {
+					physicalSize = int(childBatch.Sel[j]) + 1
 				}
-				col = compactColumn(col, childBatch.Sel[:childBatch.Size], physicalSize)
 			}
+			col = compactColumn(col, childBatch.Sel[:childBatch.Size], physicalSize)
 		}
 		output.Cols[i] = col
 	}
