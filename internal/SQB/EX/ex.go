@@ -503,7 +503,7 @@ func (e *Executor) initPipelineBuilderEnabled() {
 		// call here prevents per-execution mutation of the cached plan tree.
 		return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(root))
 	}
-	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize)
+	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize, PX.NewOptimizer())
 	// Enable pure pipeline path by default. This activates the BuildPipeline-based
 	// execution flow for QueryAll, Query, QueryStream, Exec, CompilePlan, etc.
 	// REQ002129. When all features are verified, this can remain true permanently.

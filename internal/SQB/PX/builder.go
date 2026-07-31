@@ -34,6 +34,7 @@ type PipelineBuilder struct {
 	cache      *PipelineCache
 	planner    PL.QueryPlanner
 	specialize SpecializeFunc
+	optimizer  *Optimizer
 }
 
 // ClearCache clears any entries in the builder's PipelineCache. Safe to
@@ -46,12 +47,14 @@ func (b *PipelineBuilder) ClearCache() {
 }
 
 // NewPipelineBuilder creates a builder with the given cache,
-// planner interface, and specialization function.
-func NewPipelineBuilder(cache *PipelineCache, planner PL.QueryPlanner, specialize SpecializeFunc) *PipelineBuilder {
+// planner interface, specialization function, and physical optimizer.
+// Pass nil for optimizer to disable optimization passes.
+func NewPipelineBuilder(cache *PipelineCache, planner PL.QueryPlanner, specialize SpecializeFunc, optimizer *Optimizer) *PipelineBuilder {
 	return &PipelineBuilder{
 		cache:      cache,
 		planner:    planner,
 		specialize: specialize,
+		optimizer:  optimizer,
 	}
 }
 
@@ -150,7 +153,10 @@ func (b *PipelineBuilder) Build(sql string) (*PipelineSpec, error) {
 // we fall back to extractOutputSchema on the root to derive at least the
 // column identities for the driver's Columns() method.
 func (b *PipelineBuilder) specializePlan(plan *PL.PlanResult, sql, memoKey string) (*PipelineSpec, error) {
-	stages, edges, rootIdx, rootSchema := decomposePlan(plan.Root, b.planner, b.specialize)
+	stages, edges, rootIdx, rootSchema, err := decomposePlan(plan.Root, b.planner, b.specialize)
+	if err != nil {
+		return nil, err
+	}
 
 	cols, types := rootSchema.names, rootSchema.types
 	if len(cols) == 0 {
@@ -161,7 +167,7 @@ func (b *PipelineBuilder) specializePlan(plan *PL.PlanResult, sql, memoKey strin
 		cols, types = extractOutputSchema(plan.Root)
 	}
 
-	return &PipelineSpec{
+	spec := &PipelineSpec{
 		Stages:      stages,
 		Edges:       edges,
 		RootIdx:     rootIdx,
@@ -170,7 +176,15 @@ func (b *PipelineBuilder) specializePlan(plan *PL.PlanResult, sql, memoKey strin
 		Cost:        plan.Cost,
 		MemoKey:     memoKey,
 		SQLText:     sql,
-	}, nil
+	}
+
+	if b.optimizer != nil {
+		if err := b.optimizer.Optimize(spec); err != nil {
+			return nil, fmt.Errorf("px: optimize: %w", err)
+		}
+	}
+
+	return spec, nil
 }
 
 // outputSchema describes a stage's output columns — names and rough type.
@@ -252,80 +266,34 @@ func (s *decomposeState) childOutput(childIdx int) outputSchema {
 
 // decomposePlan walks the PL.Operator tree bottom-up and produces
 // a PipelineSpec — a list of StageSpecs + EdgeSpecs describing how
-// stages connect. Returns the stages, edges, root-stage index, and
-// the root stage's outputSchema.
-// REQ002156: if the plan tree contains nested joins (bushy join shape),
-// fall back to a single LegacyBatchStageSpec for the entire tree to
-// preserve correctness of transitive/bridge predicates.
-func decomposePlan(root DT.Operator, planner PL.QueryPlanner, specialize SpecializeFunc) ([]StageSpec, []EdgeSpec, int, outputSchema) {
+// stages connect. Returns the stages, edges, root-stage index,
+// the root stage's outputSchema, and an error if an unknown operator
+// type is encountered. REQ002211: bushy joins are now handled natively
+// by decomposeHashJoin (REQ002189/REQ002212); the hasBushyJoin branch
+// was removed as dead logic.
+func decomposePlan(root DT.Operator, planner PL.QueryPlanner, specialize SpecializeFunc) ([]StageSpec, []EdgeSpec, int, outputSchema, error) {
 	if root == nil {
-		return nil, nil, 0, outputSchema{}
-	}
-	inner := root
-	// REQ002171: AdaptiveOp removed — root is the raw operator.
-	// REQ002189/REQ002212: bushy join shapes now supported natively
-	// — propagatePlanner is called during Plan() at plan creation time
-	// (planner.go:533), so the memoized plan tree is not mutated during
-	// pipeline execution. Native stage decomposition correctly handles
-	// transitive/bridge predicates across nested joins.
-	if hasBushyJoin(inner) {
-		state := &decomposeState{}
-		rootIdx := decomposeOp(inner, state, planner, specialize)
-		schema := outputSchema{}
-		if rootIdx >= 0 && rootIdx < len(state.stageOutput) {
-			schema = state.stageOutput[rootIdx]
-		}
-		return state.stages, state.edges, rootIdx, schema
+		return nil, nil, 0, outputSchema{}, nil
 	}
 	state := &decomposeState{}
-	rootIdx := decomposeOp(inner, state, planner, specialize)
+	rootIdx, err := decomposeOp(root, state, planner, specialize)
 	schema := outputSchema{}
-	if rootIdx >= 0 && rootIdx < len(state.stageOutput) {
+	if err == nil && rootIdx >= 0 && rootIdx < len(state.stageOutput) {
 		schema = state.stageOutput[rootIdx]
 	}
-	return state.stages, state.edges, rootIdx, schema
-}
-
-// hasBushyJoin reports whether the operator tree contains nested joins.
-// REQ002156: bushy join shapes (e.g. NLJ(HashJoin(HashJoin(...)))) are
-// not yet handled correctly by native stage decomposition.
-func hasBushyJoin(op DT.Operator) bool {
-	if op == nil {
-		return false
-	}
-	// REQ002171: AdaptiveOp removed — op is the raw operator.
-	type leftRighter interface {
-		LeftChild() DT.Operator
-		RightChild() DT.Operator
-	}
-	lr, isJoin := op.(leftRighter)
-	if !isJoin {
-		return false
-	}
-	// Check if either child is also a join (bushy shape).
-	leftJoin := isJoinOp(lr.LeftChild())
-	rightJoin := isJoinOp(lr.RightChild())
-	if leftJoin || rightJoin {
-		return true
-	}
-	// Recurse into children to find deeper nesting.
-	return hasBushyJoin(lr.LeftChild()) || hasBushyJoin(lr.RightChild())
+	return state.stages, state.edges, rootIdx, schema, err
 }
 
 // decomposeHashJoin native HashJoinStageSpec. Resolves left/right key
-// names against left/right child schemas. Falls back to LegacyBatchStageSpec
-// if names not resolvable. REQ002124.
+// names against left/right child schemas. Falls back to a native
+// ScanStageSpec if names not resolvable. REQ002124.
 
 // decomposeOp recursively decomposes a single operator into stages.
-// Returns the index of the stage that produces output for this operator.
-// First, it checks for the FusedScan candidate pattern (Limit → Project → Filter → SeqScan)
-// to emit a single FusedScanStageSpec (REQ002124).
-func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	// FusedScan detection: try Limit→Project→Filter→SeqScan before the
-	// default per-type dispatch. If the pattern matches we create a single stage
-	// and skip the nested child decomposition.
+// Returns the index of the stage that produces output for this operator,
+// or an error for unknown operator types (REQ002211).
+func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
 	if idx, ok := tryDecomposeFusedScan(op, st, planner, specialize); ok {
-		return idx
+		return idx, nil
 	}
 	switch o := op.(type) {
 	case *OP.SeqScan:
@@ -454,9 +422,7 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 		// REQ002211: VACUUM. Native source stage.
 		return decomposeNativeSource(o, st)
 	default:
-		// REQ002211: any unlisted operator is wrapped as a native source.
-		// This is forward-compatible and avoids LegacyBatchStageSpec overhead.
-		return decomposeNativeSource(op, st)
+		return 0, fmt.Errorf("px: unknown operator type %T", op)
 	}
 }
 
@@ -473,7 +439,7 @@ type scanOp interface {
 // Output schema comes from the scan's StoreSchema (Cols + ColTypes) if known,
 // populated by the planner via Schema() method on OP.SeqScan/OP.IndexScan.
 // Accepts both via the scanOp interface (REQ002143).
-func decomposeSeqScan(ss scanOp, st *decomposeState) int {
+func decomposeSeqScan(ss scanOp, st *decomposeState) (int, error) {
 	var op DT.Operator = ss
 	var out outputSchema
 	sch := ss.Schema()
@@ -501,13 +467,16 @@ func decomposeSeqScan(ss scanOp, st *decomposeState) int {
 		NewProducer: func() UT.BatchProducer {
 			return NewRowOperatorAsProducer(op)
 		},
-	}, out)
+	}, out), nil
 }
 
 // decomposeFilter creates FilterStageSpec with a child edge. Output
 // Filter preserves its child's schema unchanged.
-func decomposeFilter(f *OP.Filter, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	childIdx := decomposeOp(f.Child(), st, planner, specialize)
+func decomposeFilter(f *OP.Filter, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
+	childIdx, err := decomposeOp(f.Child(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
 	childOut := st.childOutput(childIdx)
 	// REQ002190: predicates containing subquery expressions wrap the
 	// Filter operator in a ScanStageSpec with RowOperatorAsProducer.
@@ -523,11 +492,11 @@ func decomposeFilter(f *OP.Filter, st *decomposeState, planner PL.QueryPlanner, 
 			},
 		}, childOut)
 		st.addEdge(filterIdx, childIdx, SingleChild)
-		return filterIdx
+		return filterIdx, nil
 	}
 	filterIdx := st.addStage(&FilterStageSpec{Pred: f.Predicate()}, childOut)
 	st.addEdge(filterIdx, childIdx, SingleChild)
-	return filterIdx
+	return filterIdx, nil
 }
 
 // subqueryDetector embeds PS.BaseVisitor and overrides the subquery
@@ -561,8 +530,11 @@ func exprContainsSubquery(e PS.Expr) bool {
 
 // decomposeProject creates ProjectStageSpec with a child edge. Output
 // schema is derived from the projected expressions' display names.
-func decomposeProject(p *OP.Project, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	childIdx := decomposeOp(p.Child(), st, planner, specialize)
+func decomposeProject(p *OP.Project, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
+	childIdx, err := decomposeOp(p.Child(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
 	exprs := p.Cols()
 	n := len(exprs)
 	names := make([]string, n)
@@ -574,7 +546,7 @@ func decomposeProject(p *OP.Project, st *decomposeState, planner PL.QueryPlanner
 	projectOut := outputSchema{names: names, types: types}
 	projectIdx := st.addStage(&ProjectStageSpec{Exprs: exprs, Names: names}, projectOut)
 	st.addEdge(projectIdx, childIdx, SingleChild)
-	return projectIdx
+	return projectIdx, nil
 }
 
 // decomposeSort native SortStageSpec — emits SortCols / Desc arrays
@@ -584,8 +556,11 @@ func decomposeProject(p *OP.Project, st *decomposeState, planner PL.QueryPlanner
 // whose names exist in the child's output columns) we build the sort column
 // indices directly. Otherwise fall back to LegacyBatchStageSpec (rare and
 // the legacy vectorized path, which is still correct but can be slow.
-func decomposeSort(s *OP.Sort, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	childIdx := decomposeOp(s.Child(), st, planner, specialize)
+func decomposeSort(s *OP.Sort, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
+	childIdx, err := decomposeOp(s.Child(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
 	childOut := st.childOutput(childIdx)
 	keys := s.Keys()
 	sortCols := make([]int, 0, len(keys))
@@ -628,7 +603,7 @@ func decomposeSort(s *OP.Sort, st *decomposeState, planner PL.QueryPlanner, spec
 			NullsOrder: nullsOrder,
 		}, childOut)
 		st.addEdge(sortIdx, childIdx, SingleChild)
-		return sortIdx
+		return sortIdx, nil
 	}
 	// REQ002181: keys not resolvable statically — use runtime resolution.
 	sortIdx := st.addStage(&SortStageSpec{
@@ -640,25 +615,31 @@ func decomposeSort(s *OP.Sort, st *decomposeState, planner PL.QueryPlanner, spec
 		SortKeyNames:         sortKeyNames,
 	}, childOut)
 	st.addEdge(sortIdx, childIdx, SingleChild)
-	return sortIdx
+	return sortIdx, nil
 }
 
 // decomposeLimit creates LimitStageSpec. Child schema passes through unchanged.
-func decomposeLimit(l *OP.Limit, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	childIdx := decomposeOp(l.Child(), st, planner, specialize)
+func decomposeLimit(l *OP.Limit, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
+	childIdx, err := decomposeOp(l.Child(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
 	childOut := st.childOutput(childIdx)
 	limitIdx := st.addStage(&LimitStageSpec{Limit: l.LimitValue()}, childOut)
 	st.addEdge(limitIdx, childIdx, SingleChild)
-	return limitIdx
+	return limitIdx, nil
 }
 
 // decomposeOffset creates OffsetStageSpec. Child schema passes through unchanged.
-func decomposeOffset(o *OP.Offset, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	childIdx := decomposeOp(o.Child(), st, planner, specialize)
+func decomposeOffset(o *OP.Offset, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
+	childIdx, err := decomposeOp(o.Child(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
 	childOut := st.childOutput(childIdx)
 	offsetIdx := st.addStage(&OffsetStageSpec{Offset: o.OffsetValue()}, childOut)
 	st.addEdge(offsetIdx, childIdx, SingleChild)
-	return offsetIdx
+	return offsetIdx, nil
 }
 
 // decomposeHashJoin native HashJoinStageSpec. Resolves left/right key
@@ -668,9 +649,15 @@ func decomposeOffset(o *OP.Offset, st *decomposeState, planner PL.QueryPlanner, 
 // back to LegacyBatchStageSpec for the entire subtree — native stage
 // decomposition doesn't yet handle transitive/bridge predicates across
 // nested joins correctly.
-func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	leftIdx := decomposeOp(h.LeftChild(), st, planner, specialize)
-	rightIdx := decomposeOp(h.RightChild(), st, planner, specialize)
+func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
+	leftIdx, err := decomposeOp(h.LeftChild(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
+	rightIdx, err := decomposeOp(h.RightChild(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
 	leftOut := st.childOutput(leftIdx)
 	rightOut := st.childOutput(rightIdx)
 
@@ -725,7 +712,7 @@ func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlann
 		}, joinOut)
 		st.addEdge(joinIdx, leftIdx, LeftChild)
 		st.addEdge(joinIdx, rightIdx, RightChild)
-		return joinIdx
+		return joinIdx, nil
 	}
 	// REQ002180: keys not resolvable statically — use runtime resolution.
 	keyName := ""
@@ -742,15 +729,21 @@ func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlann
 	}, joinOut)
 	st.addEdge(joinIdx, leftIdx, LeftChild)
 	st.addEdge(joinIdx, rightIdx, RightChild)
-	return joinIdx
+	return joinIdx, nil
 }
 
 // decomposeHashCrossJoin creates a native HashJoinStageSpec for HashCrossJoin.
 // HashCrossJoin has single-column equi-keys (LeftKeyName/RightKeyName) that
 // we resolve against left/right child schemas. REQ002151.
-func decomposeHashCrossJoin(h *OP.HashCrossJoin, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	leftIdx := decomposeOp(h.LeftChild(), st, planner, specialize)
-	rightIdx := decomposeOp(h.RightChild(), st, planner, specialize)
+func decomposeHashCrossJoin(h *OP.HashCrossJoin, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
+	leftIdx, err := decomposeOp(h.LeftChild(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
+	rightIdx, err := decomposeOp(h.RightChild(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
 	leftOut := st.childOutput(leftIdx)
 	rightOut := st.childOutput(rightIdx)
 
@@ -790,7 +783,7 @@ func decomposeHashCrossJoin(h *OP.HashCrossJoin, st *decomposeState, planner PL.
 		}, joinOut)
 		st.addEdge(joinIdx, leftIdx, LeftChild)
 		st.addEdge(joinIdx, rightIdx, RightChild)
-		return joinIdx
+		return joinIdx, nil
 	}
 	// REQ002180: key names not resolvable statically — use runtime resolution.
 	joinIdx := st.addStage(&HashJoinStageSpec{
@@ -803,16 +796,22 @@ func decomposeHashCrossJoin(h *OP.HashCrossJoin, st *decomposeState, planner PL.
 	}, joinOut)
 	st.addEdge(joinIdx, leftIdx, LeftChild)
 	st.addEdge(joinIdx, rightIdx, RightChild)
-	return joinIdx
+	return joinIdx, nil
 }
 
 // decomposeNestedLoopJoin creates native decomposition for NestedLoopJoin.
 // For equi-joins without outer modifiers and simple SEMI patterns, uses native stages.
 // For complex cases, falls back to LegacyBatchStageSpec which uses existing NLJ implementation.
 // REQ002151, REQ002152.
-func decomposeNestedLoopJoin(n *OP.NestedLoopJoin, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	leftIdx := decomposeOp(n.LeftChild(), st, planner, specialize)
-	rightIdx := decomposeOp(n.RightChild(), st, planner, specialize)
+func decomposeNestedLoopJoin(n *OP.NestedLoopJoin, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
+	leftIdx, err := decomposeOp(n.LeftChild(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
+	rightIdx, err := decomposeOp(n.RightChild(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
 	leftOut := st.childOutput(leftIdx)
 	rightOut := st.childOutput(rightIdx)
 
@@ -840,7 +839,7 @@ func decomposeNestedLoopJoin(n *OP.NestedLoopJoin, st *decomposeState, planner P
 		semiIdx := st.addStage(&SemiJoinStageSpec{OnFunc: n.OnFunc()}, joinOut)
 		st.addEdge(semiIdx, leftIdx, LeftChild)
 		st.addEdge(semiIdx, rightIdx, RightChild)
-		return semiIdx
+		return semiIdx, nil
 	}
 
 	// REQ002182: for other join types (INNER, LEFT, RIGHT, FULL, CROSS),
@@ -855,7 +854,7 @@ func decomposeNestedLoopJoin(n *OP.NestedLoopJoin, st *decomposeState, planner P
 	}, joinOut)
 	st.addEdge(joinIdx, leftIdx, LeftChild)
 	st.addEdge(joinIdx, rightIdx, RightChild)
-	return joinIdx
+	return joinIdx, nil
 }
 
 // aggPlan is the common interface for both AG.Aggregate and AG.HashAggregate.
@@ -885,8 +884,11 @@ type aggPlan interface {
 // ALWAYS populates the output schema (GroupCols + Aggs names) so the
 // pipeline carries OutputCols metadata — this is essential for the
 // BuildPipeline fast-path gate (len(OutputCols) > 0) to trip.
-func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	childIdx := decomposeOp(agg.Child(), st, planner, specialize)
+func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
+	childIdx, err := decomposeOp(agg.Child(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
 	childOut := st.childOutput(childIdx)
 
 	groupExprs := agg.GroupCols()
@@ -1011,7 +1013,7 @@ func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner
 			KeyCols:   keyCols,
 		}, aggOut)
 		st.addEdge(aggIdx, childIdx, SingleChild)
-		return aggIdx
+		return aggIdx, nil
 	}
 	// Fallback. Even when the native StageSpec can't execute, we attach
 	// aggOut so the root's output schema is known → BuildPipeline fast
@@ -1026,7 +1028,7 @@ func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner
 		},
 	}, aggOut)
 	st.addEdge(aggIdx, childIdx, SingleChild)
-	return aggIdx
+	return aggIdx, nil
 }
 
 // decomposeDistinct wraps a Distinct operator in LegacyBatchStageSpec for
@@ -1036,8 +1038,11 @@ func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner
 // round-trip through the pipeline.
 // decomposeDistinct creates a native DistinctStageSpec when the child's
 // output schema is known. REQ002143: uses all columns as distinct keys.
-func decomposeDistinct(d *OP.Distinct, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
-	childIdx := decomposeOp(d.Child(), st, planner, specialize)
+func decomposeDistinct(d *OP.Distinct, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
+	childIdx, err := decomposeOp(d.Child(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
 	schema := st.childOutput(childIdx)
 	if !schema.resolved() {
 		schema.names, schema.types = extractOutputSchema(d.Child())
@@ -1050,20 +1055,23 @@ func decomposeDistinct(d *OP.Distinct, st *decomposeState, planner PL.QueryPlann
 		}
 		idx := st.addStage(&DistinctStageSpec{KeyCols: keyCols}, schema)
 		st.addEdge(idx, childIdx, SingleChild)
-		return idx
+		return idx, nil
 	}
 	// REQ002184: child schema unknown — use all columns as distinct keys.
 	// The DistinctStage will determine column count from the first batch.
 	idx := st.addStage(&DistinctStageSpec{KeyCols: nil}, schema)
 	st.addEdge(idx, childIdx, SingleChild)
-	return idx
+	return idx, nil
 }
 
 // decomposeWindow creates a native WindowStageSpec. Output schema
 // comes from the child stage's output plus the window function name
 // (the function's result is appended as a new column). REQ002128.
-func decomposeWindow(w *AG.WindowOperator, st *decomposeState) int {
-	childIdx := decomposeOp(w.Input(), st, nil, nil)
+func decomposeWindow(w *AG.WindowOperator, st *decomposeState) (int, error) {
+	childIdx, err := decomposeOp(w.Input(), st, nil, nil)
+	if err != nil {
+		return 0, err
+	}
 	childOut := st.childOutput(childIdx)
 	out := childOut
 	out.names = append([]string(nil), childOut.names...)
@@ -1077,7 +1085,7 @@ func decomposeWindow(w *AG.WindowOperator, st *decomposeState) int {
 		Cols:     w.Cols(),
 	}, out)
 	st.addEdge(idx, childIdx, SingleChild)
-	return idx
+	return idx, nil
 }
 
 // decomposeCompound creates a native CompoundStageSpec for set operations
@@ -1091,19 +1099,25 @@ type compoundOp interface {
 	CompoundOpType() PS.CompoundOp
 }
 
-func decomposeCompound(c DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) int {
+func decomposeCompound(c DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
 	comp, ok := c.(compoundOp)
 	if !ok {
 		// REQ002211: fallback to native source if type assertion fails.
 		return decomposeNativeSource(c, st)
 	}
-	leftIdx := decomposeOp(comp.LeftChild(), st, planner, specialize)
-	rightIdx := decomposeOp(comp.RightChild(), st, planner, specialize)
+	leftIdx, err := decomposeOp(comp.LeftChild(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
+	rightIdx, err := decomposeOp(comp.RightChild(), st, planner, specialize)
+	if err != nil {
+		return 0, err
+	}
 	leftOut := st.childOutput(leftIdx)
 	idx := st.addStage(&CompoundStageSpec{Op: comp.CompoundOpType()}, leftOut)
 	st.addEdge(idx, leftIdx, LeftChild)
 	st.addEdge(idx, rightIdx, RightChild)
-	return idx
+	return idx, nil
 }
 
 // resolveAggFunc parses an aggregate function expression (e.g. SUM(col),
@@ -1224,20 +1238,20 @@ func isJoinOp(op DT.Operator) bool {
 // decomposeDML creates a DML StageSpec (Insert/Update/Delete). Output
 // schema is empty (DML outputs no result cols unless RETURNING — caller
 // handles that at the executor layer.
-func decomposeDML(spec StageSpec, st *decomposeState) int {
-	return st.addStage(spec, outputSchema{})
+func decomposeDML(spec StageSpec, st *decomposeState) (int, error) {
+	return st.addStage(spec, outputSchema{}), nil
 }
 
 // decomposeNativeSource wraps a simple source operator (ConstRow,
 // FusedScan, Values, DDL, admin) in a native ScanStageSpec. This avoids
 // the LegacyBatchStageSpec overhead (Specialize call) and produces a
 // proper CatSource stage that the pipeline can optimize.
-func decomposeNativeSource(op DT.Operator, st *decomposeState) int {
+func decomposeNativeSource(op DT.Operator, st *decomposeState) (int, error) {
 	return st.addStage(&ScanStageSpec{
 		NewProducer: func() UT.BatchProducer {
 			return NewRowOperatorAsProducer(op)
 		},
-	}, outputSchema{})
+	}, outputSchema{}), nil
 }
 
 // tryDecomposeFusedScan is the fusedScan candidate detection.

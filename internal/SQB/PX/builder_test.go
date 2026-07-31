@@ -44,7 +44,7 @@ func (p *simpleProducer) Close() error { return nil }
 // --- decomposePlan tests ---
 
 func TestDecomposePlan_NilRoot(t *testing.T) {
-	stages, edges, rootIdx, _ := decomposePlan(nil, nil, nil)
+	stages, edges, rootIdx, _, _ := decomposePlan(nil, nil, nil)
 	if len(stages) != 0 {
 		t.Fatalf("expected 0 stages, got %d", len(stages))
 	}
@@ -58,7 +58,7 @@ func TestDecomposePlan_NilRoot(t *testing.T) {
 
 func TestDecomposePlan_SeqScan(t *testing.T) {
 	ss := OP.NewSeqScan("t1")
-	stages, edges, rootIdx, _ := decomposePlan(ss, nil, nil)
+	stages, edges, rootIdx, _, _ := decomposePlan(ss, nil, nil)
 
 	if len(stages) != 1 {
 		t.Fatalf("expected 1 stage, got %d", len(stages))
@@ -83,7 +83,7 @@ func TestDecomposePlan_FilterSeqScan(t *testing.T) {
 	}
 	filter := OP.NewFilter(ss, pred, nil)
 
-	stages, edges, rootIdx, _ := decomposePlan(filter, nil, nil)
+	stages, edges, rootIdx, _, _ := decomposePlan(filter, nil, nil)
 
 	if len(stages) != 2 {
 		t.Fatalf("expected 2 stages, got %d", len(stages))
@@ -123,7 +123,7 @@ func TestDecomposePlan_ProjectFilterSeqScan(t *testing.T) {
 		&PS.Ident{Name: "b"},
 	})
 
-	stages, edges, rootIdx, _ := decomposePlan(proj, nil, nil)
+	stages, edges, rootIdx, _, _ := decomposePlan(proj, nil, nil)
 
 	if len(stages) != 3 {
 		t.Fatalf("expected 3 stages, got %d", len(stages))
@@ -161,7 +161,7 @@ func TestDecomposePlan_LimitOffset(t *testing.T) {
 	limit := OP.NewLimit(ss, 10)
 	offset := OP.NewOffset(limit, 5)
 
-	stages, edges, rootIdx, _ := decomposePlan(offset, nil, nil)
+	stages, edges, rootIdx, _, _ := decomposePlan(offset, nil, nil)
 
 	if len(stages) != 3 {
 		t.Fatalf("expected 3 stages, got %d", len(stages))
@@ -191,7 +191,7 @@ func TestDecomposePlan_FallbackToLegacy(t *testing.T) {
 	ss := OP.NewSeqScan("t1")
 	sort := OP.NewSort(ss, nil)
 
-	stages, _, rootIdx, _ := decomposePlan(sort, nil, nil)
+	stages, _, rootIdx, _, _ := decomposePlan(sort, nil, nil)
 
 	if len(stages) != 2 {
 		t.Fatalf("expected 2 stages, got %d", len(stages))
@@ -214,7 +214,7 @@ func TestDecomposePlan_SeqScanDirect(t *testing.T) {
 	// REQ002171: AdaptiveOp removed — raw operator tree is used directly.
 	ss := OP.NewSeqScan("t1")
 
-	stages, _, rootIdx, _ := decomposePlan(ss, nil, nil)
+	stages, _, rootIdx, _, _ := decomposePlan(ss, nil, nil)
 
 	if len(stages) != 1 {
 		t.Fatalf("expected 1 stage, got %d", len(stages))
@@ -237,7 +237,7 @@ func TestDecomposePlan_PipelineIntegration(t *testing.T) {
 	}
 	filter := OP.NewFilter(ss, pred, nil)
 
-	stages, edges, rootIdx, _ := decomposePlan(filter, nil, nil)
+	stages, edges, rootIdx, _, _ := decomposePlan(filter, nil, nil)
 	spec := &PipelineSpec{
 		Stages:  stages,
 		Edges:   edges,
@@ -462,7 +462,7 @@ func TestDecomposePlan_OutputSchema(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := tc.root()
-			_, _, _, schema := decomposePlan(root, nil, nil)
+			_, _, _, schema, _ := decomposePlan(root, nil, nil)
 			got := schema.names
 			if tc.wantCols == nil {
 				if root == nil {
