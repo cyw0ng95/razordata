@@ -50,6 +50,11 @@ Each iteration must integrate with already implemented parts. Before implementin
   Error paths, edge cases (empty, large, corrupt input, missing files),
   idempotency (double-close, sync-after-close), and boundary conditions
   are as important as happy paths.
+- **SQL correctness bug fix → add regression case** — every fix that changes
+  query results, error codes, or behavior must include a `*_test.go` test
+  case that reproduces the original bug and verifies the fix. The test
+  must fail before the fix and pass after. Use table-driven tests with
+  the bug's SLT file name or issue ID in the test name.
 - **Commit in-time** — after each requirement is implemented and its tests pass,
   commit immediately. Do not batch multiple requirements into one commit.
 
