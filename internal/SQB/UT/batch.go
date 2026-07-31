@@ -865,6 +865,60 @@ func (b *Batch) ToRows() []pl.Row {
 	return out
 }
 
+// RowsToBatch converts a slice of pl.Row into a columnar Batch.
+// This is the inverse of Batch.ToRows/ToRowsShared: it walks the row
+// Data slices and appends each value into the typed column vectors,
+// carrying over column names and per-row types (or inferring a type
+// from the value Kind when Row.Types is empty). The returned batch
+// must be returned to the pool via Put when done. REQ002235.
+func RowsToBatch(rows []Row) *Batch {
+	if len(rows) == 0 {
+		return nil
+	}
+	first := rows[0]
+	nCols := len(first.Cols)
+	if nCols == 0 {
+		nCols = len(first.Data)
+	}
+	batch := GetBatch(nCols)
+	for i := 0; i < nCols; i++ {
+		if i < len(first.Cols) {
+			batch.SetColumnName(i, first.Cols[i])
+		}
+	}
+	for _, row := range rows {
+		for i := 0; i < nCols; i++ {
+			var val any
+			isNull := true
+			if i < len(row.Data) {
+				v := row.Data[i]
+				if v.Kind != KindNull {
+					isNull = false
+					val = v.ToAny()
+				}
+			}
+			var typ LX.TokenType
+			if i < len(row.Types) && row.Types[i] != 0 {
+				typ = row.Types[i]
+			} else if i < len(row.Data) {
+				switch row.Data[i].Kind {
+				case KindInt:
+					typ = LX.T_BIGINT
+				case KindFloat:
+					typ = LX.T_FLOAT_KW
+				case KindText, KindBlob:
+					typ = LX.T_TEXT
+				case KindBool:
+					typ = LX.T_BOOL
+				}
+			}
+			batch.AppendRow(i, typ, val, isNull)
+		}
+		batch.AdvanceSize()
+	}
+	return batch
+}
+
 // ToRowsShared materializes a Batch to []pl.Row using a pre-allocated
 // shared buffer for the per-row Data slices. The buffer is a flat slab
 // where each row's Data is a sub-slice. Callers must not mutate the

@@ -808,59 +808,9 @@ func drainResultRows(resultRows []DT.Row, resultPos *int) (*UT.Batch, error) {
 	if batchSize > UT.BatchSize {
 		batchSize = UT.BatchSize
 	}
-	batch := rowsToBatchWT(resultRows[*resultPos : *resultPos+batchSize])
+	batch := UT.RowsToBatch(resultRows[*resultPos : *resultPos+batchSize])
 	*resultPos += batchSize
 	return batch, nil
-}
-
-// rowsToBatchWT converts a slice of DT.Row to a columnar Batch.
-// REQ001983.
-func rowsToBatchWT(rows []DT.Row) *UT.Batch {
-	if len(rows) == 0 {
-		return nil
-	}
-	first := rows[0]
-	nCols := len(first.Cols)
-	if nCols == 0 {
-		nCols = len(first.Data)
-	}
-	batch := UT.GetBatch(nCols)
-	for i := 0; i < nCols; i++ {
-		if i < len(first.Cols) {
-			batch.SetColumnName(i, first.Cols[i])
-		}
-	}
-	for _, row := range rows {
-		for i := 0; i < nCols; i++ {
-			var val any
-			isNull := true
-			if i < len(row.Data) {
-				v := row.Data[i]
-				if v.Kind != DT.KindNull {
-					isNull = false
-					val = v.ToAny()
-				}
-			}
-			var typ LX.TokenType
-			if i < len(row.Types) && row.Types[i] != 0 {
-				typ = row.Types[i]
-			} else if i < len(row.Data) {
-				switch row.Data[i].Kind {
-				case DT.KindInt:
-					typ = LX.T_BIGINT
-				case DT.KindFloat:
-					typ = LX.T_FLOAT_KW
-				case DT.KindText, DT.KindBlob:
-					typ = LX.T_TEXT
-				case DT.KindBool:
-					typ = LX.T_BOOL
-				}
-			}
-			batch.AppendRow(i, typ, val, isNull)
-		}
-		batch.AdvanceSize()
-	}
-	return batch
 }
 
 type Update struct {
