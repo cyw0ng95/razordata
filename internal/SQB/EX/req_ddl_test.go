@@ -112,7 +112,7 @@ func TestREQ000725_ImplicitCrossJoin(t *testing.T) {
 		{"t55", []any{1, 40}},
 	}
 	for _, r := range rows {
-		_, err := ex.Exec(ctx, "INSERT INTO "+r.t+" VALUES ("+OP.ItoaSimple(r.cols[0].(int))+", "+OP.ItoaSimple(r.cols[1].(int))+")")
+		_, err := ex.Exec(ctx, "INSERT INTO "+r.t+" VALUES ("+strconv.Itoa(r.cols[0].(int))+", "+strconv.Itoa(r.cols[1].(int))+")")
 		if err != nil {
 			t.Fatalf("insert %s: %v", r.t, err)
 		}

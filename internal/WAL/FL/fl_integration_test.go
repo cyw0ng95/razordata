@@ -134,8 +134,8 @@ func TestFlusher_BatchSync(t *testing.T) {
 	}
 	defer f.Close()
 
-	if err := f.BatchSync(); err != nil {
-		t.Fatalf("BatchSync failed: %v", err)
+	if err := f.Sync(); err != nil {
+		t.Fatalf("Sync failed: %v", err)
 	}
 }
 
@@ -164,8 +164,8 @@ func TestFlusher_AfterClose(t *testing.T) {
 		t.Fatalf("Sync after close failed: %v", err)
 	}
 
-	if err := f.BatchSync(); err != nil {
-		t.Fatalf("BatchSync after close failed: %v", err)
+	if err := f.Sync(); err != nil {
+		t.Fatalf("Sync after close failed: %v", err)
 	}
 
 	if err := f.SyncDir(); err != nil {

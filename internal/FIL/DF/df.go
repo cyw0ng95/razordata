@@ -4,14 +4,13 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"hash/crc32"
 	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
 
-	"github.com/cyw0ng95/razordata/internal/FIL/IO"
+	IO "github.com/cyw0ng95/razordata/internal/FIL/IO"
 	"github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"golang.org/x/sys/unix"
@@ -25,25 +24,10 @@ const (
 
 var (
 	ErrCorrupt         = errors.New("block checksum mismatch: data corrupted")
-	ErrIO              = errors.New("I/O error")
 	ErrBigBlock        = errors.New("data exceeds block capacity")
 	ErrClosed          = errors.New("block device is closed")
-	ErrDiskFull        = errors.New("disk full (ENOSPC)")
 	errMmapUnsupported = errors.New("mmap not supported on this platform")
 )
-
-// wrapWriteError checks for ENOSPC and returns ErrDiskFull; otherwise
-// wraps the error as ErrIO.
-func wrapWriteError(err error) error {
-	if err == nil {
-		return nil
-	}
-	var errno syscall.Errno
-	if errors.As(err, &errno) && errno == unix.ENOSPC {
-		return fmt.Errorf("%w: %v", ErrDiskFull, err)
-	}
-	return fmt.Errorf("%w: %v", ErrIO, err)
-}
 
 var bufPool = sync.Pool{
 	New: func() any {
@@ -70,7 +54,7 @@ type BlockDevice struct {
 	mmapBuf []byte
 	log     lg.Logger
 	mu      sync.RWMutex // protects fd: concurrent-close protection (REQ000600)
-	Ring    *uring.Ring  // io_uring ring (REQ001202), nil on unsupported platforms
+	Ring    *IO.Ring  // io_uring ring (REQ001202), nil on unsupported platforms
 	ringMu  sync.Mutex   // serializes ring I/O operations
 }
 
@@ -140,7 +124,7 @@ func openFile(path string, readOnly, create bool, logs []lg.Logger) (*BlockDevic
 	}
 
 	if runtime.GOOS == "linux" {
-		ring, err := uring.New(256)
+		ring, err := IO.New(256)
 		if err != nil {
 			if log != nil {
 				log.Info("df.open", "path", path, "msg", "io_uring unavailable, using synchronous I/O", "err", err)
@@ -240,7 +224,7 @@ func (d *BlockDevice) writeAt(fd int, buf []byte, offset int64) (int, error) {
 // before calling SubmitBatch.
 func (d *BlockDevice) SubmitBatch(count int) (int, error) {
 	if d.Ring == nil {
-		return 0, uring.ErrUnsupported
+		return 0, IO.ErrUnsupported
 	}
 	d.ringMu.Lock()
 	defer d.ringMu.Unlock()
@@ -268,7 +252,7 @@ func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []
 	if d.mmap && d.mmapBuf != nil {
 		off := int64(offset)
 		if off+int64(len(tmp)) > int64(d.mmapSz) {
-			return ErrIO
+			return IO.ErrIO
 		}
 		copy(tmp, d.mmapBuf[off:off+int64(len(tmp))])
 	} else {
@@ -280,7 +264,7 @@ func (d *BlockDevice) ReadBlock(_ context.Context, blockID uint64, n int, buf []
 			return err
 		}
 		if nn < DefaultBlockSize {
-			return ErrIO
+			return IO.ErrIO
 		}
 	}
 
@@ -334,7 +318,7 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 			if d.log != nil {
 				d.log.Error("df.write_block", "blockID", blockID, "err", err)
 			}
-			return wrapWriteError(err)
+			return IO.WrapWriteError(err)
 		}
 		return nil
 	}
@@ -357,7 +341,7 @@ func (d *BlockDevice) WriteBlock(_ context.Context, blockID uint64, data []byte)
 		if d.log != nil {
 			d.log.Error("df.write_block", "blockID", blockID, "err", err)
 		}
-		return wrapWriteError(err)
+		return IO.WrapWriteError(err)
 	}
 	return nil
 }
@@ -385,7 +369,7 @@ func (d *BlockDevice) ReadBlockFull(blockID uint64, buf []byte) error {
 		return err
 	}
 	if nn < DefaultBlockSize {
-		return ErrIO
+		return IO.ErrIO
 	}
 
 	storedSum := binary.LittleEndian.Uint32(tmp[DataLen-ChecksumLen:])

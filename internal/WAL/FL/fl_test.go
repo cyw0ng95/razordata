@@ -163,18 +163,6 @@ func TestSyncAfterCloseReturnsNil(t *testing.T) {
 	}
 }
 
-// TestBatchSyncAfterCloseReturnsNil mirrors the Sync test for the
-// BatchSync method.
-func TestBatchSyncAfterCloseReturnsNil(t *testing.T) {
-	f, _ := newTestFlusher(t)
-	if err := f.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if err := f.BatchSync(); err != nil {
-		t.Errorf("BatchSync after Close: %v", err)
-	}
-}
-
 // TestSyncDirAfterCloseReturnsNil verifies SyncDir is also a no-op
 // after Close (R22). This matches the contract that post-Close
 // public API methods cannot error.

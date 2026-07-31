@@ -3,10 +3,9 @@ package mf
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"hash/crc32"
-	"syscall"
 
+	IO "github.com/cyw0ng95/razordata/internal/FIL/IO"
 	"github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/LOG/LG"
 	"golang.org/x/sys/unix"
@@ -22,22 +21,7 @@ var (
 	ErrUpgradeRequired = errors.New("database version is newer than this software")
 	ErrBadVersion      = errors.New("meta page version mismatch")
 	ErrCorrupt         = errors.New("meta page checksum mismatch")
-	ErrIO              = errors.New("I/O error")
-	ErrDiskFull        = errors.New("disk full (ENOSPC)")
 )
-
-// wrapWriteError checks for ENOSPC and returns ErrDiskFull; otherwise
-// wraps the error as ErrIO.
-func wrapWriteError(err error) error {
-	if err == nil {
-		return nil
-	}
-	var errno syscall.Errno
-	if errors.As(err, &errno) && errno == unix.ENOSPC {
-		return fmt.Errorf("%w: %v", ErrDiskFull, err)
-	}
-	return fmt.Errorf("%w: %v", ErrIO, err)
-}
 
 // MetaPage occupies block 0 of meta.razor.
 type MetaPage struct {
@@ -187,7 +171,7 @@ func writeMeta(fd int, p *MetaPage) error {
 	written, err := unix.Pwrite(fd, data[:metaPageSize], 0)
 	EC.BUG_ON(err == nil && written != metaPageSize, "mf.writeMeta: short write, wrote %d bytes, want %d", written, metaPageSize)
 	if err != nil {
-		return wrapWriteError(err)
+		return IO.WrapWriteError(err)
 	}
 	return nil
 }
