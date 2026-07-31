@@ -1,22 +1,24 @@
 package AG
 
-import DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-
-type Value = DT.Value
-type ValueKind = DT.ValueKind
-type Row = DT.Row
-type Operator = DT.Operator
-type ExecContext = DT.ExecContext
-type ColInfo = DT.ColInfo
-
-const (
-	KindNull  = DT.KindNull
-	KindInt   = DT.KindInt
-	KindFloat = DT.KindFloat
-	KindText  = DT.KindText
-	KindBlob  = DT.KindBlob
-	KindBool  = DT.KindBool
+import (
+	CT "github.com/cyw0ng95/razordata/internal/SYS/CT"
+	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
-var ErrNoRows = DT.ErrNoRows
-var ErrClosed = DT.ErrClosed
+type Value = CT.Value
+type ValueKind = CT.ValueKind
+type Row = pl.Row
+type Operator = pl.Operator
+type ExecContext = pl.ExecContext
+type ColInfo = pl.ColInfo
+
+const (
+	KindNull  = CT.KindNull
+	KindInt   = CT.KindInt
+	KindFloat = CT.KindFloat
+	KindText  = CT.KindText
+	KindBlob  = CT.KindBlob
+	KindBool  = CT.KindBool
+)
+
+var ErrNoRows = pl.ErrNoRows
