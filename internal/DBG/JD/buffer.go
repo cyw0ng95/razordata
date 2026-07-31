@@ -3,71 +3,22 @@
 package JD
 
 import (
-	"math/bits"
-	"sync/atomic"
+	te "github.com/cyw0ng95/razordata/internal/DBG/TE"
 )
 
-type Buffer struct {
-	events   []JoinEvent
-	capacity uint64
-	head     atomic.Uint64
-	written  atomic.Uint64
-	dropped  atomic.Int64
-}
+// Buffer is a ring buffer for Join events using TE's generic Ring.
+type Buffer struct{ ring *te.Ring[JoinEvent] }
 
+// NewBuffer creates a ring buffer with capacity rounded up to the next power of 2.
 func NewBuffer(capacity int) *Buffer {
-	if capacity <= 0 {
-		capacity = 1
-	}
-	capPow2 := uint64(1) << bits.Len(uint(capacity-1))
-	return &Buffer{
-		events:   make([]JoinEvent, capPow2),
-		capacity: capPow2,
-	}
+	return &Buffer{ring: te.NewRing[JoinEvent](capacity)}
 }
 
-func (b *Buffer) Append(e JoinEvent) bool {
-	pos := b.written.Add(1) - 1
-	idx := pos & (b.capacity - 1)
-	b.events[idx] = e
-	b.head.Add(1)
-	overwritten := pos >= b.capacity
-	if overwritten {
-		b.dropped.Add(1)
-	}
-	return overwritten
-}
+// Append writes an event to the buffer, returning true if an old event was overwritten.
+func (b *Buffer) Append(e JoinEvent) bool { return b.ring.Append(e) }
 
-func (b *Buffer) Flush() []JoinEvent {
-	head := b.head.Swap(0)
-	b.written.Store(0)
-	b.dropped.Store(0)
+// Flush returns all buffered events and resets the buffer.
+func (b *Buffer) Flush() []JoinEvent { return b.ring.Flush() }
 
-	if head == 0 {
-		return nil
-	}
-
-	n := head
-	if n > b.capacity {
-		n = b.capacity
-	}
-
-	start := head - n
-	result := make([]JoinEvent, n)
-	for i := uint64(0); i < n; i++ {
-		result[i] = b.events[(start+i)&(b.capacity-1)]
-	}
-	return result
-}
-
-func (b *Buffer) Stats() (capacity int, used int64, dropped int64) {
-	head := b.head.Load()
-	dropped = b.dropped.Load()
-
-	used = int64(head)
-	if used > int64(b.capacity) {
-		used = int64(b.capacity)
-	}
-
-	return int(b.capacity), used, dropped
-}
+// Stats returns buffer statistics.
+func (b *Buffer) Stats() (cap int, used int64, dropped int64) { return b.ring.Stats() }

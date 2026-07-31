@@ -4,20 +4,11 @@ package te
 
 import (
 	"sync/atomic"
-
-	"github.com/cyw0ng95/razordata/internal/LOG/HK"
 )
 
-// Event is a single trace event in the ring.
-type Event struct {
-	Class  string
-	Fields map[string]any
-	Seq    uint64
-}
-
-// Ring is a fixed-capacity lock-free circular buffer.
-type Ring struct {
-	buf      []Event
+// Ring is a fixed-capacity lock-free circular buffer for trace events.
+type Ring[T any] struct {
+	buf      []T
 	capacity uint64
 	head     atomic.Uint64
 	written  atomic.Uint64
@@ -25,7 +16,7 @@ type Ring struct {
 }
 
 // NewRing creates a ring buffer with capacity rounded up to the next power of 2.
-func NewRing(capacity int) *Ring {
+func NewRing[T any](capacity int) *Ring[T] {
 	if capacity <= 0 {
 		capacity = 1024
 	}
@@ -37,26 +28,54 @@ func NewRing(capacity int) *Ring {
 	cap64 |= cap64 >> 8
 	cap64 |= cap64 >> 16
 	cap64++
-	return &Ring{buf: make([]Event, cap64), capacity: cap64}
+	return &Ring[T]{buf: make([]T, cap64), capacity: cap64}
 }
 
-// Append writes an event. Returns true if it overwrote an old event.
-func (r *Ring) Append(class string, fields map[string]any) bool {
-	pos := r.head.Add(1) - 1
+// Append writes an event to the buffer, returning true if an old event was overwritten.
+func (r *Ring[T]) Append(e T) bool {
+	pos := r.written.Add(1) - 1
 	idx := pos & (r.capacity - 1)
-	if pos >= r.capacity {
+	r.buf[idx] = e
+	r.head.Add(1)
+	overwritten := pos >= r.capacity
+	if overwritten {
 		r.dropped.Add(1)
 	}
-	r.buf[idx] = Event{Class: class, Fields: fields, Seq: pos}
-	r.written.Add(1)
-	return pos >= r.capacity
+	return overwritten
 }
 
-// Stats returns current ring statistics.
-func (r *Ring) Stats() hk.TraceStats {
-	used := r.written.Load()
-	if used > r.capacity {
-		used = r.capacity
+// Flush returns all buffered events and resets the buffer.
+func (r *Ring[T]) Flush() []T {
+	head := r.head.Swap(0)
+	r.written.Store(0)
+	r.dropped.Store(0)
+
+	if head == 0 {
+		return nil
 	}
-	return hk.TraceStats{Capacity: int(r.capacity), Used: int(used), Dropped: r.dropped.Load()}
+
+	n := head
+	if n > r.capacity {
+		n = r.capacity
+	}
+
+	start := head - n
+	result := make([]T, n)
+	for i := uint64(0); i < n; i++ {
+		result[i] = r.buf[(start+i)&(r.capacity-1)]
+	}
+	return result
+}
+
+// Stats returns buffer statistics.
+func (r *Ring[T]) Stats() (cap int, used int64, dropped int64) {
+	head := r.head.Load()
+	dropped = r.dropped.Load()
+
+	used = int64(head)
+	if used > int64(r.capacity) {
+		used = int64(r.capacity)
+	}
+
+	return int(r.capacity), used, dropped
 }

@@ -41,7 +41,7 @@ type debugger struct {
 	opts    Options
 	control *dc.Control
 	server  *sk.Server
-	ring    *te.Ring
+	ring    *te.Ring[te.Event]
 	mu      sync.Once
 }
 
@@ -53,7 +53,7 @@ func NewDebugger(opts Options) (Debugger, error) {
 	d := &debugger{opts: opts, control: dc.NewControl()}
 
 	if opts.TraceEventCapacity > 0 {
-		d.ring = te.NewRing(opts.TraceEventCapacity)
+		d.ring = te.NewRing[te.Event](opts.TraceEventCapacity)
 		hk.DefaultSink = te.NewSink(d.ring)
 	}
 
