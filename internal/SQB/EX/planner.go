@@ -19,8 +19,6 @@ import (
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
-	OC "github.com/cyw0ng95/razordata/internal/SQO/OC"
-	PF "github.com/cyw0ng95/razordata/internal/SQO/PF"
 	QP "github.com/cyw0ng95/razordata/internal/SQF/QP"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
@@ -85,12 +83,6 @@ type Planner struct {
 	// start of every Plan() call (PlanResult cache invalidation is
 	// handled separately).
 	splitAndCache map[uintptr][]PS.Expr
-	// REQ001432: optimizer is the SQO/OC Optimizer instance. Created
-	// empty in NewPlanner; the full pass chain is wired in REQ001450.
-	// Until then, Plan() does not invoke optimizer.Optimize() —
-	// the field exists only to establish the SQF → SQO → SQB
-	// dependency order.
-	optimizer *OC.Optimizer
 	// REQ002256: qpOptimizer runs QP passes on the QueryPlan DAG
 	// built alongside the operator tree. Shadow-mode verified in tests.
 	qpOptimizer *QP.Optimizer
@@ -138,19 +130,6 @@ func NewPlanner() *Planner {
 		memo:      make(map[string]*plan, maxPlanCacheSize),
 		memoOrder: make([]string, maxPlanCacheSize),
 		catalog:   make(map[string]*tableInfo),
-		// REQ001450: wire SQO passes. Order: constant folding,
-		// column pruning, predicate pushdown, limit pushdown (TopN fusion).
-		optimizer: OC.New().
-			AddPass(&PF.ConstantFoldingPass{}).
-			AddPass(&PF.SubqueryDecorrelationPass{}).
-			AddPass(&PF.IndexSelectionPass{}).
-			AddPass(&PF.RedundantPredicateEliminationPass{}).
-			AddPass(&PF.OrToInExpansionPass{}).
-			AddPass(&PF.ImplicitCastEliminationPass{}).
-			AddPass(&PF.SortEliminationPass{}).
-			AddPass(&PF.ColumnPruningPass{}).
-			AddPass(&PF.PredicatePushdownPass{}).
-			AddPass(&PF.LimitPushdownPass{}),
 		qpOptimizer: QP.NewOptimizer().
 			AddPass(&QP.ConstantFoldingPass{}).
 			AddPass(&QP.ColumnPruningPass{}).
@@ -170,47 +149,6 @@ func (p *Planner) runQPPasses(op DT.Operator, stmt PS.Stmt) {
 	}
 	qp.Stmt = stmt
 	_ = p.qpOptimizer.Optimize(qp)
-}
-
-// runSQOPasses invokes the SQO optimizer on the built operator plan.
-// Returns the original operator unchanged if the optimizer has no passes
-// registered or if optimization fails. REQ001450.
-func (p *Planner) runSQOPasses(op DT.Operator, stmt PS.Stmt) DT.Operator {
-	if p.optimizer.PassCount() == 0 {
-		return op
-	}
-	ctx := &OC.Context{
-		Factory:    OP.Factory(),
-		Tables:     p.buildTableSchema(),
-		Catalog:    &exCatalogReader{catalog: p.catalog},
-		SubPlanner: &exSubPlanner{p: p},
-	}
-	plan := &OC.Plan{Root: op, Stmt: stmt}
-	result, err := p.optimizer.Optimize(plan, ctx)
-	if err != nil {
-		return op
-	}
-	if result == nil || result.Root == nil {
-		return op
-	}
-	return result.Root.(DT.Operator)
-}
-
-// buildTableSchema converts the planner's internal catalog to
-// OC.TableSchema for the SQO pass context.
-func (p *Planner) buildTableSchema() map[string]OC.TableSchema {
-	if len(p.catalog) == 0 {
-		return nil
-	}
-	out := make(map[string]OC.TableSchema, len(p.catalog))
-	for name, ti := range p.catalog {
-		cols := make([]string, len(ti.cols))
-		for i, c := range ti.cols {
-			cols[i] = c.Name
-		}
-		out[name] = OC.TableSchema{Columns: cols, PK: ti.pk}
-	}
-	return out
 }
 
 // SetPool attaches a WorkerPool to the planner for parallel operator
@@ -265,17 +203,6 @@ func NewPlannerWithStore(store DT.Store) *Planner {
 		memoOrder: make([]string, maxPlanCacheSize),
 		catalog:   make(map[string]*tableInfo),
 		store:     store,
-		optimizer: OC.New().
-			AddPass(&PF.ConstantFoldingPass{}).
-			AddPass(&PF.SubqueryDecorrelationPass{}).
-			AddPass(&PF.IndexSelectionPass{}).
-			AddPass(&PF.RedundantPredicateEliminationPass{}).
-			AddPass(&PF.OrToInExpansionPass{}).
-			AddPass(&PF.ImplicitCastEliminationPass{}).
-			AddPass(&PF.SortEliminationPass{}).
-			AddPass(&PF.ColumnPruningPass{}).
-			AddPass(&PF.PredicatePushdownPass{}).
-			AddPass(&PF.LimitPushdownPass{}),
 		qpOptimizer: QP.NewOptimizer().
 			AddPass(&QP.ConstantFoldingPass{}).
 			AddPass(&QP.ColumnPruningPass{}).
@@ -291,17 +218,6 @@ func NewPlannerWithStats(store DT.Store, statsCatalog DT.StatsCatalog) *Planner 
 		catalog:      make(map[string]*tableInfo),
 		store:        store,
 		statsCatalog: statsCatalog,
-		optimizer: OC.New().
-			AddPass(&PF.ConstantFoldingPass{}).
-			AddPass(&PF.SubqueryDecorrelationPass{}).
-			AddPass(&PF.IndexSelectionPass{}).
-			AddPass(&PF.RedundantPredicateEliminationPass{}).
-			AddPass(&PF.OrToInExpansionPass{}).
-			AddPass(&PF.ImplicitCastEliminationPass{}).
-			AddPass(&PF.SortEliminationPass{}).
-			AddPass(&PF.ColumnPruningPass{}).
-			AddPass(&PF.PredicatePushdownPass{}).
-			AddPass(&PF.LimitPushdownPass{}),
 		qpOptimizer: QP.NewOptimizer().
 			AddPass(&QP.ConstantFoldingPass{}).
 			AddPass(&QP.ColumnPruningPass{}).

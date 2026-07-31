@@ -402,7 +402,9 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 	// REQ001450: run SQO optimizer passes (column pruning, predicate
 	// pushdown, limit pushdown). Wraps the operator tree into an
 	// OC.Plan, runs the pass chain, and unwraps the result.
-	current = p.runSQOPasses(current, s)
+	// REQ002256: run QP optimizer passes on the QueryPlan built alongside
+	// the operator tree. Shadow-mode verified in TestShadowMode.
+	p.runQPPasses(current, s)
 
 	return current
 }
