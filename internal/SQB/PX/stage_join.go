@@ -6,9 +6,7 @@ import (
 	"math"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	PL "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
 
@@ -1662,91 +1660,5 @@ func appendUint64(b []byte, v uint64) []byte {
 
 // appendFloat64 appends a float64 as its 8-byte representation.
 func appendFloat64(b []byte, v float64) []byte {
-	return appendUint64(b, math.Float64bits(v))
-}
-
-// NLJStageSpec creates NLJStage instances. A NLJStage wraps a row-based
-// NestedLoopJoin operator as a Stage, handling INNER/LEFT/RIGHT/FULL/CROSS
-// joins with a row-based predicate (OnFunc). REQ002182.
-// Uses the same SpecializeFunc pattern as LegacyBatchStageSpec to convert
-// the row-based operator tree into a BatchProducer.
-type NLJStageSpec struct {
-	Root       *OP.NestedLoopJoin
-	Planner    PL.QueryPlanner
-	Specialize SpecializeFunc
-}
-
-// NewRuntime creates an NLJStage from this spec.
-func (s *NLJStageSpec) NewRuntime() Stage {
-	var producer UT.BatchProducer
-	if s.Specialize != nil {
-		producer = s.Specialize(s.Root, s.Planner)
-	}
-	if producer == nil {
-		producer = UT.NewBatchToRowAdapter(NewRowOperatorAsProducer(s.Root))
-	}
-	return &NLJStage{
-		producer: producer,
-		root:     s.Root,
-	}
-}
-
-// Category returns CatJoin.
-func (s *NLJStageSpec) Category() StageCategory { return CatJoin }
-
-// NLJStage wraps a row-based NestedLoopJoin as a Stage. It uses the
-// SpecializeFunc to convert the row-based operator tree into a BatchProducer
-// for the PipelineExecutor. REQ002182.
-type NLJStage struct {
-	producer UT.BatchProducer
-	root     *OP.NestedLoopJoin
-	execCtx  *DT.ExecContext
-	params   []any
-	closed   bool
-}
-
-// SetChild sets the child stage (implements ChildSetter).
-func (j *NLJStage) SetChild(_ ChildSide, child Stage) {
-	// NLJStage wraps a complete row-based operator — children are managed
-	// internally by the root NestedLoopJoin.
-}
-
-// PropagateParams stores parameter values (implements ParamPropagator).
-func (j *NLJStage) PropagateParams(args []any, buf *[]any) {
-	j.params = append(j.params[:0], args...)
-	if j.root != nil {
-		if w, ok := interface{}(j.root).(interface {
-			WithParams([]any) DT.Operator
-		}); ok {
-			w.WithParams(j.params)
-		}
-	}
-}
-
-// PropagateExecContext stores per-execution context for subquery evaluation.
-func (j *NLJStage) PropagateExecContext(ec *DT.ExecContext) {
-	j.execCtx = ec
-}
-
-// NextBatch returns the next batch from the NLJ.
-func (j *NLJStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if j.closed {
-		return nil, nil
-	}
-	return j.producer.NextBatch(ctx)
-}
-
-// Reset clears NLJ state.
-func (j *NLJStage) Reset(_ context.Context) error {
-	j.closed = false
-	return nil
-}
-
-// Close releases resources.
-func (j *NLJStage) Close() error {
-	j.closed = true
-	return j.root.Close()
+return appendUint64(b, math.Float64bits(v))
 }
