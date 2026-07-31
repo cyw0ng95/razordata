@@ -674,10 +674,11 @@ func (p *Planner) ExecuteSubqueryFirstMatch(ctx context.Context, stmt PS.Stmt, o
 	if err != nil {
 		return false, err
 	}
-	// Close the plan after probing for the first match so the
-	// memoized plan's outerInjector does not leak a stale outer
-	// reference across per-row calls (REQ000366).
-	defer planResult.Root.Close()
+	// REQ002218: do NOT defer planResult.Root.Close(). The planResult
+	// is memoized in the planner's cache; closing it would corrupt the
+	// shared SeqScan underneath outerInjector, breaking subsequent
+	// correlated evaluations on later outer rows. WT.RunSubqueryFirstMatch
+	// now handles lifecycle via resetSubqueryTree at the start of each call.
 	return WT.RunSubqueryFirstMatch(ctx, planResult, outer, params)
 }
 

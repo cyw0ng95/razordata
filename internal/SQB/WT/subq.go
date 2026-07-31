@@ -96,14 +96,48 @@ func injectOuter(op DT.Operator, outer *DT.Row) DT.Operator {
 	return op
 }
 
+// resetSubqueryTree walks the operator tree and resets every Resettable
+// operator found. This is needed when reusing a memoized subquery plan
+// across multiple outer-row evaluations: the inner SeqScan must rewind
+// its position to 0, and any Filter/Aggregate buffers must be cleared.
+// REQ002218.
+func resetSubqueryTree(op DT.Operator) {
+	if op == nil {
+		return
+	}
+	// If the operator is wrapped in an outerInjector, reset the inner child.
+	if inj, ok := op.(*outerInjector); ok {
+		resetSubqueryTree(inj.child)
+		return
+	}
+	// Reset the operator itself if it implements Resettable.
+	if r, ok := op.(pl.Resettable); ok {
+		_ = r.Reset(context.Background())
+	}
+	// Recursively walk children.
+	if lr, ok := op.(interface {
+		LeftChild() DT.Operator
+		RightChild() DT.Operator
+	}); ok {
+		resetSubqueryTree(lr.LeftChild())
+		resetSubqueryTree(lr.RightChild())
+	} else if c, ok := op.(interface{ Child() DT.Operator }); ok {
+		resetSubqueryTree(c.Child())
+	}
+}
+
 func RunSubqueryPlan(ctx context.Context, pl *pl.PlanResult, outer *DT.Row, params []any) ([]DT.Row, error) {
 	if pl == nil || pl.Root == nil {
 		return nil, EV.ErrSubquery
 	}
+	// REQ002218: reset the inner state before each evaluation so the
+	// memoized plan can be reused across multiple outer-row evaluations.
+	// Do NOT close pl.Root after execution — the plan is memoized and
+	// closing it would corrupt subsequent evaluations.
+	resetSubqueryTree(pl.Root)
 	if outer != nil {
 		pl.Root = injectOuter(pl.Root, outer)
 	}
-	defer pl.Root.Close()
 	var out []DT.Row
 	for {
 		if err := ctx.Err(); err != nil {
@@ -125,19 +159,29 @@ func RunSubqueryPlan(ctx context.Context, pl *pl.PlanResult, outer *DT.Row, para
 // RunSubqueryPlan: returns (true, nil) as soon as the first row is
 // produced, without materializing all rows. (false, nil) at EOF.
 // callers must use the plan directly (this function does not close it).
+//
+// REQ002218: the planResult is memoized in the planner's cache.
+// On every call we (1) reset the inner state so the subquery re-evaluates
+// from scratch for the new outer row, (2) injectOuter wraps the leaf
+// SeqScan/IndexScan with an outerInjector that carries the current outer
+// row's references, and (3) walk the tree until the first match (or EOF).
+// We do NOT close pl.Root — closing the shared memoized plan would corrupt
+// subsequent correlated evaluations on later outer rows.
 func RunSubqueryFirstMatch(ctx context.Context, pl *pl.PlanResult, outer *DT.Row, params []any) (bool, error) {
 	if pl == nil || pl.Root == nil {
 		return false, EV.ErrSubquery
 	}
+	// REQ002218: reset the inner state before each evaluation.
+	resetSubqueryTree(pl.Root)
 	if outer != nil {
 		pl.Root = injectOuter(pl.Root, outer)
 	}
 	// Drain until the first row — that's all we need for an
 	// existential check. Returns immediately on the first hit.
+	// REQ002218: on context error, do NOT close pl.Root — the memoized
+	// plan is shared and must remain usable for subsequent evaluations.
 	for {
 		if err := ctx.Err(); err != nil {
-			// Close on context error so the caller doesn't leak.
-			pl.Root.Close()
 			return false, err
 		}
 		_, err := pl.Root.Next(ctx)
@@ -158,14 +202,17 @@ func RunSubqueryFirstMatch(ctx context.Context, pl *pl.PlanResult, outer *DT.Row
 // hadNull=true  → no match, but at least one row had NULL
 // (false,false) → no match, no NULL (definite false)
 // Stops at the first match instead of materializing all rows.
+// REQ002218: do NOT close plan.Root — the plan is memoized and closing
+// it would corrupt subsequent correlated evaluations.
 func RunSubqueryInMatch(ctx context.Context, plan *pl.PlanResult, target any, outer *DT.Row, params []any) (matched bool, hadNull bool, err error) {
 	if plan == nil || plan.Root == nil {
 		return false, false, EV.ErrSubquery
 	}
+	// REQ002218: reset the inner state before each evaluation.
+	resetSubqueryTree(plan.Root)
 	if outer != nil {
 		plan.Root = injectOuter(plan.Root, outer)
 	}
-	defer plan.Root.Close()
 	// REQ001059: NULL IN (set) → NULL (three-valued).
 	// If target is nil, the answer is always NULL regardless of
 	// the subquery contents, unless the subquery is empty.

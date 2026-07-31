@@ -218,8 +218,10 @@ func (fp *FilterProject) Close() error {
 // Reset reinitializes FilterProject cursor state. Preserves compiled
 // filter and expression fns. Does NOT close the child. REQ001464.
 func (fp *FilterProject) Reset(ctx context.Context) error {
-	fp.dataBuf = fp.dataBuf[:0]
+	fp.dataBuf = nil
 	fp.dataPerRow = 0
+	fp.compiledExprs = nil
+	fp.compiledOnce = false
 	return nil
 }
 
@@ -1240,8 +1242,9 @@ func (p *Project) Close() error {
 // Reset reinitializes Project cursor state. Reuses dataBuf in-place.
 // Does NOT close the child. REQ001464.
 func (p *Project) Reset(ctx context.Context) error {
-	p.dataBuf = p.dataBuf[:0]
+	p.dataBuf = nil
 	p.dataPerRow = 0
+	p.compiledExprs = nil
 	return nil
 }
 

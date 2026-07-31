@@ -133,6 +133,15 @@ func (a *Aggregate) Close() error {
 	return a.child.Close()
 }
 
+// Reset clears the aggregate buffer and resets the position so the
+// next Next() call re-materializes from the child. REQ002218.
+func (a *Aggregate) Reset(ctx context.Context) error {
+	a.buf = nil
+	a.pos = 0
+	a.scalarRowBuf = nil
+	return nil
+}
+
 type groupBucket struct {
 	key  []Value
 	rows []Row
