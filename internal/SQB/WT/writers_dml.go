@@ -781,7 +781,6 @@ func (i *Insert) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		_, err := i.Next(ctx)
 		if err != nil {
 			if err == DT.ErrNoRows {
-				// No RETURNING rows — check if we have resultRows
 				if len(i.resultRows) == 0 {
 					return nil, nil
 				}
@@ -789,18 +788,19 @@ func (i *Insert) NextBatch(ctx context.Context) (*UT.Batch, error) {
 				return nil, err
 			}
 		}
-		// Next() consumed one row (resultPos advanced). Back up so
-		// we include it in the first batch.
 		if i.resultPos > 0 {
 			i.resultPos--
 		}
 		if len(i.resultRows) == 0 {
-			// No RETURNING clause — done, no output batches.
 			return nil, nil
 		}
 	}
-	// Drain resultRows in batches.
-	remaining := len(i.resultRows) - i.resultPos
+	return drainResultRows(i.resultRows, &i.resultPos)
+}
+
+// drainResultRows slices resultRows[resultPos:] into batch-sized chunks.
+func drainResultRows(resultRows []DT.Row, resultPos *int) (*UT.Batch, error) {
+	remaining := len(resultRows) - *resultPos
 	if remaining <= 0 {
 		return nil, nil
 	}
@@ -808,8 +808,8 @@ func (i *Insert) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if batchSize > UT.BatchSize {
 		batchSize = UT.BatchSize
 	}
-	batch := rowsToBatchWT(i.resultRows[i.resultPos : i.resultPos+batchSize])
-	i.resultPos += batchSize
+	batch := rowsToBatchWT(resultRows[*resultPos : *resultPos+batchSize])
+	*resultPos += batchSize
 	return batch, nil
 }
 
@@ -1414,17 +1414,7 @@ func (u *Update) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			return nil, nil
 		}
 	}
-	remaining := len(u.resultRows) - u.resultPos
-	if remaining <= 0 {
-		return nil, nil
-	}
-	batchSize := remaining
-	if batchSize > UT.BatchSize {
-		batchSize = UT.BatchSize
-	}
-	batch := rowsToBatchWT(u.resultRows[u.resultPos : u.resultPos+batchSize])
-	u.resultPos += batchSize
-	return batch, nil
+	return drainResultRows(u.resultRows, &u.resultPos)
 }
 
 type Delete struct {
@@ -1740,17 +1730,7 @@ func (d *Delete) NextBatch(ctx context.Context) (*UT.Batch, error) {
 			return nil, nil
 		}
 	}
-	remaining := len(d.resultRows) - d.resultPos
-	if remaining <= 0 {
-		return nil, nil
-	}
-	batchSize := remaining
-	if batchSize > UT.BatchSize {
-		batchSize = UT.BatchSize
-	}
-	batch := rowsToBatchWT(d.resultRows[d.resultPos : d.resultPos+batchSize])
-	d.resultPos += batchSize
-	return batch, nil
+	return drainResultRows(d.resultRows, &d.resultPos)
 }
 
 // expandReturningStar expands StarExpr entries in the RETURNING list
