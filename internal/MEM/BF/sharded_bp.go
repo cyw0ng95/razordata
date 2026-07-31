@@ -1,6 +1,7 @@
 package bf
 
 import (
+	"math/bits"
 	"sync"
 	"sync/atomic"
 
@@ -38,7 +39,7 @@ func newShardedBufferPool(n int) *shardedBufferPool {
 		n = 32
 	}
 	// Round up to next power of 2
-	n = nextPowerOf2(n)
+	n = 1 << bits.Len(uint(n-1))
 
 	shards := make([]*bufferShard, n)
 	for i := range n {
@@ -276,14 +277,4 @@ func (sbp *shardedBufferPool) evictOne(pass int, shard *bufferShard, idx int) ([
 	return nil, false
 }
 
-// nextPowerOf2 returns the smallest power of 2 >= n.
-func nextPowerOf2(n int) int {
-	if n <= 1 {
-		return 1
-	}
-	p := 1
-	for p < n {
-		p <<= 1
-	}
-	return p
-}
+// DBG/CD uses bits.Len for the same purpose (BUFFER_RING_CAPACITY).

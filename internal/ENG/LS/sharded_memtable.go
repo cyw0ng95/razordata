@@ -3,6 +3,7 @@ package ls
 import (
 	"bytes"
 	"container/heap"
+	"math/bits"
 	"sync/atomic"
 )
 
@@ -49,7 +50,7 @@ func newShardedMemtable(maxSize int64, n int) *shardedMemtable {
 		n = 1
 	}
 	// Round up to next power of 2
-	n = nextPowerOf2(n)
+	n = 1 << bits.Len(uint(n-1))
 
 	shards := make([]*memtable, n)
 	frozen := make([]atomic.Bool, n)
@@ -176,18 +177,6 @@ func (sm *shardedMemtable) Iterator() RangeIter {
 // shards returns all shards (frozen and active).
 func (sm *shardedMemtable) shards() []*memtable {
 	return sm.shards_
-}
-
-// nextPowerOf2 returns the smallest power of 2 >= n.
-func nextPowerOf2(n int) int {
-	if n <= 1 {
-		return 1
-	}
-	p := 1
-	for p < n {
-		p <<= 1
-	}
-	return p
 }
 
 // FNV-1a constants

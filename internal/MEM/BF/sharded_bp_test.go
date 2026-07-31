@@ -1,6 +1,7 @@
 package bf
 
 import (
+	"math/bits"
 	"math/rand/v2"
 	"sync"
 	"sync/atomic"
@@ -269,9 +270,12 @@ func TestNextPowerOf2(t *testing.T) {
 		{1000, 1024},
 	}
 	for _, tt := range tests {
-		got := nextPowerOf2(tt.in)
+		got := 1
+		if tt.in > 1 {
+			got = 1 << bits.Len(uint(tt.in - 1))
+		}
 		if got != tt.want {
-			t.Errorf("nextPowerOf2(%d) = %d, want %d", tt.in, got, tt.want)
+			t.Errorf("bits.Len-based nextPowerOf2(%d) = %d, want %d", tt.in, got, tt.want)
 		}
 	}
 }
