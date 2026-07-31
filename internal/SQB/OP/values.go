@@ -52,6 +52,12 @@ func (c *ConstRow) Close() error { return nil } // no-op: no mutable state; memo
 func (c *ConstRow) Reset(ctx context.Context) error { c.done.Store(false); return nil }
 func (c *ConstRow) WithParams(p []any) Operator { return c }
 
+// Cols returns the column names for this ConstRow.
+func (c *ConstRow) Cols() []string { return c.cols }
+
+// Types returns the column types for this ConstRow.
+func (c *ConstRow) Types() []LX.TokenType { return c.types }
+
 // Values implements a single-row operator that evaluates scalar
 // expressions without a FROM source. Used for `SELECT expr[,expr...]`.
 type Values struct {
@@ -142,6 +148,9 @@ func (v *Values) WithParams(p []any) Operator {
 }
 
 func (v *Values) SetExecCtx(ec *pl.ExecContext) { v.execCtx = ec }
+
+// ColNames returns the pre-computed column names for this Values operator.
+func (v *Values) ColNames() []string { return v.colNames }
 
 func (v *Values) WithPlanner(p pl.QueryPlanner) pl.Operator {
 	if v == nil {

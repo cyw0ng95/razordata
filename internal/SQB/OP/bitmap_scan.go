@@ -72,6 +72,9 @@ func NewBitmapHeapScan(table string, store DT.Store, children []pl.Operator) *Bi
 // Table returns the underlying table name.
 func (b *BitmapHeapScan) Table() string { return b.table }
 
+// Schema returns the underlying table schema.
+func (b *BitmapHeapScan) Schema() *DT.StoreSchema { return b.schema }
+
 // Store returns the underlying storage backend. Used by the
 // vectorized BitmapHeapScan (REQ001616/REQ001627) to share the
 // same store reference for heap fetches.
