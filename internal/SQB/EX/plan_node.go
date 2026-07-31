@@ -101,7 +101,7 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 				ts = planner.getTableStats(idx.Table())
 			}
 		}
-		node.Cost = AD.EstimateFilterCost(v, ts)
+		node.Cost = EstimateFilterCost(v, ts)
 
 	case *OP.FilterProject:
 		node.Detail = "PROJECT+WHERE"
@@ -137,7 +137,7 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 			}
 			node.Detail = "PROJECT " + strings.Join(parts, ", ")
 		}
-		node.Cost = AD.EstimateProjectCost(v)
+		node.Cost = EstimateProjectCost(v)
 
 	case *OP.Sort:
 		node.Detail = "ORDER BY"
@@ -160,7 +160,7 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 				ts = planner.getTableStats(idx.Table())
 			}
 		}
-		node.Cost = AD.EstimateSortCost(v, ts)
+		node.Cost = EstimateSortCost(v, ts)
 
 	case *OP.Limit:
 		node.Detail = "LIMIT"
@@ -170,11 +170,11 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 
 	case *OP.Distinct:
 		node.Detail = "DISTINCT"
-		node.Cost = AD.EstimateDistinctCost(v, nil)
+		node.Cost = EstimateDistinctCost(v, nil)
 
 	case *AG.Aggregate:
 		node.Detail = "AGGREGATE"
-		node.Cost = AD.EstimateAggregateCost(v, nil)
+		node.Cost = EstimateAggregateCost(v, nil)
 		// REQ001294: extract aggregate function names and GROUP BY columns.
 		if aggs := v.Aggs(); len(aggs) > 0 {
 			var names []string

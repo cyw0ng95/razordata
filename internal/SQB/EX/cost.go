@@ -1,6 +1,9 @@
 package EX
 
 import (
+	"math"
+
+	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
@@ -518,3 +521,97 @@ func (p *Planner) tableColFromExpr(expr PS.Expr) (string, string) {
 // (n3JoinOrderingMultiStart) can compare costs across different
 // starting baseTable choices. The cost is the sum of per-step
 // joinCost estimates for the cheapest complete plan in the heap.
+
+// EstimateFilterCost returns a simple EXPLAIN cost for a Filter operator.
+// REQ002247: migrated from AD/plan_node.go; for EXPLAIN display only.
+func EstimateFilterCost(f *OP.Filter, ts *AD.TableStats) float64 {
+	if f.Child() == nil {
+		return 1.0
+	}
+	selectivity := 0.5
+	if ts != nil && ts.RowCount > 0 {
+		selectivity = 0.5
+	}
+	return selectivity
+}
+
+// EstimateProjectCost returns a simple EXPLAIN cost for a Project operator.
+func EstimateProjectCost(p *OP.Project) float64 {
+	if p.Child() == nil {
+		return 1.0
+	}
+	return 1.0
+}
+
+// EstimateSortCost returns a simple EXPLAIN cost for a Sort operator.
+func EstimateSortCost(s *OP.Sort, ts *AD.TableStats) float64 {
+	if s.Child() == nil {
+		return 1.0
+	}
+	inputRows := 100.0
+	if ts != nil && ts.RowCount > 0 {
+		inputRows = float64(ts.RowCount)
+	}
+	return 10.0 * (1 + math.Log2(inputRows+1))
+}
+
+// EstimateDistinctCost returns a simple EXPLAIN cost for a Distinct operator.
+func EstimateDistinctCost(d *OP.Distinct, ts *AD.TableStats) float64 {
+	if d.Child() == nil {
+		return 1.0
+	}
+	inputRows := 100.0
+	if ts != nil && ts.RowCount > 0 {
+		inputRows = float64(ts.RowCount)
+	}
+	return 2.0 + inputRows
+}
+
+// EstimateAggregateCost returns a simple EXPLAIN cost for an Aggregate operator.
+func EstimateAggregateCost(a *AG.Aggregate, ts *AD.TableStats) float64 {
+	if a.Child() == nil {
+		return 1.0
+	}
+	inputRows := 100.0
+	if ts != nil && ts.RowCount > 0 {
+		inputRows = float64(ts.RowCount)
+	}
+	return 5.0 + inputRows
+}
+
+// EstimateIndexCost returns a simple EXPLAIN cost for index lookup.
+func EstimateIndexCost(ts *AD.TableStats, indexCols []string) float64 {
+	if ts == nil || ts.RowCount == 0 {
+		return 10.0
+	}
+	totalDistinct := int64(1)
+	for _, col := range indexCols {
+		if cs, ok := ts.ColStats[col]; ok {
+			if cs.DistinctCount > 0 {
+				totalDistinct *= cs.DistinctCount
+			}
+		}
+	}
+	selectivity := float64(ts.RowCount) / float64(totalDistinct)
+	if selectivity < 1.0 {
+		selectivity = 1.0
+	}
+	return selectivity
+}
+
+// EstimateJoinCost returns a simple EXPLAIN cost for a NestedLoopJoin.
+func EstimateJoinCost(j *OP.NestedLoopJoin, leftTS, rightTS *AD.TableStats) float64 {
+	leftCost := 1.0
+	rightCost := 1.0
+	if j.LeftChild() != nil {
+		if leftTS != nil && leftTS.RowCount > 0 {
+			leftCost = float64(leftTS.RowCount)
+		}
+	}
+	if j.RightChild() != nil {
+		if rightTS != nil && rightTS.RowCount > 0 {
+			rightCost = float64(rightTS.RowCount)
+		}
+	}
+	return leftCost * rightCost
+}

@@ -2,9 +2,7 @@ package AD
 
 import (
 	"context"
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	"fmt"
-	"math"
 	"strings"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -12,7 +10,6 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
-	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
 )
 
@@ -316,106 +313,6 @@ func explainQueryPlanDetail(n *PlanNode) string {
 	default:
 		return strings.ToUpper(n.Type)
 	}
-}
-
-func EstimateFilterCost(f *OP.Filter, ts *TableStats) float64 {
-	if f.Child() == nil {
-		return 1.0
-	}
-	selectivity := 0.5
-	if ts != nil && ts.RowCount > 0 {
-		selectivity = 0.5
-	}
-	return selectivity
-}
-
-func EstimateProjectCost(p *OP.Project) float64 {
-	if p.Child() == nil {
-		return 1.0
-	}
-	return 1.0
-}
-
-func EstimateSortCost(s *OP.Sort, ts *TableStats) float64 {
-	if s.Child() == nil {
-		return 1.0
-	}
-	inputRows := 100.0
-	if ts != nil && ts.RowCount > 0 {
-		inputRows = float64(ts.RowCount)
-	}
-	return 10.0 * (1 + math.Log2(inputRows+1))
-}
-
-func EstimateLimitCost(l *OP.Limit) float64 {
-	if l.Child() == nil {
-		return 1.0
-	}
-	return 1.0
-}
-
-func EstimateOffsetCost(o *OP.Offset) float64 {
-	if o.Child() == nil {
-		return 1.0
-	}
-	return 1.0
-}
-
-func EstimateDistinctCost(d *OP.Distinct, ts *TableStats) float64 {
-	if d.Child() == nil {
-		return 1.0
-	}
-	inputRows := 100.0
-	if ts != nil && ts.RowCount > 0 {
-		inputRows = float64(ts.RowCount)
-	}
-	return 2.0 + inputRows
-}
-
-func EstimateAggregateCost(a *AG.Aggregate, ts *TableStats) float64 {
-	if a.Child() == nil {
-		return 1.0
-	}
-	inputRows := 100.0
-	if ts != nil && ts.RowCount > 0 {
-		inputRows = float64(ts.RowCount)
-	}
-	return 5.0 + inputRows
-}
-
-func EstimateIndexCost(ts *TableStats, indexCols []string) float64 {
-	if ts == nil || ts.RowCount == 0 {
-		return 10.0
-	}
-	totalDistinct := int64(1)
-	for _, col := range indexCols {
-		if cs, ok := ts.ColStats[col]; ok {
-			if cs.DistinctCount > 0 {
-				totalDistinct *= cs.DistinctCount
-			}
-		}
-	}
-	selectivity := float64(ts.RowCount) / float64(totalDistinct)
-	if selectivity < 1.0 {
-		selectivity = 1.0
-	}
-	return selectivity
-}
-
-func EstimateJoinCost(j *OP.NestedLoopJoin, leftTS, rightTS *TableStats) float64 {
-	leftCost := 1.0
-	rightCost := 1.0
-	if j.LeftChild() != nil {
-		if leftTS != nil && leftTS.RowCount > 0 {
-			leftCost = float64(leftTS.RowCount)
-		}
-	}
-	if j.RightChild() != nil {
-		if rightTS != nil && rightTS.RowCount > 0 {
-			rightCost = float64(rightTS.RowCount)
-		}
-	}
-	return leftCost * rightCost
 }
 
 func (n *PlanNode) ToJSON() string {
