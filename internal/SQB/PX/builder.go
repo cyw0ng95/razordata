@@ -467,6 +467,9 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *OP.IncrementalVacuumResult:
 		// Incremental vacuum result. Native source stage.
 		return decomposeNativeSource(o, st)
+	case *OP.SqliteMaster:
+		// sqlite_master system table. Native source stage.
+		return decomposeNativeSource(o, st)
 	default:
 		return 0, fmt.Errorf("px: unknown operator type %T", op)
 	}

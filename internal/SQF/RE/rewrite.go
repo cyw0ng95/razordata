@@ -23,7 +23,7 @@ func Rewrite(stmt PS.Stmt) (PS.Stmt, error) {
 		return rewriteCreateTable(s), nil
 	case *PS.DropTable:
 		return rewriteDropTable(s), nil
-	case *PS.AnalyzeStmt, *PS.VacuumStmt, *PS.PragmaStmt, *PS.ExplainStmt, *PS.TruncateStmt, *PS.ReindexStmt, *PS.DropViewStmt, *PS.DropTriggerStmt, *PS.DropIndexStmt, *PS.CreateIndexStmt, *PS.CreateViewStmt, *PS.TriggerStmt, *PS.AlterTableStmt, *PS.WithStmt, *PS.AttachStmt, *PS.DetachStmt:
+	case *PS.AnalyzeStmt, *PS.VacuumStmt, *PS.PragmaStmt, *PS.ExplainStmt, *PS.TruncateStmt, *PS.ReindexStmt, *PS.DropViewStmt, *PS.DropTriggerStmt, *PS.DropIndexStmt, *PS.CreateIndexStmt, *PS.CreateViewStmt, *PS.TriggerStmt, *PS.AlterTableStmt, *PS.WithStmt, *PS.AttachStmt, *PS.DetachStmt, *PS.CreateVirtualTableStmt:
 		return s, nil
 	}
 	return nil, fmt.Errorf("re: unknown statement type %T", stmt)
