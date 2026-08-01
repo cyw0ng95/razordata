@@ -337,6 +337,15 @@ func (j *HashJoinStage) buildHashTable(ctx context.Context) error {
 	}
 
 	numKeys := len(j.buildKeys)
+	if numKeys == 0 {
+		// No equi-join keys — produce Cartesian product (all rows match).
+		// REQ002307: skip hash table build to avoid Probe() with empty key array.
+		// Mark all build rows as matched so the outer-join probe emits them.
+		if j.kind == JoinKindLeft || j.kind == JoinKindFull {
+			j.matchedBuild = make([]bool, j.buildN)
+		}
+		return nil
+	}
 	if allIntKeys {
 		if numKeys == 1 {
 			j.buildHashTableSingleInt()

@@ -764,9 +764,30 @@ func decomposeHashJoin(h *OP.HashJoin, st *decomposeState, planner PL.QueryPlann
 		return joinIdx, nil
 	}
 	// REQ002180: keys not resolvable statically — use runtime resolution.
+	// REQ002307: if the key column is not in the projected output schema
+	// (e.g., NATURAL JOIN where the key is not in SELECT), wrap the
+	// HashJoin in a ScanStageSpec so the full operator tree handles
+	// key resolution internally.
 	keyName := ""
 	if len(leftKeys) > 0 {
 		keyName = leftKeys[0]
+	}
+	// Check if the key name exists in the children's output schema.
+	// If not (e.g., projected away), use ScanStageSpec wrapper.
+	hasKeyInSchema := false
+	if keyName != "" && leftOut.resolved() {
+		hasKeyInSchema = leftOut.findCol(keyName) != -1
+	}
+	if !hasKeyInSchema && keyName != "" {
+		nn := h
+		joinIdx := st.addStage(&ScanStageSpec{
+			NewProducer: func() UT.BatchProducer {
+				return NewRowOperatorAsProducer(nn)
+			},
+		}, joinOut)
+		_ = leftIdx
+		_ = rightIdx
+		return joinIdx, nil
 	}
 	joinIdx := st.addStage(&HashJoinStageSpec{
 		BuildKeys:            buildKeys,
