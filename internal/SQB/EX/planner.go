@@ -523,7 +523,10 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	// is shared via the memo cache — skipping storage avoids races
 	// between concurrent Next/Close calls on the shared instance.
 	// ConstRow may be wrapped in AdaptiveOp, so check the inner type.
-	if !isConstRowPlan(root) {
+	// REQ002307: skip memoization for state-mutating statements (DDL/DML)
+	// so the operator tree is freshly created on each execution — the
+	// WT operator's executed flag would otherwise persist across calls.
+	if !isConstRowPlan(root) && !isStateMutatingStmt(rewritten) {
 		p.memo[key] = result
 		// REQ000989: LRU ring-buffer eviction. When the cache exceeds
 		// maxPlanCacheSize, evict the oldest entry (memoOrder[memoHead])
@@ -1201,6 +1204,25 @@ func isConstRowPlan(op DT.Operator) bool {
 		return true
 	}
 	if _, ok := op.(*OP.PragmaResult); ok {
+		return true
+	}
+	return false
+}
+
+// isStateMutatingStmt reports whether stmt modifies persistent state
+// (DDL, DML, PRAGMA, etc.) and should not be cached in the planner's
+// memo cache. REQ002307: the WT operator's executed flag would persist
+// across calls if the cached plan tree is reused.
+func isStateMutatingStmt(stmt PS.Stmt) bool {
+	switch stmt.(type) {
+	case *PS.Insert, *PS.Update, *PS.Delete,
+		*PS.CreateTable, *PS.DropTable, *PS.CreateIndexStmt,
+		*PS.DropIndexStmt, *PS.AlterTableStmt, *PS.TriggerStmt,
+		*PS.DropTriggerStmt, *PS.CreateViewStmt, *PS.DropViewStmt,
+		*PS.CreateMatViewStmt, *PS.DropMatViewStmt, *PS.RefreshMatViewStmt,
+		*PS.PragmaStmt, *PS.VacuumStmt, *PS.AnalyzeStmt,
+		*PS.ExplainStmt, *PS.TruncateStmt, *PS.ReindexStmt,
+		*PS.CreateVirtualTableStmt, *PS.BeginTX, *PS.CommitTX:
 		return true
 	}
 	return false

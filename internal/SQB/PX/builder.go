@@ -1839,11 +1839,6 @@ func (r *RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error
 		r.done = true
 		return nil, nil
 	}
-	// REQ002230: single-row DDL/DML operators (e.g. WT.AlterTable) must
-	// not be re-driven by subsequent NextBatch calls. fillBatch has
-	// already drained the first row plus any streaming tail; mark
-	// done so the pipeline exits after consuming this batch.
-	r.done = true
 	return batch, nil
 }
 
@@ -1884,12 +1879,21 @@ func (r *RowOperatorAsProducer) fillBatch(ctx context.Context, batch *UT.Batch, 
 	}
 
 	appendRow(firstRow)
-	// REQ002230: stop after the first row to avoid re-executing
-	// non-idempotent side effects (ALTER ADD COLUMN, etc.) on
-	// non-streaming DDL/DML operators. Streaming SELECT operators
-	// (SeqScan, etc.) use the native source stage's drain loop
-	// in Pipeline.Execute, not this producer's fillBatch.
-	_ = UT.BatchSize
+	limit := UT.BatchSize
+
+	for batch.Size < limit {
+		row, err := r.Op.Next(ctx)
+		if err != nil {
+			if err == DT.ErrNoRows {
+				r.done = true
+			} else {
+				r.done = true
+				r.err = err
+			}
+			return
+		}
+		appendRow(row)
+	}
 }
 
 func (r *RowOperatorAsProducer) Close() error {

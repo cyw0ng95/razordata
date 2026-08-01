@@ -14,8 +14,11 @@ import (
 
 // AlterTable implements ALTER TABLE DDL operations.
 // REQ000244: ALTER TABLE executor (online schema migration).
+// REQ002230: executed flag ensures the side effect runs exactly once
+// even when the pipeline producer calls Next() multiple times.
 type AlterTable struct {
-	Stmt *PS.AlterTableStmt
+	Stmt     *PS.AlterTableStmt
+	executed bool
 }
 
 // catalogMu guards catalog operations. A separate mutex avoids
@@ -27,6 +30,10 @@ func NewAlterTable(stmt *PS.AlterTableStmt) *AlterTable {
 }
 
 func (a *AlterTable) Next(ctx context.Context) (DT.Row, error) {
+	if a.executed {
+		return DT.Row{}, DT.ErrNoRows
+	}
+	a.executed = true
 	switch a.Stmt.Action {
 	case "ADD COLUMN":
 		return DT.Row{}, a.execAddColumn()

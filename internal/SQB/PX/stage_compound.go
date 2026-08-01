@@ -101,6 +101,9 @@ func (s *CompoundStage) nextUnionAll(ctx context.Context) (*UT.Batch, error) {
 		} else {
 			child = s.childRight
 		}
+		if child == nil {
+			return nil, nil
+		}
 		batch, err := child.NextBatch(ctx)
 		if err != nil {
 			return nil, err
