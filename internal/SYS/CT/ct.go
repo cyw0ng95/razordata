@@ -20,6 +20,21 @@ import (
 type TokenType int
 
 // ValueKind identifies the type of a Value.
+//
+// REQ002287: ValueKind is a FROZEN, stable enum with reserved code ranges.
+// Codes are never reused and new kinds are added as additive extensions,
+// never as a cross-cutting refactor:
+//
+//	0        reserved (sentinel, never assigned)
+//	1-15     core scalar types (stable; see below)
+//	16-31    reserved for declared-but-unimplemented types
+//	         (decimal, json, date, time, timestamp)
+//	32+      (KindExtBase) available to extension types registered via
+//	         the TypeDesc registry. Adding such a type must NOT require
+//	         editing existing ValueKind switch sites.
+//
+// Built-in kinds keep their historical numeric codes so the on-disk storage
+// format and existing hot-path switches remain valid.
 type ValueKind uint8
 
 const (
@@ -29,6 +44,26 @@ const (
 	KindText  ValueKind = 3
 	KindBlob  ValueKind = 4
 	KindBool  ValueKind = 5
+
+	// Reserved codes for declared-but-unimplemented core types. The SQL
+	// surface (SQF/LX) already declares these column-type tokens; their
+	// ValueKind codes are reserved here so a future implementation can fill
+	// them in without renumbering. They are intentionally not yet produced
+	// by the execution engine.
+	KindDecimal   ValueKind = 16
+	KindJSON      ValueKind = 17
+	KindDate      ValueKind = 18
+	KindTime      ValueKind = 19
+	KindTimestamp ValueKind = 20
+
+	// KindBuiltinMax is the inclusive upper bound of the reserved built-in
+	// scalar range (16-31). Kinds <= this value and not explicitly declared
+	// above are reserved for future built-in scalars.
+	KindBuiltinMax ValueKind = 31
+
+	// KindExtBase is the first ValueKind code available to extension types.
+	// All registry-registered extension types must use codes >= KindExtBase.
+	KindExtBase ValueKind = 32
 )
 
 // Value is a type-erased container for SQL values.
@@ -112,9 +147,14 @@ func (v Value) Equal(other Value) bool {
 		return len(v.B) == len(other.B) && (len(v.B) == 0 || &v.B[0] == &other.B[0] || string(v.B) == string(other.B))
 	case KindBool:
 		return v.Bo == other.Bo
-	default:
-		return false
 	}
+	// Extension kinds (and reserved-but-unimplemented kinds) are resolved
+	// through the registry so equality stays correct without editing this
+	// switch for every new type. REQ002287.
+	if d, ok := LookupType(v.Kind); ok {
+		return d.Compare(v, other) == 0
+	}
+	return false
 }
 
 func (k ValueKind) String() string {
@@ -131,9 +171,23 @@ func (k ValueKind) String() string {
 		return "blob"
 	case KindBool:
 		return "bool"
-	default:
-		return "?"
+	case KindDecimal:
+		return "decimal"
+	case KindJSON:
+		return "json"
+	case KindDate:
+		return "date"
+	case KindTime:
+		return "time"
+	case KindTimestamp:
+		return "timestamp"
 	}
+	// Extension kinds are resolved through the registry so the printed name
+	// stays accurate without editing this switch for every new type.
+	if d, ok := LookupType(k); ok {
+		return d.Name()
+	}
+	return "?"
 }
 
 // CollateFunc is a user-registered collation function for ORDER BY / COMPARE.

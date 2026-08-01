@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"math"
 	"sync"
+
+	CT "github.com/cyw0ng95/razordata/internal/SYS/CT"
 )
 
 // Storage encoding/decoding helpers moved from OP/store.go (REQ??).
@@ -35,6 +37,12 @@ const (
 	rvBool   byte = 3
 	rvFloat  byte = 4
 	rvBytes  byte = 5
+	// rvExt marks a value encoded by a TypeDesc from the SYS/CT registry.
+	// REQ002287: enables extension types (kinds >= CT.KindExtBase) to be
+	// stored and read through the registry without editing this switch.
+	// Wire format: [rvExt][kind:1][payload_len:varint][payload...] where
+	// payload = CT.TypeDesc.Encode(v).
+	rvExt byte = 6
 )
 
 // encodeRowBufPool is a sync.Pool for reusable EncodeRow scratch buffers.
@@ -145,6 +153,22 @@ func EncodeRow(schema *StoreSchema, row Row) ([]byte, error) {
 			buf = binary.AppendUvarint(buf, uint64(len(v.B)))
 			buf = append(buf, v.B...)
 		default:
+			// REQ002287: extension types (and any TypeDesc-registered kind)
+			// are encoded through the registry. This keeps the built-in
+			// hot-path branches above untouched and lets a new type be added
+			// by registering one TypeDesc — no switch edits required.
+			if desc, ok := CT.LookupType(v.Kind); ok {
+				payload, err := desc.Encode(v)
+				if err != nil {
+					encodeRowBufPool.Put(bufPtr)
+					return nil, fmt.Errorf("DT: encode kind %d: %w", v.Kind, err)
+				}
+				buf = append(buf, rvExt)
+				buf = append(buf, byte(v.Kind))
+				buf = binary.AppendUvarint(buf, uint64(len(payload)))
+				buf = append(buf, payload...)
+				break
+			}
 			encodeRowBufPool.Put(bufPtr)
 			return nil, fmt.Errorf("DT: unsupported value kind %d at column %d", v.Kind, i)
 		}
@@ -231,6 +255,31 @@ func DecodeRow(data []byte, schema *StoreSchema) (Row, error) {
 			}
 			row.Data[i] = NewBlobValue(append([]byte{}, data[off:off+int(l)]...))
 			off += int(l)
+		case rvExt:
+			// REQ002287: value encoded by a registry TypeDesc.
+			if off >= len(data) {
+				return Row{}, errors.New("DT: truncated ext kind")
+			}
+			kind := CT.ValueKind(data[off])
+			off++
+			payloadLen, err := readVarint()
+			if err != nil {
+				return Row{}, err
+			}
+			if off+int(payloadLen) > len(data) {
+				return Row{}, errors.New("DT: truncated ext payload")
+			}
+			payload := data[off : off+int(payloadLen)]
+			off += int(payloadLen)
+			desc, ok := CT.LookupType(kind)
+			if !ok {
+				return Row{}, fmt.Errorf("DT: no TypeDesc registered for kind %d", kind)
+			}
+			decoded, err := desc.Decode(append([]byte{}, payload...))
+			if err != nil {
+				return Row{}, fmt.Errorf("DT: decode kind %d: %w", kind, err)
+			}
+			row.Data[i] = decoded
 		default:
 			return Row{}, fmt.Errorf("DT: unknown row tag %d", tag)
 		}
