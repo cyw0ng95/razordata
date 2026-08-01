@@ -376,7 +376,7 @@ func buildSortedColumn(dst *UT.Column, rows []keyedRow, colIdx int) {
 	hasNulls := false
 	for _, r := range rows {
 		c := &r.batch.Cols[colIdx]
-		idx := r.rowIdx
+		idx := resolveRowIdx(r.batch, r.rowIdx)
 		if c.Nulls != nil && idx < len(c.Nulls) && c.Nulls[idx] {
 			hasNulls = true
 			break
@@ -392,7 +392,7 @@ func buildSortedColumn(dst *UT.Column, rows []keyedRow, colIdx int) {
 		dst.Data.Ints = make([]int64, n)
 		for i, r := range rows {
 			c := &r.batch.Cols[colIdx]
-			idx := r.rowIdx
+			idx := resolveRowIdx(r.batch, r.rowIdx)
 			if c.Nulls != nil && idx < len(c.Nulls) && c.Nulls[idx] {
 				dst.Nulls[i] = true
 			} else if idx < len(c.Data.Ints) {
@@ -403,7 +403,7 @@ func buildSortedColumn(dst *UT.Column, rows []keyedRow, colIdx int) {
 		dst.Data.Floats = make([]float64, n)
 		for i, r := range rows {
 			c := &r.batch.Cols[colIdx]
-			idx := r.rowIdx
+			idx := resolveRowIdx(r.batch, r.rowIdx)
 			if c.Nulls != nil && idx < len(c.Nulls) && c.Nulls[idx] {
 				dst.Nulls[i] = true
 			} else if idx < len(c.Data.Floats) {
@@ -414,7 +414,7 @@ func buildSortedColumn(dst *UT.Column, rows []keyedRow, colIdx int) {
 		dst.Data.Strs = make([]string, n)
 		for i, r := range rows {
 			c := &r.batch.Cols[colIdx]
-			idx := r.rowIdx
+			idx := resolveRowIdx(r.batch, r.rowIdx)
 			if c.Nulls != nil && idx < len(c.Nulls) && c.Nulls[idx] {
 				dst.Nulls[i] = true
 			} else if idx < len(c.Data.Strs) {
@@ -425,7 +425,7 @@ func buildSortedColumn(dst *UT.Column, rows []keyedRow, colIdx int) {
 		dst.Data.Bools = make([]bool, n)
 		for i, r := range rows {
 			c := &r.batch.Cols[colIdx]
-			idx := r.rowIdx
+			idx := resolveRowIdx(r.batch, r.rowIdx)
 			if c.Nulls != nil && idx < len(c.Nulls) && c.Nulls[idx] {
 				dst.Nulls[i] = true
 			} else if idx < len(c.Data.Bools) {
@@ -433,6 +433,16 @@ func buildSortedColumn(dst *UT.Column, rows []keyedRow, colIdx int) {
 			}
 		}
 	}
+}
+
+// resolveRowIdx converts a logical row index to a physical row index,
+// accounting for the selection vector (Sel). When Sel is nil, the
+// logical and physical indices are the same.
+func resolveRowIdx(batch *UT.Batch, rowIdx int) int {
+	if batch.Sel != nil && rowIdx < len(batch.Sel) {
+		return int(batch.Sel[rowIdx])
+	}
+	return rowIdx
 }
 
 // Reset clears the sort state for plan cache reuse.

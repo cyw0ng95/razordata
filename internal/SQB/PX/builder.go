@@ -895,14 +895,18 @@ func decomposeNestedLoopJoin(n *OP.NestedLoopJoin, st *decomposeState, planner P
 	// wrap the NestedLoopJoin in a ScanStageSpec with RowOperatorAsProducer.
 	// REQ002215: functionally identical to LegacyBatchStageSpec — both wrap
 	// the complete row-based operator tree and ignore child stage wiring.
+	// REQ002307: do NOT add child edges — the ScanStageSpec wraps the entire
+	// NestedLoopJoin operator (which handles its own children internally).
+	// Adding edges would try to SetChild on a ScanStage, which doesn't
+	// implement ChildSetter.
 	nn := n
 	joinIdx := st.addStage(&ScanStageSpec{
 		NewProducer: func() UT.BatchProducer {
 			return NewRowOperatorAsProducer(nn)
 		},
 	}, joinOut)
-	st.addEdge(joinIdx, leftIdx, LeftChild)
-	st.addEdge(joinIdx, rightIdx, RightChild)
+	_ = leftIdx
+	_ = rightIdx
 	return joinIdx, nil
 }
 
