@@ -21,12 +21,12 @@ func TestRazorDriver_ConnectExecQuery(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close(ctx) })
 
-	// Verify the temp dir was created and is not a "<name>.razor" leaf.
-	if d.dir == "" {
-		t.Fatalf("dir not set")
-	}
-	if !filepath.IsAbs(d.dir) {
-		t.Errorf("dir %q is not absolute", d.dir)
+	// MemoryOnly mode (Connect opts) does not create a temp dir;
+	// d.dir remains empty. Skip the dir assertions when not set.
+	if d.dir != "" {
+		if !filepath.IsAbs(d.dir) {
+			t.Errorf("dir %q is not absolute", d.dir)
+		}
 	}
 
 	if err := d.Exec(ctx, "CREATE TABLE t (a INT PRIMARY KEY, b TEXT)"); err != nil {
