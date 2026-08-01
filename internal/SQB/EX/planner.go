@@ -467,6 +467,39 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 		root = p.planWith(s)
 	case *PS.ValuesStmt:
 		root = OP.NewValuesRowsOp(s.Rows)
+	// REQ002230: PX pipeline is the sole execution path; planner
+	// must return a WT operator root for every DDL/admin statement
+	// so BuildPipeline can decompose it into native stages.
+	case *PS.AlterTableStmt:
+		root = WT.NewAlterTable(s)
+	case *PS.CreateViewStmt:
+		root = WT.NewCreateView(s)
+	case *PS.DropViewStmt:
+		root = WT.NewDropView(s)
+	case *PS.CreateMatViewStmt:
+		root = WT.NewCreateMatView(s.Name, s.As, p.store)
+	case *PS.DropMatViewStmt:
+		root = WT.NewDropMatView(s.Name, p.store)
+	case *PS.RefreshMatViewStmt:
+		sel := DT.LookupMatView(s.Name)
+		if sel == nil {
+			return nil, fmt.Errorf("ex: materialized view %q not found", s.Name)
+		}
+		root = WT.NewRefreshMatView(s.Name, sel, p.store, p)
+	case *PS.TriggerStmt:
+		root = WT.NewTrigger(s)
+	case *PS.DropTriggerStmt:
+		root = WT.NewDropTrigger(s)
+	case *PS.TruncateStmt:
+		root = WT.NewTruncate(s)
+	case *PS.ReindexStmt:
+		root = WT.NewReindex(s)
+	case *PS.CreateVirtualTableStmt:
+		root = WT.NewUnsupportedOp(s, "ex: virtual table module not supported in v1: "+s.Module)
+	case *PS.BeginTX:
+		root = AD.NewNoop()
+	case *PS.CommitTX:
+		root = AD.NewNoop()
 	}
 
 	// REQ002171: AdaptiveOp removed — PipelineBuilder replaces ADQC.

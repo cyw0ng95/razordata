@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 )
@@ -32,7 +33,19 @@ type InsertStage struct {
 
 func (s *InsertStage) SetChild(_ ChildSide, child Stage) {}
 
-func (s *InsertStage) PropagateParams(args []any, buf *[]any) {}
+func (s *InsertStage) PropagateParams(args []any, buf *[]any) {
+	if s.insert != nil {
+		s.insert.WithParams(args)
+	}
+}
+
+// PropagateExecContext injects execCtx into the underlying WT.Insert so
+// it can record RowsAffected and CHANGES() state. REQ002230.
+func (s *InsertStage) PropagateExecContext(ec *DT.ExecContext) {
+	if s.insert != nil {
+		s.insert.SetExecCtx(ec)
+	}
+}
 
 func (s *InsertStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if err := ctx.Err(); err != nil {
@@ -82,7 +95,18 @@ type UpdateStage struct {
 
 func (s *UpdateStage) SetChild(_ ChildSide, child Stage) {}
 
-func (s *UpdateStage) PropagateParams(args []any, buf *[]any) {}
+func (s *UpdateStage) PropagateParams(args []any, buf *[]any) {
+	if s.update != nil {
+		s.update.WithParams(args)
+	}
+}
+
+// PropagateExecContext injects execCtx for RowsAffected tracking.
+func (s *UpdateStage) PropagateExecContext(ec *DT.ExecContext) {
+	if s.update != nil {
+		s.update.SetExecCtx(ec)
+	}
+}
 
 func (s *UpdateStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if err := ctx.Err(); err != nil {
@@ -132,7 +156,18 @@ type DeleteStage struct {
 
 func (s *DeleteStage) SetChild(_ ChildSide, child Stage) {}
 
-func (s *DeleteStage) PropagateParams(args []any, buf *[]any) {}
+func (s *DeleteStage) PropagateParams(args []any, buf *[]any) {
+	if s.del != nil {
+		s.del.WithParams(args)
+	}
+}
+
+// PropagateExecContext injects execCtx for RowsAffected tracking.
+func (s *DeleteStage) PropagateExecContext(ec *DT.ExecContext) {
+	if s.del != nil {
+		s.del.SetExecCtx(ec)
+	}
+}
 
 func (s *DeleteStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 	if err := ctx.Err(); err != nil {

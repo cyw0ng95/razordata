@@ -17,8 +17,6 @@ func TestDMLPipeline_InsertUpdateDelete(t *testing.T) {
 	DT.RegisterTableSchema("t2", []string{"id", "val"})
 
 	e := NewExecutor()
-	e.EnablePipelinePath()
-	defer e.DisablePipelinePath()
 
 	ctx := context.Background()
 
@@ -69,8 +67,6 @@ func TestDMLPipeline_InsertReturning(t *testing.T) {
 	DT.RegisterTableSchema("t1", []string{"id", "name"})
 
 	e := NewExecutor()
-	e.EnablePipelinePath()
-	defer e.DisablePipelinePath()
 
 	ctx := context.Background()
 

@@ -130,11 +130,41 @@ func (b *PipelineBuilder) Build(sql string) (*PipelineSpec, error) {
 	}
 
 	// 7. Cache the result
-	if b.cache != nil {
+	// REQ002230: DDL/DML statements are not cached — the cached
+	// PipelineSpec captures the WT operator instance whose Next()
+	// is non-idempotent (ALTER ADD COLUMN mutates Schema, etc.).
+	// Re-executing the same spec on a later Exec call would
+	// re-run the side effect and fail or corrupt state. DML
+	// caching is also disabled because INSERT/UPDATE/DELETE
+	// mutate the engine on every call. The pipeline executor
+	// already avoids re-running through ExecuteWithArgs's
+	// once-per-call contract; caching the compiled spec here
+	// would skip even the first-run operator construction.
+	if b.cache != nil && !isStateMutatingStmt(stmt) {
 		b.cache.Put(spec, stmt)
 	}
 
 	return spec, nil
+}
+
+// isStateMutatingStmt reports whether stmt produces a non-idempotent
+// PipelineSpec that should be excluded from the PipelineCache.
+// REQ002230: DDL/DML specs carry the WT operator instance which
+// holds per-call state; caching would replay side effects on a
+// second Exec call.
+func isStateMutatingStmt(stmt PS.Stmt) bool {
+	switch stmt.(type) {
+	case *PS.Insert, *PS.Update, *PS.Delete,
+		*PS.CreateTable, *PS.DropTable, *PS.CreateIndexStmt,
+		*PS.DropIndexStmt, *PS.AlterTableStmt, *PS.TriggerStmt,
+		*PS.DropTriggerStmt, *PS.CreateViewStmt, *PS.DropViewStmt,
+		*PS.CreateMatViewStmt, *PS.DropMatViewStmt, *PS.RefreshMatViewStmt,
+		*PS.PragmaStmt, *PS.VacuumStmt, *PS.AnalyzeStmt,
+		*PS.ExplainStmt, *PS.TruncateStmt, *PS.ReindexStmt,
+		*PS.CreateVirtualTableStmt, *PS.BeginTX, *PS.CommitTX:
+		return true
+	}
+	return false
 }
 
 // specializePlan converts a row-based plan tree into a PipelineSpec.
@@ -368,6 +398,9 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *WT.CreateTable:
 		// REQ002201: DDL. Native source stage.
 		return decomposeNativeSource(o, st)
+	case *WT.AlterTable:
+		// REQ002230: DDL. Native source stage.
+		return decomposeNativeSource(o, st)
 	case *WT.DropTable:
 		// REQ002201: DDL. Native source stage.
 		return decomposeNativeSource(o, st)
@@ -397,6 +430,9 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 		return decomposeNativeSource(o, st)
 	case *WT.DropView:
 		// REQ002206: View/attach. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *WT.CreateViewOperator:
+		// REQ002230: View DDL. Native source stage.
 		return decomposeNativeSource(o, st)
 	case *WT.AttachOp:
 		// REQ002206: View/attach. Native source stage.
@@ -1026,15 +1062,17 @@ func decomposeAggregate(agg aggPlan, st *decomposeState, planner PL.QueryPlanner
 	// aggOut so the root's output schema is known → BuildPipeline fast
 	// path's len(OutputCols)>0 check still passes for this shape.
 	// REQ002216: wrap the aggregate in a ScanStageSpec with RowOperatorAsProducer
-	// instead of LegacyBatchStageSpec. The wrapped aggregate's own child
-	// (already decomposed above) is wired via SingleChild edge.
+	// instead of LegacyBatchStageSpec. The aggregate's own child must
+	// be skipped from the edge wiring — the wrapped aggregate is the
+	// root producer and pulls rows through its own operator tree
+	// internally, not via stage edges.
 	aggCopy := agg
 	aggIdx := st.addStage(&ScanStageSpec{
 		NewProducer: func() UT.BatchProducer {
 			return NewRowOperatorAsProducer(aggCopy)
 		},
 	}, aggOut)
-	st.addEdge(aggIdx, childIdx, SingleChild)
+	_ = childIdx // child is consumed internally by the aggregate's own row tree
 	return aggIdx, nil
 }
 
@@ -1698,6 +1736,7 @@ type RowOperatorAsProducer struct {
 	Op    DT.Operator
 	batch *UT.Batch
 	done  bool
+	err   error // pending non-ErrNoRows error; returned on next NextBatch
 }
 
 // NewRowOperatorAsProducer creates a RowOperatorAsProducer.
@@ -1710,7 +1749,10 @@ func (r *RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error
 		return nil, err
 	}
 	if r.done {
-		return nil, nil
+		return nil, r.err
+	}
+	if r.err != nil {
+		return nil, r.err
 	}
 
 	// If we have a saved batch from a previous fill, return it.
@@ -1727,6 +1769,8 @@ func (r *RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error
 			r.done = true
 			return nil, nil
 		}
+		r.err = err
+		r.done = true
 		return nil, err
 	}
 
@@ -1753,6 +1797,11 @@ func (r *RowOperatorAsProducer) NextBatch(ctx context.Context) (*UT.Batch, error
 		r.done = true
 		return nil, nil
 	}
+	// REQ002230: single-row DDL/DML operators (e.g. WT.AlterTable) must
+	// not be re-driven by subsequent NextBatch calls. fillBatch has
+	// already drained the first row plus any streaming tail; mark
+	// done so the pipeline exits after consuming this batch.
+	r.done = true
 	return batch, nil
 }
 
@@ -1793,18 +1842,12 @@ func (r *RowOperatorAsProducer) fillBatch(ctx context.Context, batch *UT.Batch, 
 	}
 
 	appendRow(firstRow)
-	limit := UT.BatchSize
-
-	for batch.Size < limit {
-		row, err := r.Op.Next(ctx)
-		if err != nil {
-			if err == DT.ErrNoRows {
-				r.done = true
-			}
-			return
-		}
-		appendRow(row)
-	}
+	// REQ002230: stop after the first row to avoid re-executing
+	// non-idempotent side effects (ALTER ADD COLUMN, etc.) on
+	// non-streaming DDL/DML operators. Streaming SELECT operators
+	// (SeqScan, etc.) use the native source stage's drain loop
+	// in Pipeline.Execute, not this producer's fillBatch.
+	_ = UT.BatchSize
 }
 
 func (r *RowOperatorAsProducer) Close() error {

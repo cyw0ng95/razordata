@@ -3,35 +3,10 @@ package EX
 import (
 	"context"
 	"testing"
-
-	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 )
 
-// REQ001461: isSimpleSort returns true for Sort(SeqScan).
-func TestIsSimpleSort_SeqScan(t *testing.T) {
-	scan := &OP.SeqScan{}
-	sort := &OP.Sort{}
-	sort.SetChild(scan)
-	if !isSimpleSort(sort) {
-		t.Error("expected true for Sort(SeqScan)")
-	}
-}
-
-// REQ001461: isSimpleSort returns true for Sort(Filter(SeqScan)).
-func TestIsSimpleSort_FilterSeqScan(t *testing.T) {
-	scan := &OP.SeqScan{}
-	filter := &OP.Filter{}
-	filter.SetChild(scan)
-	sort := &OP.Sort{}
-	sort.SetChild(filter)
-	if !isSimpleSort(sort) {
-		t.Error("expected true for Sort(Filter(SeqScan))")
-	}
-}
-
 // BenchmarkSelect1_Count_NoGoroutine runs SELECT count(*) FROM t1
-// verifying the sync streaming path is used (no goroutine+channel).
-// REQ001633.
+// verifying the pipeline path is used. REQ002230.
 func BenchmarkSelect1_Count_NoGoroutine(b *testing.B) {
 	ResetForTest(b)
 	ex, _ := newEngineExecutor(b)
@@ -57,8 +32,7 @@ func BenchmarkSelect1_Count_NoGoroutine(b *testing.B) {
 }
 
 // BenchmarkSelect1_Order_NoGoroutine runs SELECT * FROM t1 ORDER BY a
-// verifying the sync streaming path is used (no goroutine+channel).
-// REQ001633.
+// verifying the pipeline path is used. REQ002230.
 func BenchmarkSelect1_Order_NoGoroutine(b *testing.B) {
 	ResetForTest(b)
 	ex, _ := newEngineExecutor(b)

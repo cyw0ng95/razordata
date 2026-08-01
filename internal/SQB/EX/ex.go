@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -195,24 +194,9 @@ type Executor struct {
 	// Initialized lazily; nil when the pipeline path is not available
 	// (e.g., DML-only executor without a store).
 	pipelineBuilder *PX.PipelineBuilder
-	// purePipelineFastPath gates BuildPipeline(sql)-based fast paths in
-	// QueryAll, Query, QueryStream, Exec, CompilePlan, ExecCompiled,
-	// and drainPlanExecCtx. When false (default), these entry points
-	// fall back to the legacy parse→plan→drainBatch flow;
-	// BuildPipeline/CompilePlan still populate pipeSpec for callers that
-	// want it. This flag exists because the native PX Stage
-	// implementations (ProjectStage/FilterStage expressions) do not yet
-	// thread the EV.RowEvaluator execCtx into EV.EvalBatchExpr, causing
-	// scalar functions (ABS, UPPER, IFNULL, GROUP_CONCAT separator) to
-	// silently return 0/empty. Once PX expression evaluation passes a
-	// non-nil EV evaluator (and Executor tests pass with the fast path
-	// forced on), flip this to true by default. REQ002129.
-	//
-	// atomic.Bool for cross-goroutine correctness: EnablePurePipelineFastPath
-	// may be called concurrently with query execution (e.g., tests reset
-	// the flag, or a config PRAGMA toggles it mid-session). Load/Store
-	// provide acquire/release ordering.
-	purePipelineFastPath atomic.Bool
+	// REQ002230: pipeline-path flag removed. The BuildPipeline-based
+	// path is the sole execution path for QueryAll/Query/QueryStream/Exec/
+	// CompilePlan/ExecCompiled when pipelineBuilder is initialized.
 	// pool is the shared WorkerPool for parallel operator execution.
 	// Created in NewExecutor and sized to GOMAXPROCS. Shared across
 	// ShallowCopy clones via pointer. Shut down in Close().
@@ -300,7 +284,6 @@ func (e *Executor) ShallowCopy() *Executor {
 		lastChanges:       e.lastChanges,
 		totalChanges:      e.totalChanges,
 	}
-	e2.purePipelineFastPath.Store(e.purePipelineFastPath.Load())
 	return e2
 }
 
@@ -504,77 +487,13 @@ func (e *Executor) initPipelineBuilderEnabled() {
 		return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(root))
 	}
 	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize, PX.NewOptimizer())
-	// Enable pure pipeline path by default. This activates the BuildPipeline-based
-	// execution flow for QueryAll, Query, QueryStream, Exec, CompilePlan, etc.
-	// REQ002129. When all features are verified, this can remain true permanently.
-	e.purePipelineFastPath.Store(true)
-}
-
-// EnablePipelinePath activates the pipeline path for QueryAll and
-// other entry points. Idempotent. REQ002141.
-// Also activates the pure-PX BuildPipeline fast paths since the user
-// explicitly opted in — callers that opt-in are expected to test with
-// pipeline-specific expectations (e.g., narrow FusedScan shapes where
-// EV.RowEvaluator is not needed for complex expressions).
-func (e *Executor) EnablePipelinePath() {
-	e.initPipelineBuilderEnabled()
-	e.purePipelineFastPath.Store(true)
-}
-
-// DisablePipelinePath deactivates the pipeline path. drainPlanExecCtx
-// falls back to drainBatch. REQ002141.
-func (e *Executor) DisablePipelinePath() {
-	e.pipelineBuilder = nil
-	e.purePipelineFastPath.Store(false)
-}
-
-// PurePipelineFastPath reports whether the BuildPipeline(sql)-based
-// fast paths are active in QueryAll, Query, QueryStream, Exec,
-// CompilePlan, ExecCompiled, and drainPlanExecCtx. REQ002129.
-func (e *Executor) PurePipelineFastPath() bool { return e.purePipelineFastPath.Load() }
-
-// EnablePurePipelineFastPath activates the BuildPipeline(sql)-based
-// fast paths independently of pipelineBuilder initialization. Used by
-// tests that want to exercise pure-PX execution without having to
-// re-initialize the pipeline builder. Idempotent. REQ002129.
-func (e *Executor) EnablePurePipelineFastPath() { e.purePipelineFastPath.Store(true) }
-
-// DisablePurePipelineFastPath disables the fast paths. Safe for
-// concurrent use (single-write best-effort bool, no concurrent
-// executor invocation guaranteed by the caller convention). REQ002129.
-func (e *Executor) DisablePurePipelineFastPath() { e.purePipelineFastPath.Store(false) }
-
-// usePipelineFastPath is the unified stage-selection gate for all EX
-// entry points. Returns true only when BOTH the pipeline builder was
-// initialized AND the pure-PX fast-path flag is currently active.
-//
-// Single source of truth — replaces the 7 duplicated
-// `e.pipelineBuilder != nil && e.purePipelineFastPath.Load()`
-// expressions spread across ex.go + stream.go. One call site = one
-// place to add future gating (e.g., per-stmt kind allowlist, panic
-// recovery, or per-user session overrides).
-//
-// Concurrency: purePipelineFastPath is atomic.Bool, so a concurrent
-// EnablePurePipelineFastPath call has acquire/release semantics — no
-// torn reads. pipelineBuilder is only ever set in NewExecutor (before
-// any concurrent callers) or DisablePipelinePath (which is an
-// explicit single-threaded config reset, same caller convention as
-// DisablePurePipelineFastPath).
-func (e *Executor) usePipelineFastPath() bool {
-	return e.pipelineBuilder != nil && e.purePipelineFastPath.Load()
 }
 
 // specHasNoLegacyStages reports whether a PipelineSpec contains
 // ONLY native StageSpecs (no LegacyBatchStageSpec fallback wrapper).
-// De-duplicates the 3 copies of this loop in Exec, queryAllBuildPipeline,
-// and ExecCompiled — ensuring the rejection criteria never drift.
-//
-// Why reject LegacyBatchStageSpec in the fast path: the legacy
-// wrapper invokes the plan-tree operator and its own EV.RowEvaluator
-// setup paths; if the pipeline ran the wrapper AND the legacy
-// specHasNoLegacyStages returns true when the PipelineSpec contains no
-// LegacyBatchStageSpec wrappers. REQ002228: LegacyBatchStageSpec removed —
-// all stages are native, so this always returns true.
+// REQ002228: LegacyBatchStageSpec removed — all stages are native, so
+// this always returns true. REQ002230: gate removed; function retained
+// for callers that still consult it.
 func specHasNoLegacyStages(spec *PX.PipelineSpec) bool {
 	return true
 }
@@ -832,372 +751,70 @@ func (e *Executor) RegisterCollation(name string, fn DT.CollateFunc) error {
 	return e.planner.RegisterCollation(name, fn)
 }
 
+// Exec runs a DML/DDL statement through the unified BuildPipeline path.
+// REQ002230: pipeline is the sole execution method; legacy parse→plan→Next
+// fallback removed. OutputCols may be empty (DDL/DML without RETURNING);
+// RowsAffected is derived from execCtx.LastChanges or len(returning rows).
 func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, error) {
-	// REQ002129: BuildPipeline fast path for DML — try first, skip
-	// parse+plan for warm cached SQL (BuildPipeline consults its own
-	// PipelineCache for sql+args-shape matches). Falls back to legacy
-	// path on any error/panic.
-	//
-	// Unified gate via usePipelineFastPath() — same switching logic as
-	// QueryAll, QueryStream, CompilePlan, ExecCompiled.
-	if e.usePipelineFastPath() {
-		defer func() {
-			if r := recover(); r != nil {
-				buf := make([]byte, 4096)
-				n := runtime.Stack(buf, false)
-				slog.Warn("px.Exec pipeline panic, falling back",
-					"err", fmt.Sprintf("%v", r),
-					"stack", string(buf[:n]))
-			}
-		}()
-		spec, bErr := e.pipelineBuilder.Build(sql)
-		if bErr == nil && spec != nil && len(spec.Stages) > 0 &&
-			len(spec.OutputCols) > 0 && len(spec.OutputTypes) > 0 &&
-			specHasNoLegacyStages(spec) {
-			exec := PX.NewPipelineExecutor(spec)
-			defer exec.Close()
-			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
-			execCtx.RowArena = e.ensureArena()
-			rows, execErr := exec.ExecuteWithArgs(ctx, args, e.planner, execCtx)
-			if execErr == nil {
-				e.lastChanges = execCtx.LastChanges
-				e.totalChanges = execCtx.TotalChanges
-				affected := execCtx.LastChanges
-				if affected == 0 {
-					affected = int64(len(rows))
-				}
-				return Result{RowsAffected: affected}, nil
-			}
-			slog.Debug("px.Exec pipeline err, falling back", "err", execErr.Error())
-		}
+	spec, bErr := e.pipelineBuilder.Build(sql)
+	if bErr != nil {
+		return Result{}, bErr
 	}
-
-	// REQ002145: legacy stmtCache removed — always parse fresh.
-	parser := PS.NewParser(sql)
-	defer parser.Close()
-	stmt, err := parser.Parse()
-	if err != nil {
-		return Result{}, err
+	if spec == nil || len(spec.Stages) == 0 || !specHasNoLegacyStages(spec) {
+		return Result{}, fmt.Errorf("ex: Exec: unsupported statement")
 	}
-
-	// Check if this is a DML with RETURNING clause
-	if hasReturning(stmt) {
-		op, err := e.buildWriterOp(stmt)
-		if err != nil {
-			return Result{}, err
-		}
-		propagateParams(op, args, &e.paramBuf)
-		propagatePlanner(op, e.planner)
-		execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
-		execCtx.RowArena = e.ensureArena()
-		propagateExecContext(op, execCtx)
-		defer op.Close()
-		count, err := e.execReturning(ctx, op)
-		if err != nil {
-			return Result{}, err
-		}
-		return Result{RowsAffected: count}, nil
-	}
-
-	op, err := e.buildWriterOp(stmt)
-	if err != nil {
-		return Result{}, err
-	}
-	// R16-1: thread args down to the operator tree so `?`
-	// placeholders resolve. Writers (INSERT/UPDATE/DELETE) also
-	// support placeholders (e.g. INSERT ... VALUES (?,?)).
-	propagateParams(op, args, &e.paramBuf)
-	propagatePlanner(op, e.planner)
+	exec := PX.NewPipelineExecutor(spec)
+	defer exec.Close()
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
 	execCtx.RowArena = e.ensureArena()
-	propagateExecContext(op, execCtx)
-
-	// REQ002268: when the pipeline path is enabled, route DML through
-	// the PipelineExecutor (execDMLPipeline/drain_batch.go removed).
-	// DDL (ALTER/CREATE/DROP) uses legacy single Next() to avoid
-	// pipeline re-execution breaking schema mutations.
-	if e.pipelineBuilder != nil {
-		if !isDMLOp(op) {
-			if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
-				return Result{}, err
-			}
-			res := Result{}
-			if a, ok := op.(interface{ RowsAffected() int64 }); ok {
-				res.RowsAffected = a.RowsAffected()
-			}
-			e.lastChanges = execCtx.LastChanges
-			e.totalChanges = execCtx.TotalChanges
-			return res, nil
-		}
-		spec, err := PX.BuildDMLPipelineSpec(op)
-		if err != nil {
-			return Result{}, err
-		}
-		executor := PX.NewPipelineExecutor(spec)
-		if _, err := executor.Execute(ctx); err != nil {
-			return Result{}, err
-		}
-		res := Result{}
-		if a, ok := op.(interface{ RowsAffected() int64 }); ok {
-			res.RowsAffected = a.RowsAffected()
-		}
-		e.lastChanges = execCtx.LastChanges
-		e.totalChanges = execCtx.TotalChanges
-		updateTableRowCount(op, e.planner)
-		return res, nil
-	}
-
-	if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
-		return Result{}, err
+	rows, execErr := exec.ExecuteWithArgs(ctx, args, e.planner, execCtx)
+	if execErr != nil {
+		return Result{}, execErr
 	}
 	e.lastChanges = execCtx.LastChanges
 	e.totalChanges = execCtx.TotalChanges
-	res, err := extractResult(op)
-	if err == nil {
-		updateTableRowCount(op, e.planner)
+	affected := execCtx.LastChanges
+	if affected == 0 {
+		affected = int64(len(rows))
 	}
-	return res, err
+	return Result{RowsAffected: affected}, nil
 }
 
-// execReturning executes a DML operator with RETURNING clause and returns
-// the number of rows produced. Uses the pipeline path when enabled, falls
-// back to legacy Next() loop otherwise. REQ002142.
-func (e *Executor) execReturning(ctx context.Context, op DT.Operator) (int64, error) {
-	if e.pipelineBuilder != nil {
-		spec, err := PX.BuildDMLPipelineSpec(op)
-		if err == nil {
-			executor := PX.NewPipelineExecutor(spec)
-			rows, execErr := executor.Execute(ctx)
-			executor.Close()
-			if execErr != nil {
-				return 0, execErr
-			}
-			return int64(len(rows)), nil
-		}
-		// Fall through to legacy on pipeline build error.
-	}
-	var count int64
-	for {
-		_, err := op.Next(ctx)
-		if err != nil {
-			if err == DT.ErrNoRows {
-				break
-			}
-			return count, err
-		}
-		count++
-	}
-	return count, nil
-}
-
-func hasReturning(stmt PS.Stmt) bool {
-	switch s := stmt.(type) {
-	case *PS.Insert:
-		return len(s.Returning) > 0
-	case *PS.Update:
-		return len(s.Returning) > 0
-	case *PS.Delete:
-		return len(s.Returning) > 0
-	}
-	return false
-}
-
+// Query returns the result schema (column names/types) for a SELECT
+// statement without draining rows. REQ002230: pipeline is the sole path.
+// Rows are consumed by the driver via QueryStream/QueryAll.
 func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, error) {
-	// REQ002129: BuildPipeline fast path — try first. Query only needs
-	// OutputCols + OutputTypes metadata (it's a schema descriptor; actual
-	// rows are fetched via QueryStream/QueryAll by the driver). No drain
-	// needed. Unified gate via usePipelineFastPath() + no legacy stages.
-	if e.usePipelineFastPath() {
-		defer func() {
-			if r := recover(); r != nil {
-				buf := make([]byte, 4096)
-				n := runtime.Stack(buf, false)
-				slog.Warn("px.Query pipeline panic, falling back",
-					"err", fmt.Sprintf("%v", r),
-					"stack", string(buf[:n]))
-			}
-		}()
-		spec, bErr := e.pipelineBuilder.Build(sql)
-		if bErr == nil && spec != nil && len(spec.OutputCols) > 0 &&
-			specHasNoLegacyStages(spec) {
-			// Propagate params/execCtx for consistent LastChanges state
-			// (CHANGES() semantics) even though no rows are drained.
-			execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-			exec := PX.NewPipelineExecutor(spec)
-			exec.SetExecContext(execCtx)
-			exec.SetParams(args)
-			exec.SetPlanner(e.planner)
-			_ = exec.Close()
-			e.lastChanges = execCtx.LastChanges
-			e.totalChanges = execCtx.TotalChanges
-			return &Rows{
-				Cols:  append([]string(nil), spec.OutputCols...),
-				Types: append([]LX.TokenType(nil), spec.OutputTypes...),
-			}, nil
-		}
+	spec, bErr := e.pipelineBuilder.Build(sql)
+	if bErr != nil {
+		return nil, bErr
 	}
-	// REQ002145: legacy caches (textPlanCache, stmtCache) removed.
-	// Always parse fresh.
-	parser := PS.NewParser(sql)
-	defer parser.Close()
-	stmt, err := parser.Parse()
-	if err != nil {
-		return nil, err
+	if spec == nil || len(spec.Stages) == 0 || !specHasNoLegacyStages(spec) {
+		return nil, fmt.Errorf("ex: Query: unsupported statement")
 	}
-
-	// Check if this is a DML with RETURNING clause
-	if hasReturning(stmt) {
-		op, err := e.buildWriterOp(stmt)
-		if err != nil {
-			return nil, err
-		}
-		propagateParams(op, args, &e.paramBuf)
-		defer op.Close()
-		var out []DT.Row
-		for {
-			row, err := op.Next(ctx)
-			if err != nil {
-				if err == DT.ErrNoRows {
-					break
-				}
-				return nil, err
-			}
-			out = append(out, row)
-		}
-		if len(out) == 0 {
-			return &Rows{}, nil
-		}
-		return &Rows{Cols: append([]string(nil), out[0].Cols...), Types: append([]LX.TokenType(nil), out[0].Types...)}, nil
-	}
-
-	plan, err := e.planWithCache(stmt)
-	if err != nil {
-		return nil, err
-	}
-	if plan == nil || plan.Root == nil {
-		return nil, errors.New("ex: plan produced no root")
-	}
-	// R16-1: thread args down to the operator tree so `?`
-	// placeholders resolve during Eval.
-	propagateParams(plan.Root, args, &e.paramBuf)
-	propagatePlanner(plan.Root, e.planner)
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-	execCtx.RowArena = e.ensureArena()
-	propagateExecContext(plan.Root, execCtx)
-	// Attempt vectorized execution for eligible query plans.
-	// REQ002172: tryVectorizePlan removed — raw operator tree used directly.
-	defer plan.Root.Close()
-	row, err := plan.Root.Next(ctx)
-	if err != nil {
-		if err == DT.ErrNoRows {
-			return &Rows{}, nil
-		}
-		return nil, err
-	}
-	DT.WithExecContext(&row, execCtx)
-	rs := &Rows{Cols: append([]string(nil), row.Cols...), Types: append([]LX.TokenType(nil), row.Types...)}
-	return rs, nil
+	exec := PX.NewPipelineExecutor(spec)
+	exec.SetExecContext(execCtx)
+	exec.SetParams(args)
+	exec.SetPlanner(e.planner)
+	_ = exec.Close()
+	e.lastChanges = execCtx.LastChanges
+	e.totalChanges = execCtx.TotalChanges
+	return &Rows{
+		Cols:  append([]string(nil), spec.OutputCols...),
+		Types: append([]LX.TokenType(nil), spec.OutputTypes...),
+	}, nil
 }
 
+// QueryAll returns all rows for a SELECT statement via the unified
+// BuildPipeline path. REQ002230: pipeline is the sole execution method;
+// legacy parse→plan→drainBatch fallback removed.
 func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.Row, error) {
-	// REQ002129/2132: BuildPipeline fast path — unified compile flow
-	// (parse→rewrite→plan→specialize→cache) that produces pure StageSpecs
-	// (no LegacyBatch wrapper) and uses the unified PipelineCache instead
-	// of stmtCache+planCache. Safety: any error, panic, or nil/empty spec
-	// falls through to legacy parse/plan/drainBatch path below.
-	if rows, ok := e.queryAllBuildPipeline(ctx, sql, args); ok {
-		return rows, nil
+	spec, bErr := e.pipelineBuilder.Build(sql)
+	if bErr != nil {
+		return nil, bErr
 	}
-
-	// REQ002145: legacy stmtCache removed — always parse fresh.
-	parser := PS.NewParser(sql)
-	defer parser.Close()
-	stmt, err := parser.Parse()
-	if err != nil {
-		return nil, err
-	}
-	plan, err := e.planWithCache(stmt)
-	if err != nil {
-		return nil, err
-	}
-	if plan == nil || plan.Root == nil {
-		return nil, errors.New("ex: plan produced no root")
-	}
-	// REQ002010: do not cache plans via textPlanCache in QueryAll.
-	// See comment above; cached plans leak operator tree memory.
-	propagateParams(plan.Root, args, &e.paramBuf)
-	// REQ000366: thread the main-plan planner so SeqScan rows
-	// carry it into subquery evals. propagatePlanner is a
-	// depth-first walk that calls WithPlanner on every node
-	// that supports it.
-	propagatePlanner(plan.Root, e.planner)
-	// REQ000586: thread DT.ExecContext through rows to eliminate
-	// the global currentSubqueryPlanner.
-	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-	execCtx.RowArena = e.ensureArena()
-	propagateExecContext(plan.Root, execCtx)
-	defer plan.Root.Close()
-	// REQ002268: drainPlanExecCtx removed — use operator-based drain.
-	rows, err := drainPlanRows(ctx, plan.Root, execCtx)
-	if err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
-// queryAllBuildPipeline attempts the pure BuildPipeline path for
-// QueryAll. Returns (rows, true) on success, (nil, false) when the
-// caller should fall through to the legacy path. Panics are converted
-// to fallback (returns false) so latent bugs don't crash production.
-// REQ002129/2132.
-// REQ002156: pre-check for bushy join shapes (multiple table references
-// with equi-join predicates) to avoid calling planner.Plan() which
-// corrupts the memo cache for complex multi-join queries. The fallback
-// path uses the same planner.Plan() via planWithCache, so if we call
-// Build() first, the cached plan is already corrupted.
-func (e *Executor) queryAllBuildPipeline(ctx context.Context, sql string, args []any) ([]DT.Row, bool) {
-	if !e.usePipelineFastPath() {
-		return nil, false
-	}
-	// REQ002156: skip pipeline build for queries with many table
-	// references — these produce bushy join plans that corrupt the
-	// planner's memo cache.
-	if hasManyTableRefs(sql) {
-		return nil, false
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			n := runtime.Stack(buf, false)
-			slog.Warn("px.QueryAll pipeline panic, falling back",
-				"err", fmt.Sprintf("%v", r),
-				"sql", sql,
-				"stack", string(buf[:n]))
-		}
-	}()
-	spec, err := e.pipelineBuilder.Build(sql)
-	if err != nil || spec == nil || len(spec.Stages) == 0 {
-		return nil, false
-	}
-	// Schema sanity: pure-PX pipeline must derive OutputCols +
-	// OutputTypes from the plan-tree so Row.ToRows() can produce
-	// correctly-sized Data. Empty OutputCols means either the
-	// pipeline executor can't map aggregated values back to Row.Data
-	// OR an aggregate over empty SeqScan produced no output columns
-	// (Scalar Agg with MIN/MAX etc — still needs 1 output slot).
-	// Either case: fall back.
-	if len(spec.OutputCols) == 0 || len(spec.OutputTypes) == 0 {
-		return nil, false
-	}
-	// Full-specialization sanity: any LegacyBatchStageSpec in the
-	// pipeline means Stage.NewRuntime() will return a RowOperator-
-	// wrapped plan-tree, which silently drops execCtx wiring for
-	// correlated subqueries, HAVING, GROUP_CONCAT, and RETURNING
-	// clauses. Reject here → legacy plan-tree loop handles it.
-	// REQ002129: don't double-run the operator tree (once via Build,
-	// then again via legacy drain) when not fully specialized.
-	if !specHasNoLegacyStages(spec) {
-		return nil, false
+	if spec == nil || len(spec.Stages) == 0 || !specHasNoLegacyStages(spec) {
+		return nil, fmt.Errorf("ex: QueryAll: unsupported statement")
 	}
 	exec := PX.NewPipelineExecutor(spec)
 	defer exec.Close()
@@ -1205,24 +822,11 @@ func (e *Executor) queryAllBuildPipeline(ctx context.Context, sql string, args [
 	execCtx.RowArena = e.ensureArena()
 	rows, execErr := exec.ExecuteWithArgs(ctx, args, e.planner, execCtx)
 	if execErr != nil {
-		slog.Debug("px.QueryAll pipeline exec error, falling back",
-			"err", execErr.Error(),
-			"sql_len", len(sql))
-		return nil, false
+		return nil, execErr
 	}
-	// 0-row results are ambiguous (valid empty result vs pipeline bug).
-	// Accept 0-row when spec.OutputCols is populated (schema derived).
-	// Otherwise fall back to legacy to disambiguate.
-	if len(rows) == 0 && len(spec.OutputCols) == 0 {
-		return nil, false
-	}
-	// Propagate execCtx.LastChanges so CHANGES() is consistent
-	// across SELECT+DML mixed-statement batches (no-op for pure SELECT
-	// since LastChanges stays 0 after read-only execution, but kept for
-	// DML stages in future REQs where SELECT wraps DML via RETURNING).
 	e.lastChanges = execCtx.LastChanges
 	e.totalChanges = execCtx.TotalChanges
-	return rows, true
+	return rows, nil
 }
 
 // clearTextPlanCache is a no-op — legacy textPlanCache removed. REQ002145.
@@ -1247,36 +851,27 @@ func isDDLStmt(stmt PS.Stmt) bool {
 
 // CompiledPlan holds a pre-compiled operator tree that skips re-parsing
 // and re-planning on each execution. Created by Executor.CompilePlan.
-// For SELECT/compound, plan is set with the compiled PlanResult.
-// For DML and other exec-only statements, op is set with the writer op.
-// REQ001422.
-// REQ002129/2130: when pipeSpec is non-nil, ExecCompiled/QueryStreamCompiled
-// prefer spec.NewRuntime() + PipelineExecutor over legacy plan.Root. This eliminates
-// the plan-tree AdaptiveOp clone cost on each execution (pipeline path uses fresh
-// Stage instances per execution).
+// CompiledPlan holds a pre-compiled statement and its PipelineSpec.
+// REQ002230: pipeSpec is the sole compiled artifact; legacy plan/op
+// removed. isDML flags RowsAffected handling in ExecCompiled.
 type CompiledPlan struct {
 	stmt     PS.Stmt
 	isDML    bool
-	plan     *pl.PlanResult
-	op       DT.Operator
-	pipeSpec *PX.PipelineSpec // pure-PX path: compiled via BuildPipeline (valid for SELECT/compound/DML-RETURNING)
+	pipeSpec *PX.PipelineSpec
 }
 
-// Close releases the operator tree in the CompiledPlan. Safe to call
-// after ExecCompiled/QueryStreamCompiled have closed the tree. REQ001422.
+// Close is a no-op retained for API compatibility. REQ001422.
 func (cp *CompiledPlan) Close() {
-	if cp == nil {
-		return
+}
+
+// isCompiledDMLStmt reports whether stmt produces RowsAffected (INSERT/
+// UPDATE/DELETE, with or without RETURNING, and schema-mutating DDL).
+func isCompiledDMLStmt(stmt PS.Stmt) bool {
+	switch stmt.(type) {
+	case *PS.Insert, *PS.Update, *PS.Delete:
+		return true
 	}
-	if cp.isDML {
-		if cp.op != nil {
-			cp.op.Close()
-		}
-	} else {
-		if cp.plan != nil && cp.plan.Root != nil {
-			cp.plan.Root.Close()
-		}
-	}
+	return false
 }
 
 // CompilePlan parses sql and returns a CompiledPlan that holds a compiled
@@ -1290,6 +885,9 @@ func (cp *CompiledPlan) Close() {
 // instead of re-doing ResolvePlanSlots + tryVectorizePlan + AdaptiveOp clone
 // (~60µs per call). The pure-PX PipelineSpec is the authoritative compiled
 // artifact; plan/op are retained as a correctness fallback.
+// CompilePlan pre-compiles sql into a CompiledPlan holding a
+// reusable PipelineSpec. REQ002230: pipeline is the sole path; legacy
+// plan/op fallback removed.
 func (e *Executor) CompilePlan(sql string) (*CompiledPlan, error) {
 	parser := PS.NewParser(sql)
 	defer parser.Close()
@@ -1297,173 +895,49 @@ func (e *Executor) CompilePlan(sql string) (*CompiledPlan, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	cp := &CompiledPlan{stmt: stmt}
-
-	// REQ002129/2130: try pure BuildPipeline first. For SELECT/compound,
-	// produces a reusable PipelineSpec. For DML with RETURNING, also
-	// builds a PipelineSpec that can be re-used with fresh args via
-	// PipelineExecutor.ExecuteWithArgs. If BuildPipeline fails or
-	// produces nil/empty, fall through to legacy plan-tree path below
-	// (pipeSpec stays nil, ExecCompiled uses legacy).
-	if e.pipelineBuilder != nil {
-		defer func() {
-			_ = recover() // swallows BuildPipeline panic; legacy path takes over
-		}()
-		if spec, berr := e.pipelineBuilder.Build(sql); berr == nil && spec != nil &&
-			len(spec.Stages) > 0 && len(spec.OutputCols) > 0 && len(spec.OutputTypes) > 0 {
-			cp.pipeSpec = spec
-		}
+	spec, bErr := e.pipelineBuilder.Build(sql)
+	if bErr != nil {
+		return nil, bErr
 	}
-
+	if spec == nil || len(spec.Stages) == 0 || !specHasNoLegacyStages(spec) {
+		return nil, fmt.Errorf("ex: CompilePlan: unsupported statement")
+	}
 	switch stmt.(type) {
 	case *PS.Select, *PS.CompoundStmt:
-		plan, err := e.planWithCache(stmt)
-		if err != nil {
-			return nil, err
-		}
-		if plan == nil || plan.Root == nil {
-			return nil, errors.New("ex: CompilePlan: plan produced no root")
-		}
-		ResolvePlanSlots(plan.Root)
-		// REQ001614: tryVectorizePlan always succeeds — falls back to
-		// ScalarBatchProducer wrapping when vectorization is not applicable.
-		// REQ002172: tryVectorizePlan removed.
-		cp.plan = plan
-		return cp, nil
-
+		// SELECT/compound: CompilePlan returns metadata only.
 	default:
-		// DML, DDL, PRAGMA, etc.
-		op, err := e.buildWriterOp(stmt)
-		if err != nil {
-			return nil, err
-		}
-		cp.isDML = true
-		cp.op = op
-		return cp, nil
+		// DML, DDL, PRAGMA, etc. — flagged for RowsAffected handling.
 	}
+	return &CompiledPlan{stmt: stmt, isDML: isCompiledDMLStmt(stmt), pipeSpec: spec}, nil
 }
 
-// ExecCompiled executes a CompiledPlan produced by CompilePlan,
-// injecting args into `?` placeholders. Skips re-parsing and
-// re-planning. REQ001422.
-// REQ002129/2130: when cp.pipeSpec is non-nil, uses PipelineExecutor
-// to instantiate fresh Stage instances via spec.NewRuntime() (~5µs per
-// call) instead of re-using the plan-tree's AdaptiveOp wrapper (~60µs).
-// Any error/panic in the pipeline path falls through to the legacy
-// plan-tree path for safety.
+// ExecCompiled executes a pre-compiled CompiledPlan via the unified
+// pipeline path. REQ002230: pipeline is the sole path; legacy plan-tree
+// fallback removed.
 func (e *Executor) ExecCompiled(ctx context.Context, cp *CompiledPlan, args ...any) (Result, error) {
 	if cp == nil {
 		return Result{}, errors.New("ex: ExecCompiled: nil plan")
 	}
-
-	// REQ002129/2130: pure-PX PipelineSpec path (fast) — try first.
-	// Unified gate via usePipelineFastPath() — matches Exec/QueryAll.
-	// Falls back on any error/panic/nil-spec to the legacy plan-tree.
-	if cp.pipeSpec != nil && e.usePipelineFastPath() &&
-		specHasNoLegacyStages(cp.pipeSpec) {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Warn("px.ExecCompiled pipeline panic, falling back",
-					"err", fmt.Sprintf("%v", r),
-					"is_dml", cp.isDML)
-			}
-		}()
-		exec := PX.NewPipelineExecutor(cp.pipeSpec)
-		defer exec.Close()
-		execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-		execCtx.RowArena = e.ensureArena()
-		rows, execErr := exec.ExecuteWithArgs(ctx, args, e.planner, execCtx)
-		if execErr == nil {
-			e.lastChanges = execCtx.LastChanges
-			e.totalChanges = execCtx.TotalChanges
-			if cp.isDML {
-				// For DML: rows are 0 (no RETURNING) or RETURNING rows.
-				// Prefer execCtx.LastChanges when non-zero (non-RETURNING DML)
-				// else len(rows) for RETURNING-path semantics.
-				affected := execCtx.LastChanges
-				if affected == 0 {
-					affected = int64(len(rows))
-				}
-				return Result{RowsAffected: affected}, nil
-			}
-			// SELECT/compound through ExecCompiled returns empty Result
-			// (same as legacy path — callers expecting rows use QueryAll
-			// or QueryStream directly).
-			return Result{}, nil
-		}
-		slog.Debug("px.ExecCompiled pipeline err, falling back",
-			"err", execErr.Error(),
-			"is_dml", cp.isDML)
-		// Fall through to legacy path.
+	if cp.pipeSpec == nil {
+		return Result{}, errors.New("ex: ExecCompiled: nil spec")
 	}
-
-	if cp.isDML {
-		op := cp.op
-		// R16-1: thread args down to the operator tree so `?`
-		// placeholders resolve.
-		propagateParams(op, args, &e.paramBuf)
-
-		if hasReturning(cp.stmt) {
-			defer op.Close()
-			var count int64
-			for {
-				_, err := op.Next(ctx)
-				if err != nil {
-					if err == DT.ErrNoRows {
-						break
-					}
-					return Result{}, err
-				}
-				count++
-			}
-			return Result{RowsAffected: count}, nil
-		}
-
-		propagatePlanner(op, e.planner)
-		execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
-		execCtx.RowArena = e.ensureArena()
-		propagateExecContext(op, execCtx)
-		defer op.Close()
-		if _, err := op.Next(ctx); err != nil && err != DT.ErrNoRows {
-			return Result{}, err
-		}
-		e.lastChanges = execCtx.LastChanges
-		e.totalChanges = execCtx.TotalChanges
-		res, err := extractResult(op)
-		if err == nil {
-			updateTableRowCount(op, e.planner)
-		}
-		return res, err
-	}
-
-	// SELECT/compound path
-	plan := cp.plan
-	propagateParams(plan.Root, args, &e.paramBuf)
-	propagatePlanner(plan.Root, e.planner)
+	exec := PX.NewPipelineExecutor(cp.pipeSpec)
+	defer exec.Close()
 	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
 	execCtx.RowArena = e.ensureArena()
-	propagateExecContext(plan.Root, execCtx)
-	defer plan.Root.Close()
-	// REQ002268: drainBatchProducer removed — use simple batch drain.
-	if bp, ok := plan.Root.(UT.BatchProducer); ok {
-		for {
-			batch, err := bp.NextBatch(ctx)
-			if err != nil {
-				return Result{}, err
-			}
-			if batch == nil {
-				break
-			}
-			batch.Put()
-		}
-		return Result{}, nil
-	}
-	if _, err := plan.Root.Next(ctx); err != nil && err != DT.ErrNoRows {
-		return Result{}, err
+	rows, execErr := exec.ExecuteWithArgs(ctx, args, e.planner, execCtx)
+	if execErr != nil {
+		return Result{}, execErr
 	}
 	e.lastChanges = execCtx.LastChanges
 	e.totalChanges = execCtx.TotalChanges
+	if cp.isDML {
+		affected := execCtx.LastChanges
+		if affected == 0 {
+			affected = int64(len(rows))
+		}
+		return Result{RowsAffected: affected}, nil
+	}
 	return Result{}, nil
 }
 
