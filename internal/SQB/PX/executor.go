@@ -171,6 +171,9 @@ type PipelineStream struct {
 	done    bool
 	closeMu sync.Mutex
 	closed  bool
+	// onClose, if set, is invoked by Close() before releasing the current
+	// batch. Used by PipelinedExecutor to stop its producer goroutine.
+	onClose func() error
 	execCtx *DT.ExecContext // cached for fast-path check in Next()
 	// Cached column count from the first batch to avoid re-scanning
 	// Cols array on every row (batchRowToRow hot path). REQ002218.
@@ -255,6 +258,11 @@ func (s *PipelineStream) Close() error {
 		return nil
 	}
 	s.closed = true
+	if s.onClose != nil {
+		if err := s.onClose(); err != nil {
+			return err
+		}
+	}
 	if s.batch != nil {
 		if s.batch.Pooled {
 			s.batch.Put()
