@@ -549,12 +549,9 @@ func (p *Parser) parseCreateDispatch() (Stmt, error) {
 func (p *Parser) parseDropDispatch() (Stmt, error) {
 	next := p.lex.Peek().Type
 	if next == LX.T_MATERIALIZED {
-		p.advance() // consume MATERIALIZED
-		if p.lex.Peek().Type == LX.T_VIEW {
-			p.advance() // consume VIEW
-			return p.parseDropMaterializedView()
-		}
-		return p.parseDropTable()
+		// parseDropMaterializedView consumes DROP, MATERIALIZED, and VIEW
+		// itself — do not pre-advance here (mirrors parseCreateDispatch).
+		return p.parseDropMaterializedView()
 	}
 	switch next {
 	case LX.T_INDEX:
