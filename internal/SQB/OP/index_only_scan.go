@@ -7,6 +7,7 @@ import (
 	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
 // IndexOnlyScan reads directly from a secondary-index keyspace
@@ -27,7 +28,7 @@ import (
 // syscall. Tests that wrap a non-IndexScan operator skip this
 // optimisation and continue to exercise the basic wrapper.
 type IndexOnlyScan struct {
-	inner  pl.Operator
+	inner  DT.Operator
 	closed atomic.Bool
 }
 
@@ -43,7 +44,7 @@ type IndexOnlyScan struct {
 // only enters this branch when the projection includes PK,
 // otherwise covering-index candidates are not selected at all).
 // REQ001107 / REQ001249.
-func NewIndexOnlyScan(inner pl.Operator, idxCols []string, idxTypes []LX.TokenType, pk string) *IndexOnlyScan {
+func NewIndexOnlyScan(inner DT.Operator, idxCols []string, idxTypes []LX.TokenType, pk string) *IndexOnlyScan {
 	if inner == nil {
 		return nil
 	}
@@ -56,7 +57,7 @@ func NewIndexOnlyScan(inner pl.Operator, idxCols []string, idxTypes []LX.TokenTy
 // NewIndexOnlyScanPassthrough wraps any operator without enabling
 // the covering-mode fast path. Useful for tests that wire a stub
 // IndexScan with their own Next semantics. REQ001107.
-func NewIndexOnlyScanPassthrough(inner pl.Operator) *IndexOnlyScan {
+func NewIndexOnlyScanPassthrough(inner DT.Operator) *IndexOnlyScan {
 	if inner == nil {
 		return nil
 	}
@@ -70,7 +71,7 @@ func (s *IndexOnlyScan) Table() string { return "" }
 
 // Inner exposes the wrapped operator for tests and planner code
 // that needs to inspect the underlying scan.
-func (s *IndexOnlyScan) Inner() pl.Operator { return s.inner }
+func (s *IndexOnlyScan) Inner() DT.Operator { return s.inner }
 
 // Next forwards to the wrapped operator.
 func (s *IndexOnlyScan) Next(ctx context.Context) (pl.Row, error) {

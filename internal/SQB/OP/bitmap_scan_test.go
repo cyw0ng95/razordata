@@ -7,7 +7,8 @@ import (
 	"testing"
 
 	"github.com/cyw0ng95/razordata/internal/ENG/LS"
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
+	"github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
 // fakeIndexScan is a test-only Operator that emits the supplied
@@ -19,23 +20,23 @@ type fakeIndexScan struct {
 	closed bool
 }
 
-func (f *fakeIndexScan) Next(ctx context.Context) (pl.Row, error) {
+func (f *fakeIndexScan) Next(ctx context.Context) (PL.Row, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.closed {
-		return pl.Row{}, pl.ErrNoRows
+		return PL.Row{}, PL.ErrNoRows
 	}
 	if err := ctx.Err(); err != nil {
-		return pl.Row{}, err
+		return PL.Row{}, err
 	}
 	if f.pos >= len(f.keys) {
-		return pl.Row{}, pl.ErrNoRows
+		return PL.Row{}, PL.ErrNoRows
 	}
 	k := f.keys[f.pos]
 	f.pos++
-	return pl.Row{
+	return PL.Row{
 		Cols: []string{"pk"},
-		Data: []pl.Value{{Kind: pl.KindText, S: k}},
+		Data: []PL.Value{{Kind: PL.KindText, S: k}},
 	}, nil
 }
 
@@ -96,14 +97,14 @@ func TestBitmapHeapScan_Basic(t *testing.T) {
 	})
 	left := &fakeIndexScan{keys: []string{"a", "c"}}
 	right := &fakeIndexScan{keys: []string{"b", "c", "a"}}
-	bhs := NewBitmapHeapScan("t", store, []pl.Operator{left, right})
+	bhs := NewBitmapHeapScan("t", store, []DT.Operator{left, right})
 	defer bhs.Close()
 
 	ctx := context.Background()
 	seen := make(map[string]bool)
 	for {
 		row, err := bhs.Next(ctx)
-		if errors.Is(err, pl.ErrNoRows) {
+		if errors.Is(err, PL.ErrNoRows) {
 			break
 		}
 		if err != nil {
@@ -130,12 +131,12 @@ func TestBitmapHeapScan_Dedup(t *testing.T) {
 	store := newMemStore(map[string][]byte{"a": []byte("x")})
 	a := &fakeIndexScan{keys: []string{"a", "a", "a"}}
 	b := &fakeIndexScan{keys: []string{"a"}}
-	bhs := NewBitmapHeapScan("t", store, []pl.Operator{a, b})
+	bhs := NewBitmapHeapScan("t", store, []DT.Operator{a, b})
 	defer bhs.Close()
 	count := 0
 	for {
 		_, err := bhs.Next(context.Background())
-		if errors.Is(err, pl.ErrNoRows) {
+		if errors.Is(err, PL.ErrNoRows) {
 			break
 		}
 		if err != nil {
@@ -156,12 +157,12 @@ func TestBitmapHeapScan_SortedOutput(t *testing.T) {
 	// rows sorted by primary key (the heap order).
 	left := &fakeIndexScan{keys: []string{"c"}}
 	right := &fakeIndexScan{keys: []string{"a", "b"}}
-	bhs := NewBitmapHeapScan("t", store, []pl.Operator{left, right})
+	bhs := NewBitmapHeapScan("t", store, []DT.Operator{left, right})
 	defer bhs.Close()
 	var got []string
 	for {
 		row, err := bhs.Next(context.Background())
-		if errors.Is(err, pl.ErrNoRows) {
+		if errors.Is(err, PL.ErrNoRows) {
 			break
 		}
 		if err != nil {
@@ -182,7 +183,7 @@ func TestBitmapHeapScan_NoChildren(t *testing.T) {
 	bhs := NewBitmapHeapScan("t", store, nil)
 	defer bhs.Close()
 	_, err := bhs.Next(context.Background())
-	if !errors.Is(err, pl.ErrNoRows) {
+	if !errors.Is(err, PL.ErrNoRows) {
 		t.Fatalf("Next with no children = %v, want ErrNoRows", err)
 	}
 }
@@ -192,12 +193,12 @@ func TestBitmapHeapScan_MissingKey(t *testing.T) {
 	// bitmap operator should skip the missing key rather than fail.
 	store := newMemStore(map[string][]byte{"a": []byte("alpha")})
 	idx := &fakeIndexScan{keys: []string{"a", "missing", "missing"}}
-	bhs := NewBitmapHeapScan("t", store, []pl.Operator{idx})
+	bhs := NewBitmapHeapScan("t", store, []DT.Operator{idx})
 	defer bhs.Close()
 	count := 0
 	for {
 		_, err := bhs.Next(context.Background())
-		if errors.Is(err, pl.ErrNoRows) {
+		if errors.Is(err, PL.ErrNoRows) {
 			break
 		}
 		if err != nil {
@@ -213,7 +214,7 @@ func TestBitmapHeapScan_MissingKey(t *testing.T) {
 func TestBitmapHeapScan_Close(t *testing.T) {
 	store := newMemStore(map[string][]byte{"a": []byte("x")})
 	idx := &fakeIndexScan{keys: []string{"a"}}
-	bhs := NewBitmapHeapScan("t", store, []pl.Operator{idx})
+	bhs := NewBitmapHeapScan("t", store, []DT.Operator{idx})
 	if err := bhs.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}

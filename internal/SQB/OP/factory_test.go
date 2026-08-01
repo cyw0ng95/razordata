@@ -3,13 +3,14 @@ package OP
 import (
 	"testing"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
 // TestFactory_ReturnsOperatorFactory verifies the factory
-// returns a value satisfying pl.OperatorFactory.
+// returns a value satisfying DT.OperatorFactory.
 func TestFactory_ReturnsOperatorFactory(t *testing.T) {
-	var f pl.OperatorFactory = Factory()
+	var f DT.OperatorFactory = Factory()
 	if f == nil {
 		t.Fatal("Factory() returned nil")
 	}
@@ -36,16 +37,6 @@ func TestSeqScan_ImplementsColPrunable(t *testing.T) {
 	}
 }
 
-// TestSeqScan_ImplementsParent verifies SeqScan satisfies
-// pl.Parent. SeqScan has no child, so SetChild(nil) is a no-op.
-func TestSeqScan_ImplementsParent(t *testing.T) {
-	s := NewSeqScan("t1")
-	var p pl.Parent = s
-	if p.Child() != nil {
-		t.Errorf("SeqScan.Child() should be nil")
-	}
-}
-
 // TestIndexScan_ImplementsIndexInfo verifies IndexScan satisfies
 // pl.IndexInfo (the index name accessor).
 func TestIndexScan_ImplementsIndexInfo(t *testing.T) {
@@ -53,19 +44,6 @@ func TestIndexScan_ImplementsIndexInfo(t *testing.T) {
 	var ii pl.IndexInfo = i
 	if ii.IndexName() != "idx1" {
 		t.Errorf("IndexName() = %q, want idx1", ii.IndexName())
-	}
-}
-
-// TestHashJoin_ImplementsChildren2 verifies HashJoin satisfies
-// pl.Children2 (two-child operator).
-func TestHashJoin_ImplementsChildren2(t *testing.T) {
-	j := NewHashJoin(nil, nil, "l", "r", []string{"k"}, []string{"k"}, 0)
-	var c2 pl.Children2 = j
-	if c2.Left() != nil {
-		t.Errorf("Left() should be nil for fresh HashJoin")
-	}
-	if c2.Right() != nil {
-		t.Errorf("Right() should be nil for fresh HashJoin")
 	}
 }
 
@@ -79,18 +57,6 @@ func TestLimit_ImplementsLimitInfo(t *testing.T) {
 	}
 	if li.IsTopN() {
 		t.Error("IsTopN() should default to false")
-	}
-}
-
-// TestSort_OrderBy verifies Sort's pl.OrderBy() projection.
-func TestSort_OrderBy(t *testing.T) {
-	// Sort requires a real OrderItem; the factory's
-	// pl.OrderSpec → PS.OrderItem conversion lives in
-	// factory.go. Here we directly test the OrderBy() adapter.
-	s := NewSort(nil, nil)
-	var si pl.SortInfo = s
-	if si.OrderBy() != nil {
-		t.Errorf("OrderBy() = %v, want nil for empty Sort", si.OrderBy())
 	}
 }
 
@@ -120,7 +86,7 @@ func TestFactory_NewValues(t *testing.T) {
 // TestFactory_AllMethodsExist verifies the factory exposes all
 // 15 OperatorFactory methods without panic.
 func TestFactory_AllMethodsExist(t *testing.T) {
-	var f pl.OperatorFactory = Factory()
+	var f DT.OperatorFactory = Factory()
 	// Just call each one with minimal args and verify nil is
 	// not returned for the methods we expect to support.
 	_ = f.NewSeqScan("t", nil)
@@ -130,13 +96,13 @@ func TestFactory_AllMethodsExist(t *testing.T) {
 	_ = f.NewProject(nil, nil, nil)
 	_ = f.NewFilterProject(nil, nil, nil, nil)
 	// NewHashJoin and NewNestedLoopJoin return nil by design.
-	_ = f.NewHashJoin(nil, nil, "", "", pl.InnerJoin)
-	_ = f.NewNestedLoopJoin(nil, nil, nil, pl.InnerJoin)
+	_ = f.NewHashJoin(nil, nil, "", "", DT.InnerJoin)
+	_ = f.NewNestedLoopJoin(nil, nil, nil, DT.InnerJoin)
 	_ = f.NewAggregate(nil, nil, nil)
 	_ = f.NewHashAggregate(nil, nil, nil)
 	_ = f.NewSort(nil, nil)
 	_ = f.NewLimit(nil, 0, 0)
 	_ = f.NewDistinct(nil)
-	_ = f.NewSetOp(nil, nil, pl.UnionAllOp)
+	_ = f.NewSetOp(nil, nil, DT.UnionAllOp)
 	_ = f.NewValues(nil)
 }

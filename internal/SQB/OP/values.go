@@ -11,6 +11,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 )
@@ -155,7 +156,7 @@ func (v *Values) ColNames() []string { return v.colNames }
 // Cols returns the expression columns for this Values operator.
 func (v *Values) Cols() []PS.Expr { return v.cols }
 
-func (v *Values) WithPlanner(p pl.QueryPlanner) pl.Operator {
+func (v *Values) WithPlanner(p pl.QueryPlanner) DT.Operator {
 	if v == nil {
 		return nil
 	}

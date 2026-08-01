@@ -3,18 +3,18 @@
 //
 // GroupCols() already exists on both types returning []PS.Expr,
 // which matches pl.AggregateInfo.GroupCols. The adapters add
-// SetChild and Aggregates (pl.AggregateSpec form).
+// SetChild and Aggregates (DT.AggregateSpec form).
 package AG
 
 import (
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 // --- Aggregate adapters -----------------------------------------------
 
 // SetChild sets the input. Aggregate has Child() but no SetChild.
-func (a *Aggregate) SetChild(op pl.Operator) {
+func (a *Aggregate) SetChild(op DT.Operator) {
 	if op == nil {
 		a.child = nil
 		return
@@ -26,12 +26,12 @@ func (a *Aggregate) SetChild(op pl.Operator) {
 
 // Aggregates returns aggregate specs projected from the
 // []PS.Expr Aggregate stores. pl.AggregateInfo.Aggregates is
-// []pl.AggregateSpec.
-func (a *Aggregate) Aggregates() []pl.AggregateSpec {
+// []DT.AggregateSpec.
+func (a *Aggregate) Aggregates() []DT.AggregateSpec {
 	if len(a.aggs) == 0 {
 		return nil
 	}
-	out := make([]pl.AggregateSpec, 0, len(a.aggs))
+	out := make([]DT.AggregateSpec, 0, len(a.aggs))
 	for _, e := range a.aggs {
 		out = append(out, exprToSpec(e))
 	}
@@ -44,15 +44,15 @@ func (a *Aggregate) Aggregates() []pl.AggregateSpec {
 // AggregateSpec. The function-call form `count(x)` becomes
 // {FuncName: "count", Arg: name(x)}; other forms become
 // {FuncName: name(e)}.
-func exprToSpec(e PS.Expr) pl.AggregateSpec {
+func exprToSpec(e PS.Expr) DT.AggregateSpec {
 	if fc, ok := e.(*PS.FunctionCall); ok {
 		arg := ""
 		if len(fc.Args) > 0 {
 			arg = exprName(fc.Args[0])
 		}
-		return pl.AggregateSpec{FuncName: fc.Name, Arg: arg}
+		return DT.AggregateSpec{FuncName: fc.Name, Arg: arg}
 	}
-	return pl.AggregateSpec{FuncName: exprName(e)}
+	return DT.AggregateSpec{FuncName: exprName(e)}
 }
 
 // exprName extracts a column name from a simple PS.Expr.

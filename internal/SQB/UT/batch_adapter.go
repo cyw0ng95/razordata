@@ -7,7 +7,7 @@ import (
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 )
 
-// BatchToRowAdapter wraps a BatchProducer and implements pl.Operator
+// BatchToRowAdapter wraps a BatchProducer and implements DT.Operator
 // (Next+Close) by materialising one batch at a time via Batch.ToRows
 // and yielding one row per Next() call. This is the "row-at-a-time
 // is BatchSize=1" boundary: the source runs vectorized end-to-end, we

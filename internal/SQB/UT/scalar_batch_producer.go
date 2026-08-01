@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
 // ScalarBatchProducer wraps a BatchProducer to return single-row batches.
@@ -138,7 +138,7 @@ func (s *ScalarBatchProducer) Close() error {
 
 // IsBatchProducer checks whether an operator implements BatchProducer.
 // REQ001601.
-func IsBatchProducer(op pl.Operator) bool {
+func IsBatchProducer(op DT.Operator) bool {
 	_, ok := op.(BatchProducer)
 	return ok
 }

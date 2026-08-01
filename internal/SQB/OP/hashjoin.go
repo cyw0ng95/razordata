@@ -11,6 +11,7 @@ import (
 	ec "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
 // HashJoin is a radix-partitioned hash join for equi-keys.
@@ -40,8 +41,8 @@ import (
 // Right operator is closed immediately after the build phase to
 // free resources early.
 type HashJoin struct {
-	left       pl.Operator
-	right      pl.Operator
+	left       DT.Operator
+	right      DT.Operator
 	leftKeys   []string
 	rightKeys  []string
 	leftTbl    string
@@ -130,7 +131,7 @@ type leftInfo struct {
 // a power of 2; values < 16 are bumped up to 16. The left and
 // right operators are consumed fully during Build/Probe.
 // leftKeys and rightKeys are the join column names (multi-column supported).
-func NewHashJoin(left, right pl.Operator, leftTbl, rightTbl string, leftKeys, rightKeys []string, partitions int) *HashJoin {
+func NewHashJoin(left, right DT.Operator, leftTbl, rightTbl string, leftKeys, rightKeys []string, partitions int) *HashJoin {
 	const minPartitions = 16
 	if partitions < minPartitions {
 		partitions = minPartitions
@@ -169,8 +170,8 @@ func NewHashJoin(left, right pl.Operator, leftTbl, rightTbl string, leftKeys, ri
 	}
 }
 
-func (j *HashJoin) LeftChild() pl.Operator      { return j.left }
-func (j *HashJoin) RightChild() pl.Operator     { return j.right }
+func (j *HashJoin) LeftChild() DT.Operator      { return j.left }
+func (j *HashJoin) RightChild() DT.Operator     { return j.right }
 func (j *HashJoin) LeftTbl() string             { return j.leftTbl }
 func (j *HashJoin) RightTbl() string            { return j.rightTbl }
 func (j *HashJoin) LeftKeys() []string          { return j.leftKeys }

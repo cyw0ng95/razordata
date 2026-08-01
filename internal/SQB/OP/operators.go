@@ -303,14 +303,14 @@ func (s *SeqScan) SetRangePredicate(colIdx int, min, max int64) {
 
 // WithParams propagates the bound `?` placeholders to this
 // operator (R16-1..2). Returns the receiver for chaining.
-func (s *SeqScan) WithParams(p []any) pl.Operator {
+func (s *SeqScan) WithParams(p []any) DT.Operator {
 	s.params = p
 	return s
 }
 
 // WithPlanner attaches the main-plan planner to rows produced by
 // this SeqScan. REQ000366.
-func (s *SeqScan) WithPlanner(p pl.QueryPlanner) pl.Operator {
+func (s *SeqScan) WithPlanner(p pl.QueryPlanner) DT.Operator {
 	s.planner = p
 	return s
 }
@@ -1669,7 +1669,7 @@ func (i *IndexScan) SetRawByteFilter(f func([]byte) bool) {
 
 // WithParams propagates the bound `?` placeholders to this
 // operator (R16-1..2).
-func (i *IndexScan) WithParams(p []any) pl.Operator {
+func (i *IndexScan) WithParams(p []any) DT.Operator {
 	i.params = p
 	return i
 }

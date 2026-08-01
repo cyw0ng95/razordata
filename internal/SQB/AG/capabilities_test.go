@@ -3,29 +3,30 @@ package AG
 import (
 	"testing"
 
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 // TestAggregate_SetChild verifies the SetChild adapter.
 func TestAggregate_SetChild(t *testing.T) {
 	a := NewAggregate(nil, nil, nil)
-	var p pl.Parent = a
-	if p.Child() != nil {
+	if a.Child() != nil {
 		t.Error("fresh Aggregate.Child() should be nil")
+	}
+	// SetChild with a DT.Operator.
+	a.SetChild(nil)
+	if a.Child() != nil {
+		t.Error("SetChild(nil) should set child to nil")
 	}
 }
 
-// TestAggregate_GroupCols verifies the group-cols interface
-// (the existing Aggregate.GroupCols returns []PS.Expr, and
-// pl.AggregateInfo.GroupCols takes the same type).
+// TestAggregate_GroupCols verifies the group-cols accessor.
 func TestAggregate_GroupCols(t *testing.T) {
 	a := NewAggregate(nil, []PS.Expr{
 		&PS.QualifiedName{Name: "a"},
 		&PS.QualifiedName{Name: "b"},
 	}, nil)
-	var ai pl.AggregateInfo = a
-	got := ai.GroupCols()
+	got := a.GroupCols()
 	if len(got) != 2 {
 		t.Fatalf("GroupCols len = %d, want 2", len(got))
 	}
@@ -40,8 +41,7 @@ func TestAggregate_GetAggregates(t *testing.T) {
 		&PS.FunctionCall{Name: "count", Args: []PS.Expr{&PS.StarExpr{}}},
 		&PS.FunctionCall{Name: "sum", Args: []PS.Expr{&PS.QualifiedName{Name: "x"}}},
 	})
-	var ai pl.AggregateInfo = a
-	got := ai.Aggregates()
+	got := a.Aggregates()
 	if len(got) != 2 {
 		t.Fatalf("Aggregates len = %d, want 2", len(got))
 	}
@@ -56,10 +56,11 @@ func TestAggregate_GetAggregates(t *testing.T) {
 // TestHashAggregate_SetChild verifies the SetChild adapter.
 func TestHashAggregate_SetChild(t *testing.T) {
 	a := NewAggregate(nil, nil, nil)
-	var p pl.Parent = a
-	if p.Child() != nil {
+	if a.Child() != nil {
 		t.Error("fresh HashAggregate.Child() should be nil")
 	}
+	// Verify it satisfies DT.Operator.
+	var _ DT.Operator = a
 }
 
 // TestHashAggregate_GroupCols verifies the group-cols interface.
@@ -67,8 +68,7 @@ func TestHashAggregate_GroupCols(t *testing.T) {
 	a := NewAggregate(nil, []PS.Expr{
 		&PS.QualifiedName{Name: "k"},
 	}, nil)
-	var ai pl.AggregateInfo = a
-	got := ai.GroupCols()
+	got := a.GroupCols()
 	if len(got) != 1 {
 		t.Fatalf("GroupCols len = %d, want 1", len(got))
 	}

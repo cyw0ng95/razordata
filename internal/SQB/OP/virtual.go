@@ -3,7 +3,6 @@ package OP
 import (
 	"context"
 
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
@@ -76,4 +75,4 @@ func (s *SqliteMaster) loadRows() {
 }
 
 func (s *SqliteMaster) Close() error                  { return nil }
-func (s *SqliteMaster) WithParams(_ []any) pl.Operator { return s }
+func (s *SqliteMaster) WithParams(_ []any) DT.Operator { return s }

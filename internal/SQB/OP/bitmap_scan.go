@@ -42,7 +42,7 @@ type BitmapHeapScan struct {
 	bitmap     [][]byte
 	pos        int
 	built      bool
-	indexScans []pl.Operator
+	indexScans []DT.Operator
 	cols       []string
 	types      []LX.TokenType
 	colIndex   map[string]int
@@ -52,7 +52,7 @@ type BitmapHeapScan struct {
 // keys from the supplied IndexScan children and fetches each row
 // from the engine store. The children are consumed and closed
 // during the first Next() call.
-func NewBitmapHeapScan(table string, store DT.Store, children []pl.Operator) *BitmapHeapScan {
+func NewBitmapHeapScan(table string, store DT.Store, children []DT.Operator) *BitmapHeapScan {
 	ss, _ := DT.SchemaFor(table)
 	prefix := DT.TablePrefix(table)
 	cols := []string{bitmapHeapValueCol}
@@ -84,7 +84,7 @@ func (b *BitmapHeapScan) Store() DT.Store { return b.store }
 // planner can estimate cost, run EXPLAIN on children, or close
 // the bitmap explicitly. Cost-aware callers prefer this over
 // reaching into unexported state.
-func (b *BitmapHeapScan) IndexScans() []pl.Operator { return b.indexScans }
+func (b *BitmapHeapScan) IndexScans() []DT.Operator { return b.indexScans }
 
 // Children returns the child IndexScan operators for multi-child
 // tree walks (propagatePlannerToTree, etc.). REQ002149.
@@ -99,10 +99,10 @@ func (b *BitmapHeapScan) Children() []DT.Operator {
 // WithPlanner propagates the planner to all child IndexScan operators.
 // REQ002149: needed for propagatePlannerToTree to reach BitmapHeapScan's
 // children so they can access the store during execution.
-func (b *BitmapHeapScan) WithPlanner(p pl.QueryPlanner) pl.Operator {
+func (b *BitmapHeapScan) WithPlanner(p pl.QueryPlanner) DT.Operator {
 	for _, child := range b.indexScans {
 		if w, ok := child.(interface {
-			WithPlanner(pl.QueryPlanner) pl.Operator
+			WithPlanner(pl.QueryPlanner) DT.Operator
 		}); ok {
 			w.WithPlanner(p)
 		}

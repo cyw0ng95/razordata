@@ -1,4 +1,4 @@
-// REQ001435: SQB/OP-side implementation of pl.OperatorFactory.
+// REQ001435: SQB/OP-side implementation of DT.OperatorFactory.
 //
 // Pragmatic first version. Many operator constructors in SQB/OP
 // require state that the optimizer does not have at pass-application
@@ -15,49 +15,49 @@
 package OP
 
 import (
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 )
 
-// opFactory is the concrete pl.OperatorFactory. Stateless.
+// opFactory is the concrete DT.OperatorFactory. Stateless.
 type opFactory struct{}
 
-// Factory returns the singleton pl.OperatorFactory for SQB/OP.
-func Factory() pl.OperatorFactory { return opFactory{} }
+// Factory returns the singleton DT.OperatorFactory for SQB/OP.
+func Factory() DT.OperatorFactory { return opFactory{} }
 
-var _ pl.OperatorFactory = opFactory{}
+var _ DT.OperatorFactory = opFactory{}
 
 // NewSeqScan wraps NewSeqScan. Schema and store are not set —
 // the executor wires them on Open().
-func (opFactory) NewSeqScan(table string, _ []string) pl.Operator {
+func (opFactory) NewSeqScan(table string, _ []string) DT.Operator {
 	return NewSeqScan(table)
 }
 
 // NewIndexScan wraps NewIndexScan with no range. Store and
 // BTree are wired by the executor.
-func (opFactory) NewIndexScan(table, index string, _ []string) pl.Operator {
+func (opFactory) NewIndexScan(table, index string, _ []string) DT.Operator {
 	return NewIndexScan(table, index, nil, nil)
 }
 
 // NewIndexOnlyScan returns a passthrough IndexOnlyScan. Inner
 // iterator wiring is the executor's job.
-func (opFactory) NewIndexOnlyScan(_, _ string, _ []string) pl.Operator {
+func (opFactory) NewIndexOnlyScan(_, _ string, _ []string) DT.Operator {
 	return NewIndexOnlyScanPassthrough(nil)
 }
 
 // NewFilter wraps NewFilter with no schema.
-func (opFactory) NewFilter(child pl.Operator, predicate interface{}) pl.Operator {
+func (opFactory) NewFilter(child DT.Operator, predicate interface{}) DT.Operator {
 	p, _ := predicate.(PS.Expr)
 	return NewFilter(child, p, nil)
 }
 
 // NewProject wraps NewProject.
-func (opFactory) NewProject(child pl.Operator, _ []string, exprs []interface{}) pl.Operator {
+func (opFactory) NewProject(child DT.Operator, _ []string, exprs []interface{}) DT.Operator {
 	return NewProject(child, toPSExprs(exprs))
 }
 
 // NewFilterProject wraps NewFilterProject.
-func (opFactory) NewFilterProject(child pl.Operator, predicate interface{}, _ []string, exprs []interface{}) pl.Operator {
+func (opFactory) NewFilterProject(child DT.Operator, predicate interface{}, _ []string, exprs []interface{}) DT.Operator {
 	p, _ := predicate.(PS.Expr)
 	return NewFilterProject(child, p, toPSExprs(exprs))
 }
@@ -65,31 +65,31 @@ func (opFactory) NewFilterProject(child pl.Operator, predicate interface{}, _ []
 // NewHashJoin returns nil. HashJoin construction requires
 // partition counts and table IDs that the factory signature
 // does not expose. Passes use the planner's join builder.
-func (opFactory) NewHashJoin(_, _ pl.Operator, _, _ string, _ pl.JoinType) pl.Operator {
+func (opFactory) NewHashJoin(_, _ DT.Operator, _, _ string, _ DT.JoinType) DT.Operator {
 	return nil
 }
 
 // NewNestedLoopJoin returns nil for the same reason.
-func (opFactory) NewNestedLoopJoin(_, _ pl.Operator, _ interface{}, _ pl.JoinType) pl.Operator {
+func (opFactory) NewNestedLoopJoin(_, _ DT.Operator, _ interface{}, _ DT.JoinType) DT.Operator {
 	return nil
 }
 
 // NewAggregate wraps AG.NewAggregate.
-func (opFactory) NewAggregate(child pl.Operator, groupCols []string, aggs []pl.AggregateSpec) pl.Operator {
+func (opFactory) NewAggregate(child DT.Operator, groupCols []string, aggs []DT.AggregateSpec) DT.Operator {
 	// AG's constructor takes groupCols []string and aggs []PS.Expr.
-	// pl.AggregateSpec is a struct; convert each into an Expr.
+	// DT.AggregateSpec is a struct; convert each into an Expr.
 	exprs := aggSpecsToExprs(aggs)
 	return AGNewAggregate(child, groupCols, exprs)
 }
 
 // NewHashAggregate wraps AG.NewAggregate.
-func (opFactory) NewHashAggregate(child pl.Operator, groupCols []string, aggs []pl.AggregateSpec) pl.Operator {
+func (opFactory) NewHashAggregate(child DT.Operator, groupCols []string, aggs []DT.AggregateSpec) DT.Operator {
 	exprs := aggSpecsToExprs(aggs)
 	return AGNewAggregate(child, groupCols, exprs)
 }
 
-// NewSort wraps NewSort. pl.OrderSpec → PS.OrderItem.
-func (opFactory) NewSort(child pl.Operator, orderBy []pl.OrderSpec) pl.Operator {
+// NewSort wraps NewSort. DT.OrderSpec → PS.OrderItem.
+func (opFactory) NewSort(child DT.Operator, orderBy []DT.OrderSpec) DT.Operator {
 	keys := make([]PS.OrderItem, 0, len(orderBy))
 	for _, o := range orderBy {
 		// OrderItem.Expr is a PS.Expr; pass a ColumnRef-like Expr
@@ -104,7 +104,7 @@ func (opFactory) NewSort(child pl.Operator, orderBy []pl.OrderSpec) pl.Operator 
 }
 
 // NewLimit wraps NewLimit + NewOffset if offset > 0.
-func (opFactory) NewLimit(child pl.Operator, limit, offset int64) pl.Operator {
+func (opFactory) NewLimit(child DT.Operator, limit, offset int64) DT.Operator {
 	if offset > 0 {
 		child = NewOffset(child, offset)
 	}
@@ -112,12 +112,12 @@ func (opFactory) NewLimit(child pl.Operator, limit, offset int64) pl.Operator {
 }
 
 // NewDistinct wraps NewDistinct.
-func (opFactory) NewDistinct(child pl.Operator) pl.Operator {
+func (opFactory) NewDistinct(child DT.Operator) DT.Operator {
 	return NewDistinct(child)
 }
 
 // NewSetOp wraps NewCompoundOp. SetOpType → PS.CompoundOp.
-func (opFactory) NewSetOp(left, right pl.Operator, op pl.SetOpType) pl.Operator {
+func (opFactory) NewSetOp(left, right DT.Operator, op DT.SetOpType) DT.Operator {
 	co, ok := mapSetOp(op)
 	if !ok {
 		return nil
@@ -127,7 +127,7 @@ func (opFactory) NewSetOp(left, right pl.Operator, op pl.SetOpType) pl.Operator 
 
 // NewValues returns an in-memory InMemoryScan. The full Values
 // operator construction is added in REQ001451.
-func (opFactory) NewValues(_ [][]interface{}) pl.Operator {
+func (opFactory) NewValues(_ [][]interface{}) DT.Operator {
 	return NewInMemoryScan(nil)
 }
 
@@ -143,11 +143,11 @@ func toPSExprs(in []interface{}) []PS.Expr {
 	return out
 }
 
-// aggSpecsToExprs converts []pl.AggregateSpec into a slice of
+// aggSpecsToExprs converts []DT.AggregateSpec into a slice of
 // PS.Expr the AG constructors accept. The AG layer is the
 // authority on aggregate shape; the factory adapts the public
 // spec type to the AG-internal slice form.
-func aggSpecsToExprs(in []pl.AggregateSpec) []PS.Expr {
+func aggSpecsToExprs(in []DT.AggregateSpec) []PS.Expr {
 	out := make([]PS.Expr, 0, len(in))
 	for _, a := range in {
 		// AG aggregates are PS.Expr values (e.g. FunctionCall).
@@ -161,16 +161,16 @@ func aggSpecsToExprs(in []pl.AggregateSpec) []PS.Expr {
 	return out
 }
 
-// mapSetOp translates pl.SetOpType to PS.CompoundOp.
-func mapSetOp(s pl.SetOpType) (PS.CompoundOp, bool) {
+// mapSetOp translates DT.SetOpType to PS.CompoundOp.
+func mapSetOp(s DT.SetOpType) (PS.CompoundOp, bool) {
 	switch s {
-	case pl.UnionAllOp:
+	case DT.UnionAllOp:
 		return PS.CompoundUnionAll, true
-	case pl.UnionOp:
+	case DT.UnionOp:
 		return PS.CompoundUnion, true
-	case pl.IntersectOp:
+	case DT.IntersectOp:
 		return PS.CompoundIntersect, true
-	case pl.ExceptOp:
+	case DT.ExceptOp:
 		return PS.CompoundExcept, true
 	}
 	return 0, false

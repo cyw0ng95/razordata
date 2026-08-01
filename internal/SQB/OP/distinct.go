@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	AP "github.com/cyw0ng95/razordata/internal/SYS/AP"
@@ -15,7 +16,7 @@ import (
 type Row = pl.Row
 type Value = pl.Value
 type ValueKind = pl.ValueKind
-type Operator = pl.Operator
+type Operator = DT.Operator
 
 // Value kind constants.
 const (
@@ -40,13 +41,13 @@ var distinctKeyBufPool = sync.Pool{
 }
 
 type Distinct struct {
-	child pl.Operator
+	child DT.Operator
 	seen  map[string]bool
 	buf   []pl.Row
 	pos   int
 }
 
-func NewDistinct(child pl.Operator) *Distinct {
+func NewDistinct(child DT.Operator) *Distinct {
 	return &Distinct{child: child, seen: make(map[string]bool)}
 }
 
@@ -141,7 +142,7 @@ func (d *Distinct) Close() error {
 func (d *Distinct) Reset(ctx context.Context) error { d.buf = nil; d.seen = nil; d.pos = 0; return nil }
 
 // Child returns the wrapped child operator.
-func (d *Distinct) Child() pl.Operator { return d.child }
+func (d *Distinct) Child() DT.Operator { return d.child }
 
 // DistinctKey builds a string key for a Row that uniquely identifies the
 // row's values across all types. REQ001284: each value is prefixed with a

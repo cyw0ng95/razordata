@@ -20,13 +20,14 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
 // HashCrossJoin is a simple hash-probe equi-join for small tables.
 // REQ000800.
 type HashCrossJoin struct {
-	left     pl.Operator
-	right    pl.Operator
+	left     DT.Operator
+	right    DT.Operator
 	leftTbl  string
 	rightTbl string
 	leftKey  string // single-column join key on the left
@@ -75,7 +76,7 @@ type HashCrossJoin struct {
 // leftKey/rightKey are unqualified column names; they are matched
 // against the right-side row's table-prefixed column name (e.g.,
 // "t2.a") and the left-side row's prefixed column name.
-func NewHashCrossJoin(left, right pl.Operator, leftTbl, rightTbl, leftKey, rightKey string) *HashCrossJoin {
+func NewHashCrossJoin(left, right DT.Operator, leftTbl, rightTbl, leftKey, rightKey string) *HashCrossJoin {
 	return &HashCrossJoin{
 		left:     left,
 		right:    right,
@@ -87,8 +88,8 @@ func NewHashCrossJoin(left, right pl.Operator, leftTbl, rightTbl, leftKey, right
 	}
 }
 
-func (j *HashCrossJoin) LeftChild() pl.Operator  { return j.left }
-func (j *HashCrossJoin) RightChild() pl.Operator { return j.right }
+func (j *HashCrossJoin) LeftChild() DT.Operator  { return j.left }
+func (j *HashCrossJoin) RightChild() DT.Operator { return j.right }
 
 // LeftKeyName returns the left-side join key name.
 func (j *HashCrossJoin) LeftKeyName() string { return j.leftKey }

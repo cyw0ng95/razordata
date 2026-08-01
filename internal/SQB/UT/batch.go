@@ -10,7 +10,7 @@ import (
 )
 
 // Backward-compat aliases for cross-package references.
-type Operator = pl.Operator
+type Operator = DT.Operator
 type Row = pl.Row
 type Value = pl.Value
 type Store = DT.Store

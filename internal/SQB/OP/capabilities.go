@@ -14,17 +14,17 @@
 package OP
 
 import (
-	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
 // --- SeqScan adapters --------------------------------------------------
 
 // Child returns nil. SeqScan is a leaf operator with no child.
-func (s *SeqScan) Child() pl.Operator { return nil }
+func (s *SeqScan) Child() DT.Operator { return nil }
 
 // SetChild is a no-op for SeqScan (it has no child).
-func (s *SeqScan) SetChild(_ pl.Operator) {}
+func (s *SeqScan) SetChild(_ DT.Operator) {}
 
 // SetUsedCols wraps SeqScan.UsedCols. SeqScan already has UsedCols()
 // but the setter is WithUsedCols. The pl.ColPrunable interface
@@ -129,10 +129,10 @@ func (i *IndexScan) ColumnIndex(name string) int {
 
 // Child returns the left child. pl.Parent expects a single child;
 // joins return the left.
-func (j *HashJoin) Child() pl.Operator { return j.left }
+func (j *HashJoin) Child() DT.Operator { return j.left }
 
 // SetChild sets the left child.
-func (j *HashJoin) SetChild(op pl.Operator) {
+func (j *HashJoin) SetChild(op DT.Operator) {
 	if op == nil {
 		j.left = nil
 		return
@@ -143,18 +143,18 @@ func (j *HashJoin) SetChild(op pl.Operator) {
 }
 
 // Left returns the left child (pl.Children2).
-func (j *HashJoin) Left() pl.Operator { return j.left }
+func (j *HashJoin) Left() DT.Operator { return j.left }
 
 // SetLeft sets the left child (pl.Children2).
-func (j *HashJoin) SetLeft(op pl.Operator) {
+func (j *HashJoin) SetLeft(op DT.Operator) {
 	j.SetChild(op)
 }
 
 // Right returns the right child (pl.Children2).
-func (j *HashJoin) Right() pl.Operator { return j.right }
+func (j *HashJoin) Right() DT.Operator { return j.right }
 
 // SetRight sets the right child (pl.Children2).
-func (j *HashJoin) SetRight(op pl.Operator) {
+func (j *HashJoin) SetRight(op DT.Operator) {
 	if op == nil {
 		j.right = nil
 		return
@@ -167,12 +167,12 @@ func (j *HashJoin) SetRight(op pl.Operator) {
 // --- NestedLoopJoin adapters -------------------------------------------
 
 // Child returns the left child.
-func (j *NestedLoopJoin) Child() pl.Operator { return j.left }
+func (j *NestedLoopJoin) Child() DT.Operator { return j.left }
 
 // SetChild sets the left child. SetLeft/SetRight are already
 // defined on NestedLoopJoin in join.go:281-285; we do not
 // redefine them here.
-func (j *NestedLoopJoin) SetChild(op pl.Operator) {
+func (j *NestedLoopJoin) SetChild(op DT.Operator) {
 	if op == nil {
 		j.left = nil
 		return
@@ -182,8 +182,8 @@ func (j *NestedLoopJoin) SetChild(op pl.Operator) {
 	}
 }
 
-func (j *NestedLoopJoin) Left() pl.Operator { return j.left }
-func (j *NestedLoopJoin) Right() pl.Operator { return j.right }
+func (j *NestedLoopJoin) Left() DT.Operator { return j.left }
+func (j *NestedLoopJoin) Right() DT.Operator { return j.right }
 
 // --- Project adapters --------------------------------------------------
 
@@ -195,19 +195,19 @@ func (j *NestedLoopJoin) Right() pl.Operator { return j.right }
 // Sort already has SetChild (intermediate_sort.go:36).
 // No adapter needed.
 
-// OrderBy returns the sort keys as pl.OrderSpec. Sort stores
-// []PS.OrderItem; we project to []pl.OrderSpec.
-func (s *Sort) OrderBy() []pl.OrderSpec {
+// OrderBy returns the sort keys as DT.OrderSpec. Sort stores
+// []PS.OrderItem; we project to []DT.OrderSpec.
+func (s *Sort) OrderBy() []DT.OrderSpec {
 	if len(s.keys) == 0 {
 		return nil
 	}
-	out := make([]pl.OrderSpec, 0, len(s.keys))
+	out := make([]DT.OrderSpec, 0, len(s.keys))
 	for _, k := range s.keys {
 		col := ""
 		if qn, ok := k.Expr.(*PS.QualifiedName); ok {
 			col = qn.Name
 		}
-		out = append(out, pl.OrderSpec{Col: col, Desc: k.Desc})
+		out = append(out, DT.OrderSpec{Col: col, Desc: k.Desc})
 	}
 	return out
 }
@@ -232,10 +232,10 @@ func (l *Limit) SetTopN(_ bool) {}
 // --- CompoundOp adapters -----------------------------------------------
 
 // Child returns the left child. pl.Parent expects one child.
-func (c *CompoundOp) Child() pl.Operator { return c.left }
+func (c *CompoundOp) Child() DT.Operator { return c.left }
 
 // SetChild sets the left child.
-func (c *CompoundOp) SetChild(op pl.Operator) {
+func (c *CompoundOp) SetChild(op DT.Operator) {
 	if op == nil {
 		c.left = nil
 		return
@@ -246,16 +246,16 @@ func (c *CompoundOp) SetChild(op pl.Operator) {
 }
 
 // Left returns the left child (pl.Children2).
-func (c *CompoundOp) Left() pl.Operator { return c.left }
+func (c *CompoundOp) Left() DT.Operator { return c.left }
 
 // SetLeft sets the left child.
-func (c *CompoundOp) SetLeft(op pl.Operator) { c.SetChild(op) }
+func (c *CompoundOp) SetLeft(op DT.Operator) { c.SetChild(op) }
 
 // Right returns the right child.
-func (c *CompoundOp) Right() pl.Operator { return c.right }
+func (c *CompoundOp) Right() DT.Operator { return c.right }
 
 // SetRight sets the right child.
-func (c *CompoundOp) SetRight(op pl.Operator) {
+func (c *CompoundOp) SetRight(op DT.Operator) {
 	if op == nil {
 		c.right = nil
 		return
@@ -268,7 +268,7 @@ func (c *CompoundOp) SetRight(op pl.Operator) {
 // --- Distinct adapters -------------------------------------------------
 
 // SetChild is added for symmetry with the existing Child().
-func (d *Distinct) SetChild(op pl.Operator) {
+func (d *Distinct) SetChild(op DT.Operator) {
 	if op == nil {
 		d.child = nil
 		return

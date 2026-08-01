@@ -31,6 +31,7 @@ import (
 
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
+	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 )
 
 // MergeJoin joins two pre-sorted streams on equi-keys. REQ001102.
@@ -39,8 +40,8 @@ import (
 // before any non-NULL value (consistent with REQ000445's NULL
 // three-valued logic — NULL = NULL for join purposes).
 type MergeJoin struct {
-	left      pl.Operator
-	right     pl.Operator
+	left      DT.Operator
+	right     DT.Operator
 	leftTbl   string
 	rightTbl  string
 	leftKeys  []string
@@ -74,7 +75,7 @@ type MergeJoin struct {
 // the equi-join column names (must be sorted ascending on each side).
 // Outer join variants are selected via kind (JoinKindLeft, JoinKindRight,
 // JoinKindFull). JoinKindInner is the default.
-func NewMergeJoin(left, right pl.Operator, leftTbl, rightTbl string, leftKeys, rightKeys []string) *MergeJoin {
+func NewMergeJoin(left, right DT.Operator, leftTbl, rightTbl string, leftKeys, rightKeys []string) *MergeJoin {
 	mk := max(len(leftKeys), len(rightKeys))
 	return &MergeJoin{
 		left:        left,
@@ -109,8 +110,8 @@ func (j *MergeJoin) WithProjection(cols []string) *MergeJoin { return j }
 
 // LeftChild / RightChild / LeftTbl / RightTbl satisfy the join-operator
 // access pattern used elsewhere in the planner.
-func (j *MergeJoin) LeftChild() pl.Operator      { return j.left }
-func (j *MergeJoin) RightChild() pl.Operator     { return j.right }
+func (j *MergeJoin) LeftChild() DT.Operator      { return j.left }
+func (j *MergeJoin) RightChild() DT.Operator     { return j.right }
 func (j *MergeJoin) LeftTbl() string             { return j.leftTbl }
 func (j *MergeJoin) RightTbl() string            { return j.rightTbl }
 func (j *MergeJoin) LeftKeys() []string          { return j.leftKeys }

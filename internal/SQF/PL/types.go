@@ -41,7 +41,7 @@ var ErrNoRows = errors.New("pl: no rows")
 
 // Operator is the core execution interface. Every operator implements
 // Next() to produce the next row and Close() to release resources.
-type Operator interface {
+type Operator interface { // Deprecated: use DT.Operator. Kept for backward compat.
 	Next(ctx context.Context) (Row, error)
 	Close() error
 }

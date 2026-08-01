@@ -2,6 +2,7 @@ package DT
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -87,8 +88,18 @@ func ValueSliceToAny(v []Value) []any {
 	return out
 }
 
-// Operator is the core execution interface.
-type Operator = pl.Operator
+// Operator is the core execution interface. Every operator implements
+// Next() to produce the next row and Close() to release resources.
+type Operator interface {
+	Next(ctx context.Context) (Row, error)
+	Close() error
+}
+
+// Resettable is an optional interface an Operator can implement to
+// support cursor state reuse without operator tree deallocation.
+type Resettable interface {
+	Reset(ctx context.Context) error
+}
 
 // Row is a single row of data with column metadata.
 type Row = pl.Row

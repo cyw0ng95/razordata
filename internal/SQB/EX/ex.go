@@ -955,7 +955,7 @@ func propagatePlanner(root DT.Operator, p *Planner) {
 		return
 	}
 	if w, ok := root.(interface {
-		WithPlanner(pl.QueryPlanner) pl.Operator
+		WithPlanner(pl.QueryPlanner) DT.Operator
 	}); ok {
 		w.WithPlanner(p)
 	}
