@@ -290,6 +290,21 @@ func evalOrBatch(e *PS.BinaryExpr, batch *UT.Batch, params []any) []uint16 {
 // evalUnaryBatch handles unary expressions (NOT, -).
 func evalUnaryBatch(e *PS.UnaryExpr, batch *UT.Batch, params []any) []uint16 {
 	if e.Op == LX.T_NOT {
+		// NOT (x BETWEEN a AND b) = x < a OR x > b. Evaluate the
+		// negation directly so three-valued logic is handled correctly:
+		// NULL comparisons yield NULL (unknown), excluding the row from
+		// the result — matching SQL semantics for NOT BETWEEN. The
+		// generic invert-selection approach cannot distinguish "all
+		// FALSE" from "all NULL" (both produce an empty selection
+		// vector), which incorrectly includes NULL rows in NOT results.
+		if be, ok := e.Operand.(*PS.BetweenExpr); ok {
+			negated := &PS.BinaryExpr{
+				Op: LX.T_OR,
+				Left:  &PS.BinaryExpr{Op: LX.T_LT, Left: be.Expr, Right: be.Low},
+				Right: &PS.BinaryExpr{Op: LX.T_GT, Left: be.Expr, Right: be.High},
+			}
+			return EvalBatch(negated, batch, params)
+		}
 		// NOT predicate: invert selection vector
 		inner := EvalBatch(e.Operand, batch, params)
 		if inner == nil {
@@ -297,13 +312,6 @@ func evalUnaryBatch(e *PS.UnaryExpr, batch *UT.Batch, params []any) []uint16 {
 			return []uint16{}
 		}
 		if len(inner) == 0 {
-			// Check if the inner expression is a BETWEEN with NULL operands.
-			// In that case, the empty result means "all rows are NULL" (unknown),
-			// NOT "all rows are FALSE". NOT should also return unknown (empty).
-			// REQ002317.
-			if _, ok := e.Operand.(*PS.BetweenExpr); ok {
-				return []uint16{}
-			}
 			// None true -> NOT = all
 			return nil
 		}
@@ -323,16 +331,37 @@ func evalUnaryBatch(e *PS.UnaryExpr, batch *UT.Batch, params []any) []uint16 {
 func ExtractColumnRef(expr PS.Expr, batch *UT.Batch) (UT.Column, bool) {
 	// Handle both Ident and QualifiedName (which carries table-qualified names).
 	var name string
+	var qualified string // "" for bare Ident; "Table.Name" for QualifiedName
 	switch e := expr.(type) {
 	case *PS.Ident:
 		name = e.Name
 	case *PS.QualifiedName:
 		name = e.Name
+		qualified = e.Table + "." + e.Name
 	default:
 		return UT.Column{}, false
 	}
 	// Use pre-computed index if available
 	if batch.ColMap() != nil {
+		// REQ002312: for qualified references (e.g. cor0.col2) try the
+		// fully-qualified key FIRST. The ColMap / linear scan below
+		// otherwise matches the bare column name and returns the first
+		// table that owns a "col2" column — which is the wrong table
+		// when both sides of a join expose the same bare name (e.g.
+		// `FROM tab0, tab1 AS cor0` → cor0.col2 silently resolved to
+		// tab0.col2).
+		if qualified != "" {
+			if idx, found := batch.ColMap()[qualified]; found {
+				if idx >= 0 && idx < len(batch.Cols) && strings.EqualFold(batch.Cols[idx].Name, qualified) {
+					return batch.Cols[idx], true
+				}
+			}
+			for i := range batch.Cols {
+				if strings.EqualFold(batch.Cols[i].Name, qualified) {
+					return batch.Cols[i], true
+				}
+			}
+		}
 		if idx, found := batch.ColMap()[name]; found {
 			// REQ001684: when column pruning is active the batch may have
 			// fewer logical columns than the full-schema colMap indices.
@@ -368,6 +397,18 @@ func ExtractColumnRef(expr PS.Expr, batch *UT.Batch) (UT.Column, bool) {
 	}
 	// Fallback: linear scan by column name from "c0", "c1", etc.
 	// (This handles synthetic batches in tests.)
+	// REQ002312: for qualified references, prefer an exact match on the
+	// fully-qualified column name BEFORE the bare-name suffix match —
+	// otherwise `cor0.col2` matches `tab0.col2` (first table with a
+	// "col2" column) when the batch is produced by RowOperatorAsProducer
+	// (no ColMap), silently resolving the wrong table's column.
+	if qualified != "" {
+		for i := range batch.Cols {
+			if strings.EqualFold(batch.Cols[i].Name, qualified) {
+				return batch.Cols[i], true
+			}
+		}
+	}
 	for i := range batch.Cols {
 		if batch.Cols[i].Name == name {
 			return batch.Cols[i], true

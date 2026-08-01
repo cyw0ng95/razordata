@@ -70,11 +70,20 @@ func TestFilterStage_NextBatch_PartialMatch(t *testing.T) {
 		t.Fatal("expected non-nil batch")
 	}
 	// Only 5 and 8 > 3, so 2 rows should match.
-	if batch.Sel == nil {
-		t.Fatal("expected non-nil Sel for partial match")
+	// REQ002312: FilterStage materializes (compacts) the batch in
+	// place after applying the selection vector so downstream stages
+	// see a fully materialized batch with Sel == nil. Stacked filters
+	// and Sel-unaware comparison functions in EV rely on this —
+	// otherwise batch.Size = len(sel) combined with a leftover Sel
+	// vector makes the next filter read the wrong rows.
+	if batch.Sel != nil {
+		t.Fatalf("expected nil Sel after materialize, got %v", batch.Sel)
 	}
 	if batch.Size != 2 {
 		t.Fatalf("expected 2 rows, got %d", batch.Size)
+	}
+	if batch.Cols[0].Data.Ints[0] != 5 || batch.Cols[0].Data.Ints[1] != 8 {
+		t.Fatalf("expected compacted data [5, 8], got %v", batch.Cols[0].Data.Ints[:batch.Size])
 	}
 }
 

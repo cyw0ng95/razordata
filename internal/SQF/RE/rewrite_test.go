@@ -443,6 +443,30 @@ func TestRewritePragma(t *testing.T) {
 	}
 }
 
+// Regression: materialized-view DDL must pass through Rewrite unchanged.
+// Previously Rewrite returned "re: unknown statement type *PS.CreateMatViewStmt",
+// which broke the PX pipeline path used by batch-trigger tests in SYS/SY.
+func TestRewriteMatViewStmts(t *testing.T) {
+	cases := []string{
+		"CREATE MATERIALIZED VIEW mv1 AS SELECT 1",
+		"DROP MATERIALIZED VIEW mv1",
+		"DROP MATERIALIZED VIEW IF EXISTS mv1",
+		"REFRESH MATERIALIZED VIEW mv1",
+	}
+	for _, sql := range cases {
+		t.Run(sql, func(t *testing.T) {
+			stmt := mustParse(t, sql)
+			out, err := Rewrite(stmt)
+			if err != nil {
+				t.Fatalf("Rewrite: %v", err)
+			}
+			if out == nil {
+				t.Fatal("Rewrite returned nil")
+			}
+		})
+	}
+}
+
 func TestRewriteAlterTable(t *testing.T) {
 	// AlterTableStmt not yet supported by Rewrite.
 	stmt := mustParse(t, "ALTER TABLE t1 ADD COLUMN f INTEGER")

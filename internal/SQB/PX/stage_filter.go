@@ -106,6 +106,14 @@ func (f *FilterStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 		if sel != nil {
 			batch.Sel = sel
 			batch.Size = len(sel)
+			// Compact column data in place so downstream stages (and
+			// subsequent FilterStage layers) see a fully materialized
+			// batch with Sel == nil. The EV comparison helpers iterate
+			// 0..batch.Size and index Data by physical position, so a
+			// leftover Sel vector combined with Size = len(sel) makes
+			// a stacked filter read the wrong rows (e.g. `x>10 AND
+			// y<200` returns id=1 instead of id=4). REQ002312.
+			materializeBatch(batch)
 		}
 		return batch, nil
 	}

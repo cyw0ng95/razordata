@@ -1898,6 +1898,12 @@ func (r *RowOperatorAsProducer) fillBatch(ctx context.Context, batch *UT.Batch, 
 					batch.Cols[i].Type = LX.T_TEXT
 				}
 				batch.Cols[i].Data.Strs[pos] = v.S
+			case PL.KindBool:
+				if batch.Cols[i].Data.Bools == nil {
+					batch.Cols[i].Data.Bools = UT.PoolGetBools(i, UT.BatchSize)
+					batch.Cols[i].Type = LX.T_BOOL
+				}
+				batch.Cols[i].Data.Bools[pos] = v.Bo
 			default:
 				if batch.Cols[i].Nulls == nil {
 					batch.Cols[i].Nulls = make([]bool, UT.BatchSize)
