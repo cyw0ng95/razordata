@@ -9,7 +9,6 @@ import (
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-	"github.com/cyw0ng95/razordata/internal/SQF/PL"
 	"github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
@@ -221,34 +220,6 @@ func (a *Analyze) analyzeTable(ctx context.Context, tableName string) error {
 			return err
 		}
 	}
-
-	lm := PL.Learned()
-	histograms := make([]struct {
-		Count         int64
-		Lower, Upper  []byte
-		TotalRows     int64
-		DistinctCount int64
-		NullCount     int64
-	}, 0)
-	for _, ci := range cols {
-		for _, b := range buildHistogram(ci.reservoir, 256) {
-			histograms = append(histograms, struct {
-				Count         int64
-				Lower, Upper  []byte
-				TotalRows     int64
-				DistinctCount int64
-				NullCount     int64
-			}{
-				Count:         b.Count,
-				Lower:         b.LowerBound,
-				Upper:         b.UpperBound,
-				TotalRows:     rowCount,
-				DistinctCount: int64(len(ci.distinct)),
-				NullCount:     ci.nullCount,
-			})
-		}
-	}
-	lm.BootstrapFromHistograms(histograms)
 
 	return nil
 }

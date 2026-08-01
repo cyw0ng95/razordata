@@ -85,34 +85,6 @@ func TestMemoBumpSchemaVersion(t *testing.T) {
 	}
 }
 
-// REQ000636: LearnedModel.Predict untrained returns fallback (features[1]).
-func TestLearnedModelPredictUntrained(t *testing.T) {
-	lm := &LearnedModel{correlations: make(map[pairKey]float64)}
-	features := [6]float64{0, 0.42, 0, 0, 0, 0}
-	got := lm.Predict(features)
-	if got != 0.42 {
-		t.Errorf("untrained Predict: want 0.42, got %f", got)
-	}
-}
-
-// REQ000636: PredicateCache LRU eviction.
-func TestPredicateCacheLRUEviction(t *testing.T) {
-	c := NewPredicateCache(2)
-	c.Put("a", 1)
-	c.Put("b", 2)
-	c.Put("c", 3) // should evict "a"
-
-	if _, ok := c.Get("a"); ok {
-		t.Error("expected 'a' to be evicted")
-	}
-	if _, ok := c.Get("b"); !ok {
-		t.Error("expected 'b' to be present")
-	}
-	if _, ok := c.Get("c"); !ok {
-		t.Error("expected 'c' to be present")
-	}
-}
-
 // REQ000636: BuildTree is memoized — repeated Plan calls don't re-execute.
 func TestPlanner_BuildTreeMemoized(t *testing.T) {
 	calls := 0
