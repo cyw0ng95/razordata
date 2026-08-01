@@ -330,6 +330,9 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 		// REQ002143: IndexScan now implements UsedCols() and can be
 		// handled by the same ScanStageSpec as SeqScan.
 		return decomposeSeqScan(o, st)
+	case *OP.IndexOnlyScan:
+		// IndexOnlyScan: wraps as native source stage.
+		return decomposeNativeSource(o, st)
 	case *OP.Filter:
 		return decomposeFilter(o, st, planner, specialize)
 	case *OP.Project:
@@ -534,7 +537,10 @@ func decomposeFilter(f *OP.Filter, st *decomposeState, planner PL.QueryPlanner, 
 				return NewRowOperatorAsProducer(ff)
 			},
 		}, childOut)
-		st.addEdge(filterIdx, childIdx, SingleChild)
+		// No child edge — the ScanStage wraps the entire Filter
+		// operator tree (including its children) in the row-based
+		// producer. REQ002311.
+		_ = childIdx
 		return filterIdx, nil
 	}
 	filterIdx := st.addStage(&FilterStageSpec{Pred: f.Predicate()}, childOut)

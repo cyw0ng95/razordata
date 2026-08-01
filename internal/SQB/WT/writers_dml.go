@@ -1387,6 +1387,7 @@ type Delete struct {
 	rColsBuf       []string       // REQ001557: flat RETURNING col name backing
 	rTypesBuf      []LX.TokenType // REQ001557: flat RETURNING type backing
 	rDataBuf       []DT.Value     // REQ001557: flat RETURNING data backing
+	limit          int64          // REQ002313: max rows to delete (0 = unlimited)
 }
 
 // WithParams propagates the bound `?` placeholders (R16-1..2).
@@ -1404,6 +1405,9 @@ func (d *Delete) WithParams(p []any) DT.Operator {
 // propagateParams walk into the input chain (OP.Filter/OP.SeqScan) where
 // the WHERE predicate (and any correlated subquery) is evaluated.
 func (d *Delete) Child() DT.Operator { return d.iter }
+
+// SetLimit sets the maximum number of rows to delete (0 = unlimited).
+func (d *Delete) SetLimit(n int64) { d.limit = n }
 
 func NewDelete(table string, where PS.Expr, iter DT.Operator, returning []PS.Expr) *Delete {
 	return &Delete{table: table, where: where, iter: iter, returning: returning}
@@ -1470,7 +1474,11 @@ func (d *Delete) Next(ctx context.Context) (DT.Row, error) {
 	}
 	toDelete := map[int]bool{}
 	var fkRows [][]any
+	limit := d.limit
 	for {
+		if limit > 0 && int64(len(toDelete)) >= limit {
+			break
+		}
 		row, err := d.iter.Next(ctx)
 		if err != nil {
 			if err == DT.ErrNoRows {

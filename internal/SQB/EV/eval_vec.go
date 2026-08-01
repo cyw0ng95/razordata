@@ -297,6 +297,13 @@ func evalUnaryBatch(e *PS.UnaryExpr, batch *UT.Batch, params []any) []uint16 {
 			return []uint16{}
 		}
 		if len(inner) == 0 {
+			// Check if the inner expression is a BETWEEN with NULL operands.
+			// In that case, the empty result means "all rows are NULL" (unknown),
+			// NOT "all rows are FALSE". NOT should also return unknown (empty).
+			// REQ002317.
+			if _, ok := e.Operand.(*PS.BetweenExpr); ok {
+				return []uint16{}
+			}
 			// None true -> NOT = all
 			return nil
 		}
@@ -3344,9 +3351,6 @@ func evalBetweenBatch(e *PS.BetweenExpr, batch *UT.Batch, params []any) []uint16
 
 	// Determine the comparison type
 	typ := exprCol.Type
-	if typ == LX.T_NULL {
-		return []uint16{}
-	}
 
 	sel := getSel(n)
 	switch typ {

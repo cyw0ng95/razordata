@@ -836,6 +836,9 @@ func (p *Planner) estimateCost(op DT.Operator) float64 {
 
 // estimateCostLegacy is the original per-operator heuristic. Kept
 func (p *Planner) planInsert(s *PS.Insert) DT.Operator {
+	if DT.LookupView(s.Table) != nil {
+		return WT.NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
+	}
 	// REQ000707: INSERT INTO t SELECT ...
 	if s.Select != nil {
 		selPlan, selErr := p.Plan(s.Select)
@@ -853,6 +856,7 @@ func (p *Planner) planInsert(s *PS.Insert) DT.Operator {
 			}
 			op.SetSelectPlan(selPlan.Root)
 			propagatePlanner(selPlan.Root, p)
+			op.SetConflictAction(s.ConflictAction)
 			return op
 		}
 	}
@@ -863,11 +867,13 @@ func (p *Planner) planInsert(s *PS.Insert) DT.Operator {
 		op, err = WT.NewInsertWithStore(p.store, s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
 		if err == nil {
 			op.SetDefaultValues(s.DefaultValues)
+			op.SetConflictAction(s.ConflictAction)
 			return op
 		}
 	}
 	op = WT.NewInsert(s.Table, s.Cols, s.Values, s.Returning, s.OnConflict)
 	op.SetDefaultValues(s.DefaultValues)
+	op.SetConflictAction(s.ConflictAction)
 	return op
 }
 
@@ -922,8 +928,16 @@ func (p *Planner) planDelete(s *PS.Delete) DT.Operator {
 			for _, c := range conjuncts {
 				filter = OP.NewFilter(filter, c, nil)
 			}
+			if len(s.OrderBy) > 0 {
+				filter = OP.NewSort(filter, s.OrderBy)
+			}
 			op, err := WT.NewDeleteWithStore(p.store, s.Table, s.Where, filter, s.Returning)
 			if err == nil {
+				if s.Limit != nil {
+					lim := limitInt64Value(s.Limit)
+					op.SetLimit(lim)
+					return OP.NewLimit(op, lim)
+				}
 				return op
 			}
 		}
@@ -938,7 +952,25 @@ func (p *Planner) planDelete(s *PS.Delete) DT.Operator {
 	for _, c := range conjuncts {
 		filter = OP.NewFilter(filter, c, nil)
 	}
-	return WT.NewDelete(s.Table, s.Where, filter, s.Returning)
+	if len(s.OrderBy) > 0 {
+		filter = OP.NewSort(filter, s.OrderBy)
+	}
+	del := WT.NewDelete(s.Table, s.Where, filter, s.Returning)
+	if s.Limit != nil {
+		lim := limitInt64Value(s.Limit)
+		del.SetLimit(lim)
+		return OP.NewLimit(del, lim)
+	}
+	return del
+}
+
+// limitInt64Value extracts the literal integer value from a LIMIT expression.
+// Returns 0 (no limit) if the expression is not a literal integer.
+func limitInt64Value(e PS.Expr) int64 {
+	if n, ok := limitInt64(e); ok {
+		return n
+	}
+	return 0
 }
 
 func (p *Planner) planCreateTable(s *PS.CreateTable) DT.Operator {
