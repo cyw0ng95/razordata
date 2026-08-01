@@ -73,6 +73,9 @@ func (s *ScanStage) NextBatch(ctx context.Context) (*UT.Batch, error) {
 // evaluation and row arena. REQ002148.
 func (s *ScanStage) PropagateExecContext(ec *DT.ExecContext) {
 	s.execCtx = ec
+	if ep, ok := s.producer.(ExecContextPropagator); ok {
+		ep.PropagateExecContext(ec)
+	}
 }
 
 // Reset returns ErrResetNotSupported because scan producers hold

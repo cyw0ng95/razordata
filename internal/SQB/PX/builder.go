@@ -1934,6 +1934,15 @@ func (r *RowOperatorAsProducer) Close() error {
 	return r.Op.Close()
 }
 
+// PropagateExecContext propagates the ExecContext to the underlying
+// row-based operator, so that CHANGES()/TOTAL_CHANGES() and other
+// ExecCtx-dependent functions work during row-based evaluation.
+func (r *RowOperatorAsProducer) PropagateExecContext(ec *DT.ExecContext) {
+	if setter, ok := r.Op.(interface{ SetExecCtx(*PL.ExecContext) }); ok {
+		setter.SetExecCtx(ec)
+	}
+}
+
 // propagatePlannerToTree walks the plan tree and calls WithPlanner
 // on every operator that supports it. This is required so that SeqScan
 // (and other store-backed operators) receive the planner reference they
