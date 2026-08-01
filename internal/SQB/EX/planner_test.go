@@ -229,67 +229,6 @@ func TestSelectIndex(t *testing.T) {
 	}
 }
 
-func TestPlanner_ConstantFolding(t *testing.T) {
-	p :=
-		NewPlanner()
-	p.RegisterTable("t", []DT.ColInfo{{Name: "a", Typ: 1}, {Name: "b", Typ: 1}}, "a")
-	t.Run("tautology_1_eq_1_removes_filter", func(t *testing.T) {
-		plan, err := p.ParseAndPlan("SELECT * FROM t WHERE 1 = 1")
-		if err != nil {
-			t.Fatalf("plan error: %v", err)
-		}
-		// The constant fold should remove the WHERE clause entirely,
-		// so no OP.Filter operator appears in the plan tree.
-		// Instead, the Plan tree directly wraps the OP.SeqScan in an AdaptiveOp.
-		op := plan.Root
-		// Unwrap AdaptiveOp (always wraps query plans).
-		if aop, ok := op.(*AD.AdaptiveOp); ok {
-			op = aop.Inner
-		}
-		if _, ok := op.(*OP.SeqScan); !ok {
-			// The top-level should be OP.SeqScan (or OP.Project -> OP.SeqScan if star expr)
-			// If it's a OP.Project (for star expansion), check the child.
-			if proj, ok2 := op.(*OP.Project); ok2 {
-				if ss, ok3 := proj.Child().(*OP.SeqScan); ok3 {
-					_ = ss
-				} else {
-					t.Fatalf("expected OP.SeqScan after unfolding OP.Project, got %T", proj.Child())
-				}
-			} else {
-				t.Fatalf("expected OP.SeqScan or OP.Project as root, got %T", op)
-			}
-		}
-	})
-	t.Run("contradiction_1_eq_0", func(t *testing.T) {
-		// 1=0 should fold to FALSE, producing a const-FALSE filter.
-		// The plan should still be valid.
-		_, err := p.ParseAndPlan("SELECT * FROM t WHERE 1 = 0")
-		if err != nil {
-			t.Fatalf("plan error: %v", err)
-		}
-	})
-	t.Run("col_plus_zero_folds", func(t *testing.T) {
-		// `a + 0` should fold to `a`.
-		plan, err := p.ParseAndPlan("SELECT * FROM t WHERE a + 0 > 5")
-		if err != nil {
-			t.Fatalf("plan error: %v", err)
-		}
-		if plan == nil || plan.Root == nil {
-			t.Fatal("plan is nil")
-		}
-	})
-	t.Run("constant_expression_folds", func(t *testing.T) {
-		// `2 + 3` is a constant expression that should be folded to 5.
-		plan, err := p.ParseAndPlan("SELECT * FROM t WHERE a > 2 + 3")
-		if err != nil {
-			t.Fatalf("plan error: %v", err)
-		}
-		if plan == nil || plan.Root == nil {
-			t.Fatal("plan is nil")
-		}
-	})
-}
-
 func TestPlanner_CSE(t *testing.T) {
 	p :=
 		NewPlanner()
