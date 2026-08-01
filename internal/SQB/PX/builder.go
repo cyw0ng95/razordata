@@ -180,6 +180,12 @@ func isStateMutatingStmt(stmt PS.Stmt) bool {
 // we fall back to extractOutputSchema on the root to derive at least the
 // column identities for the driver's Columns() method.
 func (b *PipelineBuilder) specializePlan(plan *PL.PlanResult, sql, memoKey string) (*PipelineSpec, error) {
+	// REQ002267: for DML the planner lowers the QueryPlan DAG into a
+	// store-aware operator tree and stores it as plan.Root before this
+	// point, so decomposePlan always operates on the DAG-derived tree. For
+	// any shape the lowering cannot represent, the planner keeps the legacy
+	// operator tree as plan.Root — either way decomposePlan sees the right
+	// root here.
 	stages, edges, rootIdx, rootSchema, err := decomposePlan(plan.Root, b.planner, b.specialize)
 	if err != nil {
 		return nil, err

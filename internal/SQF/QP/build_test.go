@@ -113,8 +113,17 @@ func TestBuildQueryPlan_Update(t *testing.T) {
 	if root.Where == nil {
 		t.Fatal("update WHERE is nil")
 	}
-	if len(root.Children) != 1 || root.Children[0].Op != OpSeqScan {
-		t.Fatalf("update child = %v, want single SeqScan", root.Children)
+	if len(root.Children) != 1 {
+		t.Fatalf("update children = %d, want 1", len(root.Children))
+	}
+	// WHERE is modeled as a pre-filter on the scan child (WT applies the
+	// mutation to every iter row and does not evaluate where itself).
+	child := root.Children[0]
+	if child.Op != OpSeqScan && child.Op != OpFilter {
+		t.Fatalf("update child op = %s, want SeqScan or Filter", child.Op)
+	}
+	if child.Op == OpFilter && (len(child.Children) != 1 || child.Children[0].Op != OpSeqScan) {
+		t.Fatalf("update filter child = %v, want SeqScan", child.Children)
 	}
 }
 
@@ -134,8 +143,15 @@ func TestBuildQueryPlan_Delete(t *testing.T) {
 	if root.Where == nil {
 		t.Fatal("delete WHERE is nil")
 	}
-	if len(root.Children) != 1 || root.Children[0].Op != OpSeqScan {
-		t.Fatalf("delete child = %v, want single SeqScan", root.Children)
+	if len(root.Children) != 1 {
+		t.Fatalf("delete children = %d, want 1", len(root.Children))
+	}
+	child := root.Children[0]
+	if child.Op != OpSeqScan && child.Op != OpFilter {
+		t.Fatalf("delete child op = %s, want SeqScan or Filter", child.Op)
+	}
+	if child.Op == OpFilter && (len(child.Children) != 1 || child.Children[0].Op != OpSeqScan) {
+		t.Fatalf("delete filter child = %v, want SeqScan", child.Children)
 	}
 }
 
@@ -194,5 +210,37 @@ func TestBuildQueryPlan_Unsupported(t *testing.T) {
 	stmt := parseOne(t, "CREATE TABLE u(x INT)")
 	if _, err := BuildQueryPlan(stmt); err == nil {
 		t.Fatal("expected error for unsupported CREATE TABLE statement, got nil")
+	}
+}
+
+// The following statements are *modeled* structurally by the builder but the
+// execution path cannot lower them faithfully yet, so BuildQueryPlan returns
+// an error and the caller falls back to the legacy operator tree.
+
+func TestBuildQueryPlan_Fallback_AggregateSelect(t *testing.T) {
+	stmt := parseOne(t, "SELECT count(*) FROM t")
+	if _, err := BuildQueryPlan(stmt); err == nil {
+		t.Fatal("expected error for aggregate SELECT (falls back to OP), got nil")
+	}
+}
+
+func TestBuildQueryPlan_Fallback_SubquerySelect(t *testing.T) {
+	stmt := parseOne(t, "SELECT a FROM t WHERE a IN (SELECT b FROM u)")
+	if _, err := BuildQueryPlan(stmt); err == nil {
+		t.Fatal("expected error for subquery SELECT (falls back to OP), got nil")
+	}
+}
+
+func TestBuildQueryPlan_Fallback_UpdateWithLimit(t *testing.T) {
+	stmt := parseOne(t, "UPDATE t SET a = 1 LIMIT 5")
+	if _, err := BuildQueryPlan(stmt); err == nil {
+		t.Fatal("expected error for UPDATE ... LIMIT (falls back to OP), got nil")
+	}
+}
+
+func TestBuildQueryPlan_Fallback_InsertDefaultValues(t *testing.T) {
+	stmt := parseOne(t, "INSERT INTO t DEFAULT VALUES")
+	if _, err := BuildQueryPlan(stmt); err == nil {
+		t.Fatal("expected error for INSERT DEFAULT VALUES (falls back to OP), got nil")
 	}
 }

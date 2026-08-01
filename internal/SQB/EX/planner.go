@@ -14,10 +14,12 @@ import (
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	EV "github.com/cyw0ng95/razordata/internal/SQB/EV"
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
+	PX "github.com/cyw0ng95/razordata/internal/SQB/PX"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	QP "github.com/cyw0ng95/razordata/internal/SQF/QP"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
 )
 
@@ -25,6 +27,7 @@ type plan struct {
 	root    DT.Operator
 	cost    float64
 	memoKey string
+	qp      *QP.QueryPlan // REQ002267: DAG representation, nil → OP fallback
 }
 
 type joinPlan struct {
@@ -394,7 +397,7 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	p.mu.Lock()
 	if cached, ok := p.memo[key]; ok {
 		replaceLiteralsOnTree(cached.root, params)
-		result := &pl.PlanResult{Root: cached.root, Cost: cached.cost, MemoKey: cached.memoKey}
+		result := &pl.PlanResult{Root: cached.root, Cost: cached.cost, MemoKey: cached.memoKey, QP: cached.qp}
 		p.mu.Unlock()
 		return result, nil
 	}
@@ -493,6 +496,29 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 
 	// REQ002171: AdaptiveOp removed — PipelineBuilder replaces ADQC.
 
+	// REQ002267: route DML (INSERT/UPDATE/DELETE) through the QueryPlan DAG.
+	// Build the QP DAG for the DML statement; if it succeeds and the target
+	// is not a view (which the legacy OP path rejects), lower the DAG to a
+	// store-aware OP tree via PX.LowerQueryPlan and use that as the plan
+	// root. The lowered tree is identical in shape to what planInsert/
+	// planUpdate/planDelete built above, so the PipelineExecutor decomposes
+	// it exactly as before — but now derived from the DAG. SELECT stays on
+	// the proven OP path. BuildQueryPlan returns an error for DML shapes it
+	// cannot represent (UPDATE...LIMIT, INSERT DEFAULT VALUES) and
+	// LowerQueryPlan returns an error for any shape it cannot lower
+	// faithfully; in both cases we keep the legacy root built above.
+	// This is the full DML rewire that closes REQ002267.
+	var qp *QP.QueryPlan
+	switch rewritten.(type) {
+	case *PS.Insert, *PS.Update, *PS.Delete:
+		qp, _ = QP.BuildQueryPlan(rewritten)
+	}
+	if qp != nil && !dmlTargetsView(rewritten) {
+		if lowered, lerr := PX.LowerQueryPlan(qp.Root, p.store); lerr == nil {
+			root = lowered
+		}
+	}
+
 	// REQ002189: propagate the planner into the operator tree at plan
 	// creation time so that subsequent calls to Plan() from the memo
 	// cache do not mutate the cached tree during pipeline execution
@@ -504,6 +530,7 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 		root:    root,
 		cost:    0,
 		memoKey: key,
+		qp:      qp,
 	}
 
 	p.mu.Lock()
@@ -530,7 +557,7 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 	}
 	p.mu.Unlock()
 
-	return &pl.PlanResult{Root: root, Cost: result.cost, MemoKey: key}, nil
+	return &pl.PlanResult{Root: root, Cost: result.cost, MemoKey: key, QP: result.qp}, nil
 }
 
 // constantFoldSubqueries walks the SELECT expression tree and replaces
@@ -754,6 +781,25 @@ func (p *Planner) estimateRowCountFromOp(op DT.Operator) float64 {
 		return p.estimateRowCountFromOp(cp.RightChild())
 	}
 	return 0
+}
+
+// dmlTargetsView reports whether a DML statement targets a view, which the
+// legacy OP path rejects with an UnsupportedOp. The QP DAG cannot model that
+// rejection, so when this is true the planner keeps the legacy root instead
+// of lowering the DAG (REQ002267).
+func dmlTargetsView(stmt PS.Stmt) bool {
+	var name string
+	switch s := stmt.(type) {
+	case *PS.Insert:
+		name = s.Table
+	case *PS.Update:
+		name = s.Table
+	case *PS.Delete:
+		name = s.Table
+	default:
+		return false
+	}
+	return DT.LookupView(name) != nil
 }
 
 func (p *Planner) planInsert(s *PS.Insert) DT.Operator {

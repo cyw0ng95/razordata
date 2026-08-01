@@ -50,6 +50,11 @@ const (
 	OpInsert
 	OpUpdate
 	OpDelete
+
+	// Set operations / other (modeled for lowering; not emitted by the
+	// current safe builder for aggregate/window — those fall back to OP).
+	OpAggregate
+	OpWindow
 )
 
 // String returns a stable, human-readable name for the node op.
@@ -103,6 +108,10 @@ func (o NodeOp) String() string {
 		return "Update"
 	case OpDelete:
 		return "Delete"
+	case OpAggregate:
+		return "Aggregate"
+	case OpWindow:
+		return "Window"
 	default:
 		return "Unknown"
 	}
@@ -147,15 +156,24 @@ type PlanNode struct {
 	Distinct bool
 
 	// DML payload.
-	Cols      []string     // INSERT column list
-	Set       []PS.Pair    // UPDATE assignments
-	Values    [][]PS.Expr  // INSERT literal value rows
-	Where     PS.Expr      // UPDATE/DELETE condition
-	Returning []PS.Expr    // DML RETURNING list
+	Cols          []string            // INSERT column list
+	Set           []PS.Pair           // UPDATE assignments
+	Values        [][]PS.Expr         // INSERT literal value rows
+	Where         PS.Expr             // UPDATE/DELETE condition
+	Returning     []PS.Expr           // DML RETURNING list
+	OnConflict    *PS.OnConflict      // INSERT ON CONFLICT
+	ConflictAction PS.ConflictAction  // INSERT conflict action
 
-	// Pagination payload (SELECT LIMIT/OFFSET, also UPDATE/DELETE).
+	// Pagination / ordering payload (SELECT LIMIT/OFFSET/ORDER BY, also
+	// UPDATE/DELETE and COMPOUND).
 	LimitExpr  PS.Expr
 	OffsetExpr PS.Expr
+	OrderBy    []PS.OrderItem
+	CompoundOp PS.CompoundOp
+
+	// Aggregation payload (OpAggregate node; not emitted by the current
+	// safe builder — aggregate SELECTs fall back to the OP path).
+	Aggs []PS.Expr
 }
 
 // QueryPlan is the root of a single statement's plan DAG.

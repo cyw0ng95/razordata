@@ -8,13 +8,17 @@ import (
 
 // BuildQueryPlan constructs a QueryPlan DAG directly from a parsed PS.Stmt.
 // This is the foundation entry point REQ002267 needs: DML (INSERT/UPDATE/
-// DELETE) is represented as DAG nodes alongside the read operators, so later
-// phases can route the whole plan through the PipelineExecutor.
+// DELETE) is represented as DAG nodes alongside the read operators, so the
+// PipelineExecutor can route the whole plan through the DAG.
 //
-// The builder reads only exported AST fields (no OP/WT imports), so it is a
-// clean seam between parsing and planning. It currently covers the core shapes
-// (scan / filter / project / join / limit-offset / distinct) and the DML
-// statements; compound statements reuse the per-side builders recursively.
+// The builder reads only exported AST fields (no OP/WT imports). It models
+// every structural shape (scan / filter / project / join / sort / limit /
+// offset / distinct / values / compound / DML). For shapes the execution
+// machinery cannot lower faithfully yet (aggregates, window functions,
+// expression subqueries, UPDATE/DELETE with ORDER BY/LIMIT, INSERT DEFAULT
+// VALUES, subquery-in-FROM), it returns an error so the caller falls back to
+// the legacy operator path. This keeps the QP-routed set correct while the
+// DAG still *represents* every shape.
 func BuildQueryPlan(stmt PS.Stmt) (*QueryPlan, error) {
 	if stmt == nil {
 		return nil, errors.New("QP: nil statement")
@@ -47,8 +51,9 @@ func buildStmt(stmt PS.Stmt) (*PlanNode, error) {
 			return nil, err
 		}
 		return &PlanNode{
-			Op:       OpCompound,
-			Children: []*PlanNode{left, right},
+			Op:         OpCompound,
+			Children:   []*PlanNode{left, right},
+			CompoundOp: s.Op,
 		}, nil
 	default:
 		return nil, errors.New("QP: unsupported statement kind")
@@ -56,6 +61,11 @@ func buildStmt(stmt PS.Stmt) (*PlanNode, error) {
 }
 
 func buildSelect(s *PS.Select) (*PlanNode, error) {
+	// Shapes we cannot lower faithfully to the vectorized pipeline yet.
+	if selectHasUnsupported(s) {
+		return nil, errors.New("QP: select has unsupported feature")
+	}
+
 	var child *PlanNode
 
 	// FROM source: a subquery, a single table, or a join chain.
@@ -85,23 +95,21 @@ func buildSelect(s *PS.Select) (*PlanNode, error) {
 		child = NewFilter(child, s.Where)
 	}
 
-	// GROUP BY / HAVING captured on the projection node below.
-
 	// Projection.
 	proj := &PlanNode{
 		Op:       OpProject,
 		Exprs:    s.Cols,
 		Alias:    s.FromAlias,
-		GroupBy:  s.GroupBy,
-		Having:   s.Having,
 		Distinct: s.Distinct,
 	}
 	proj.AddChild(child)
 	child = proj
 
-	// ORDER BY → sort (preserve as a marker node).
+	// ORDER BY → sort.
 	if len(s.OrderBy) > 0 {
-		child = NewSort(child)
+		sort := &PlanNode{Op: OpSort, OrderBy: s.OrderBy}
+		sort.AddChild(child)
+		child = sort
 	}
 
 	// LIMIT / OFFSET.
@@ -110,6 +118,89 @@ func buildSelect(s *PS.Select) (*PlanNode, error) {
 	}
 
 	return child, nil
+}
+
+// selectHasUnsupported reports whether s contains a feature the execution
+// path cannot lower faithfully (so the caller falls back to the OP tree).
+// Joins are allowed structurally (modeled as OpHashJoin) but lowered to OP
+// at execution time; they are intentionally NOT listed here.
+func selectHasUnsupported(s *PS.Select) bool {
+	if s.SubqueryFrom != nil {
+		return true
+	}
+	if s.GroupBy != nil || s.Having != nil {
+		return true
+	}
+	for _, e := range s.Cols {
+		if exprHasUnsupported(e) {
+			return true
+		}
+	}
+	if exprHasUnsupported(s.Where) {
+		return true
+	}
+	for _, o := range s.OrderBy {
+		if exprHasUnsupported(o.Expr) {
+			return true
+		}
+	}
+	for _, j := range s.Joins {
+		if exprHasUnsupported(j.On) {
+			return true
+		}
+	}
+	return false
+}
+
+// exprHasUnsupported reports aggregate, window, or subquery expressions,
+// which the current QP execution path cannot lower correctly.
+func exprHasUnsupported(e PS.Expr) bool {
+	if e == nil {
+		return false
+	}
+	switch e.(type) {
+	case *PS.AggregateFunc, *PS.WindowFunc, *PS.SubqueryExpr, *PS.ExistsExpr:
+		return true
+	case *PS.InExpr:
+		if in, ok := e.(*PS.InExpr); ok && in.Subquery != nil {
+			return true
+		}
+	}
+	switch x := e.(type) {
+	case *PS.BinaryExpr:
+		return exprHasUnsupported(x.Left) || exprHasUnsupported(x.Right) || exprHasUnsupported(x.Escape)
+	case *PS.UnaryExpr:
+		return exprHasUnsupported(x.Operand)
+	case *PS.FunctionCall:
+		for _, a := range x.Args {
+			if exprHasUnsupported(a) {
+				return true
+			}
+		}
+	case *PS.AliasedExpr:
+		return exprHasUnsupported(x.Expr)
+	case *PS.CastExpr:
+		return exprHasUnsupported(x.Expr)
+	case *PS.ListExpr:
+		for _, it := range x.Items {
+			if exprHasUnsupported(it) {
+				return true
+			}
+		}
+	case *PS.BetweenExpr:
+		return exprHasUnsupported(x.Expr) || exprHasUnsupported(x.Low) || exprHasUnsupported(x.High)
+	case *PS.CaseExpr:
+		if exprHasUnsupported(x.Expr) {
+			return true
+		}
+		for _, w := range x.WhenList {
+			if exprHasUnsupported(w.Cond) || exprHasUnsupported(w.Then) {
+				return true
+			}
+		}
+		return exprHasUnsupported(x.Else)
+	}
+	return false
 }
 
 func buildJoins(left *PlanNode, joins []PS.JoinClause) (*PlanNode, error) {
@@ -139,6 +230,11 @@ func joinKindCode(kind string) int {
 }
 
 func buildInsert(s *PS.Insert) (*PlanNode, error) {
+	// INSERT DEFAULT VALUES takes a separate WT path the builder cannot
+	// model; fall back to the OP planner.
+	if s.DefaultValues {
+		return nil, errors.New("QP: INSERT DEFAULT VALUES unsupported")
+	}
 	var source *PlanNode
 	if s.Select != nil {
 		sub, err := buildStmt(s.Select)
@@ -147,15 +243,33 @@ func buildInsert(s *PS.Insert) (*PlanNode, error) {
 		}
 		source = sub
 	}
-	return NewInsert(s.Table, s.Cols, s.Values, source, s.Returning), nil
+	return NewInsert(s.Table, s.Cols, s.Values, source, s.Returning, s.OnConflict, s.ConflictAction), nil
 }
 
 func buildUpdate(s *PS.Update) (*PlanNode, error) {
+	// UPDATE ... ORDER BY / LIMIT cannot be represented faithfully yet.
+	if s.OrderBy != nil || s.Limit != nil || s.Offset != nil {
+		return nil, errors.New("QP: UPDATE with ORDER BY/LIMIT unsupported")
+	}
+	// WT.Update/Delete apply the mutation to EVERY row from their iter and
+	// do NOT evaluate `where` themselves — the planner pre-filters the iter
+	// via a SeqScan+Filter chain. Mirror that: wrap the scan in a Filter so
+	// only matching rows reach the writer. `where` is still passed through
+	// to WT (matching the planner) for RETURNING / store-path semantics.
 	scan := NewSeqScan(s.Table, "", nil)
+	if s.Where != nil {
+		scan = NewFilter(scan, s.Where)
+	}
 	return NewUpdate(s.Table, s.Set, s.Where, scan, s.Returning), nil
 }
 
 func buildDelete(s *PS.Delete) (*PlanNode, error) {
+	if s.OrderBy != nil || s.Limit != nil || s.Offset != nil {
+		return nil, errors.New("QP: DELETE with ORDER BY/LIMIT unsupported")
+	}
 	scan := NewSeqScan(s.Table, "", nil)
+	if s.Where != nil {
+		scan = NewFilter(scan, s.Where)
+	}
 	return NewDelete(s.Table, s.Where, scan, s.Returning), nil
 }

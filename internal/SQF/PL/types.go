@@ -18,6 +18,7 @@ import (
 	nm "github.com/cyw0ng95/razordata/internal/ENG/NM"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
+	QP "github.com/cyw0ng95/razordata/internal/SQF/QP"
 	CT "github.com/cyw0ng95/razordata/internal/SYS/CT"
 )
 
@@ -267,6 +268,11 @@ type PlanResult struct {
 	Root    Operator
 	Cost    float64
 	MemoKey string
+	// QP is the QueryPlan DAG representation (REQ002267). When non-nil the
+	// PipelineExecutor lowers this DAG instead of the legacy Root operator
+	// tree. The Root operator is retained for memo/close/explain
+	// compatibility and as a fallback for shapes the DAG cannot model.
+	QP *QP.QueryPlan
 }
 
 // QueryPlanner is the query planner interface. The concrete implementation

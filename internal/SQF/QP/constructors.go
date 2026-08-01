@@ -110,14 +110,16 @@ func NewValuesRows(values [][]PS.Expr) *PlanNode {
 
 // NewInsert builds an INSERT node. When source is non-nil it is the child
 // plan producing rows to insert (INSERT ... SELECT); otherwise cols/values
-// carry the literal payload.
-func NewInsert(table string, cols []string, values [][]PS.Expr, source *PlanNode, returning []PS.Expr) *PlanNode {
+// carry the literal payload. onConflict may be nil.
+func NewInsert(table string, cols []string, values [][]PS.Expr, source *PlanNode, returning []PS.Expr, onConflict *PS.OnConflict, conflictAction PS.ConflictAction) *PlanNode {
 	n := &PlanNode{
-		Op:        OpInsert,
-		Table:     table,
-		Cols:      cols,
-		Values:    values,
-		Returning: returning,
+		Op:            OpInsert,
+		Table:         table,
+		Cols:          cols,
+		Values:        values,
+		Returning:     returning,
+		OnConflict:    onConflict,
+		ConflictAction: conflictAction,
 	}
 	n.AddChild(source)
 	return n
