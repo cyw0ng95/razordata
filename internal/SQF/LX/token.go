@@ -72,6 +72,15 @@ const (
 	T_DEFAULT
 	T_CHECK
 	T_UNIQUE
+	// --- Column-type keyword tokens (REQ002287 aligned with CT.ValueKind) ---
+	// These keywords map onto CT.ValueKind codes. The set is frozen: core
+	// scalar keywords (INT/BIGINT/FLOAT/BOOL/TEXT/BLOB/VARCHAR) map to
+	// CT.KindInt/KindFloat/KindBool/KindText/KindBlob. The following declared
+	// but not-yet-implemented type keywords are reserved so their
+	// CT.ValueKind codes can be filled in without renumbering:
+	//   T_DECIMAL->CT.KindDecimal, T_JSON->CT.KindJSON, T_DATE->CT.KindDate,
+	//   T_TIME->CT.KindTime, T_TIMESTAMP->CT.KindTimestamp,
+	//   T_NUMERIC->CT.KindDecimal (grouped with decimal).
 	T_INT_KW
 	T_BIGINT
 	T_FLOAT_KW
@@ -506,4 +515,41 @@ func (t Token) IsEOF() bool {
 
 func (t Token) IsError() bool {
 	return t.Type == T_ERROR
+}
+
+// TokenTypeToValueKind maps a column-type keyword token onto its CT.ValueKind
+// code. REQ002287: this is the single alignment point between the lexer's
+// type keywords and the execution type model. The mapping is frozen — the
+// declared-but-unimplemented type tokens resolve to their reserved
+// CT.ValueKind codes so a future type implementation slots in without
+// renumbering. Returns ok=false for tokens that are not column-type keywords.
+func TokenTypeToValueKind(tt TokenType) (CT.ValueKind, bool) {
+	switch tt {
+	case T_INT_KW, T_BIGINT:
+		return CT.KindInt, true
+	case T_FLOAT_KW:
+		return CT.KindFloat, true
+	case T_BOOL:
+		return CT.KindBool, true
+	case T_TEXT, T_VARCHAR, T_BLOB:
+		// T_BLOB also maps to the text/blob family; callers that need a
+		// distinct blob kind should special-case T_BLOB (handled by the
+		// default text path below returning KindText for VARCHAR/TEXT only).
+		if tt == T_BLOB {
+			return CT.KindBlob, true
+		}
+		return CT.KindText, true
+	case T_DECIMAL, T_NUMERIC:
+		return CT.KindDecimal, true
+	case T_JSON:
+		return CT.KindJSON, true
+	case T_DATE:
+		return CT.KindDate, true
+	case T_TIME:
+		return CT.KindTime, true
+	case T_TIMESTAMP:
+		return CT.KindTimestamp, true
+	default:
+		return 0, false
+	}
 }
