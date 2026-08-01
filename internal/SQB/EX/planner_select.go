@@ -1419,7 +1419,7 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 				joinOp = p.planConstantOnJoin(current, rightScan, leftTbl, rightTbl, j, kind, projectedCols)
 			}
 			if joinOp == nil && (kind == OP.JoinKindInner || kind == OP.JoinKindCross) && len(localConjuncts) > 0 {
-				lk, rk, remaining := p.extractEquiJoinKeys(localConjuncts, joinedTables, j.Right)
+				lk, rk, remaining := p.extractEquiJoinKeys(localConjuncts, joinedTables, rightTbl)
 				if len(lk) > 0 {
 					for _, orig := range localConjuncts {
 						found := false

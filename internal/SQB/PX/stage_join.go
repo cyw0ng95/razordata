@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
 	"github.com/cyw0ng95/razordata/internal/SQF/LX"
@@ -1376,6 +1377,8 @@ func (j *HashJoinStage) Reset(_ context.Context) error {
 // resolveKeysFromNames resolves key column indices from column names
 // in the first batch. REQ002180: used when keys could not be resolved
 // during decomposition (ResolveKeysAtRuntime).
+// REQ002319: also try matching the bare name (after last dot) to handle
+// aliased table scans where columns are prefixed with the alias.
 func (j *HashJoinStage) resolveKeysFromNames(batch *UT.Batch) (probeKeys, buildKeys []int) {
 	// Build-side: find rightKeyName in build columns.
 	bk := make([]int, 0, 1)
@@ -1384,6 +1387,13 @@ func (j *HashJoinStage) resolveKeysFromNames(batch *UT.Batch) (probeKeys, buildK
 		if name == j.rightKeyName {
 			bk = append(bk, i)
 			break
+		}
+		// Try bare name (after last dot) for aliased columns.
+		if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+			if name[dot+1:] == j.rightKeyName {
+				bk = append(bk, i)
+				break
+			}
 		}
 	}
 	// Probe-side: find leftKeyName in probe columns.
