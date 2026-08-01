@@ -753,82 +753,103 @@ func (e *Executor) RegisterCollation(name string, fn DT.CollateFunc) error {
 	return e.planner.RegisterCollation(name, fn)
 }
 
-// Exec runs a DML/DDL statement through the unified BuildPipeline path.
-// REQ002230: pipeline is the sole execution method; legacy parse→plan→Next
-// fallback removed. OutputCols may be empty (DDL/DML without RETURNING);
-// RowsAffected is derived from execCtx.LastChanges or len(returning rows).
-func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, error) {
-	spec, bErr := e.pipelineBuilder.Build(sql)
-	if bErr != nil {
-		return Result{}, bErr
-	}
-	if spec == nil || len(spec.Stages) == 0 || !specHasNoLegacyStages(spec) {
-		return Result{}, fmt.Errorf("ex: Exec: unsupported statement")
-	}
-	exec := PX.NewPipelineExecutor(spec)
-	defer exec.Close()
-	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: 0, TotalChanges: e.totalChanges}
-	execCtx.RowArena = e.ensureArena()
-	rows, execErr := exec.ExecuteWithArgs(ctx, args, e.planner, execCtx)
-	if execErr != nil {
-		return Result{}, execErr
-	}
-	e.lastChanges = execCtx.LastChanges
-	e.totalChanges = execCtx.TotalChanges
-	affected := execCtx.LastChanges
-	if affected == 0 {
-		affected = int64(len(rows))
-	}
-	return Result{RowsAffected: affected}, nil
-}
+// runMode selects the output shape for the unified pipeline entry point.
+type runMode int
 
-// Query returns the result schema (column names/types) for a SELECT
-// statement without draining rows. REQ002230: pipeline is the sole path.
-// Rows are consumed by the driver via QueryStream/QueryAll.
-func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, error) {
+const (
+	runExec    runMode = iota // returns Result
+	runQuery                  // returns schema only, no execution
+	runQueryAll               // returns []DT.Row
+)
+
+// run is the single internal entry point for Exec, Query, and QueryAll.
+// REQ002272: collapses three near-identical Build→validate→execute paths
+// onto one; each exported method is a thin wrapper selecting the output shape.
+func (e *Executor) run(ctx context.Context, sql string, args []any, mode runMode) (any, error) {
 	spec, bErr := e.pipelineBuilder.Build(sql)
 	if bErr != nil {
 		return nil, bErr
 	}
 	if spec == nil || len(spec.Stages) == 0 || !specHasNoLegacyStages(spec) {
-		return nil, fmt.Errorf("ex: Query: unsupported statement")
-	}
-	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
-	exec := PX.NewPipelineExecutor(spec)
-	exec.SetExecContext(execCtx)
-	exec.SetParams(args)
-	exec.SetPlanner(e.planner)
-	_ = exec.Close()
-	e.lastChanges = execCtx.LastChanges
-	e.totalChanges = execCtx.TotalChanges
-	return &Rows{
-		Cols:  append([]string(nil), spec.OutputCols...),
-		Types: append([]LX.TokenType(nil), spec.OutputTypes...),
-	}, nil
-}
-
-// QueryAll returns all rows for a SELECT statement via the unified
-// BuildPipeline path. REQ002230: pipeline is the sole execution method;
-// legacy parse→plan→drainBatch fallback removed.
-func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.Row, error) {
-	spec, bErr := e.pipelineBuilder.Build(sql)
-	if bErr != nil {
-		return nil, bErr
-	}
-	if spec == nil || len(spec.Stages) == 0 || !specHasNoLegacyStages(spec) {
-		return nil, fmt.Errorf("ex: QueryAll: unsupported statement")
+		return nil, fmt.Errorf("ex: unsupported statement")
 	}
 	exec := PX.NewPipelineExecutor(spec)
 	defer exec.Close()
-	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: e.lastChanges, TotalChanges: e.totalChanges}
+	lastChanges := int64(0)
+	if mode != runExec {
+		lastChanges = e.lastChanges
+	}
+	execCtx := &DT.ExecContext{Planner: e.planner, SessionID: DT.GetCurrentSessionID(), TxWriter: e.txWriter, LastChanges: lastChanges, TotalChanges: e.totalChanges}
 	execCtx.RowArena = e.ensureArena()
+	if mode != runQuery {
+		exec.SetExecContext(execCtx)
+		exec.SetParams(args)
+		exec.SetPlanner(e.planner)
+	}
+	if mode == runQuery {
+		// Query only needs the schema — create and close the executor.
+		_ = exec.Close()
+		e.lastChanges = execCtx.LastChanges
+		e.totalChanges = execCtx.TotalChanges
+		return &Rows{
+			Cols:  append([]string(nil), spec.OutputCols...),
+			Types: append([]LX.TokenType(nil), spec.OutputTypes...),
+		}, nil
+	}
 	rows, execErr := exec.ExecuteWithArgs(ctx, args, e.planner, execCtx)
 	if execErr != nil {
 		return nil, execErr
 	}
 	e.lastChanges = execCtx.LastChanges
 	e.totalChanges = execCtx.TotalChanges
-	return rows, nil
+	switch mode {
+	case runExec:
+		affected := execCtx.LastChanges
+		if affected == 0 {
+			affected = int64(len(rows))
+		}
+		return Result{RowsAffected: affected}, nil
+	case runQueryAll:
+		return rows, nil
+	}
+	return nil, nil
+}
+
+// Exec runs a DML/DDL statement through the unified BuildPipeline path.
+// REQ002230: pipeline is the sole execution method; legacy parse→plan→Next
+// fallback removed. OutputCols may be empty (DDL/DML without RETURNING);
+// RowsAffected is derived from execCtx.LastChanges or len(returning rows).
+// REQ002272: delegates to run(runExec).
+func (e *Executor) Exec(ctx context.Context, sql string, args ...any) (Result, error) {
+	out, err := e.run(ctx, sql, args, runExec)
+	if err != nil {
+		return Result{}, err
+	}
+	return out.(Result), nil
+}
+
+// Query returns the result schema (column names/types) for a SELECT
+// statement without draining rows. REQ002230: pipeline is the sole path.
+// Rows are consumed by the driver via QueryStream/QueryAll.
+// REQ002272: delegates to run(runQuery).
+func (e *Executor) Query(ctx context.Context, sql string, args ...any) (*Rows, error) {
+	out, err := e.run(ctx, sql, args, runQuery)
+	if err != nil {
+		return nil, err
+	}
+	return out.(*Rows), nil
+}
+
+// QueryAll returns all rows for a SELECT statement via the unified
+// BuildPipeline path. REQ002230: pipeline is the sole execution method;
+// legacy parse→plan→drainBatch fallback removed.
+// REQ002272: delegates to run(runQueryAll).
+func (e *Executor) QueryAll(ctx context.Context, sql string, args ...any) ([]DT.Row, error) {
+	out, err := e.run(ctx, sql, args, runQueryAll)
+	if err != nil {
+		return nil, err
+	}
+	return out.([]DT.Row), nil
 }
 
 // clearTextPlanCache is a no-op — legacy textPlanCache removed. REQ002145.
