@@ -588,7 +588,7 @@ func deriveJoinSchema(left, right DT.Operator, leftTbl, rightTbl string) ([]stri
 	types = append(types, rightTypes...)
 	idx := make(map[string]int, len(cols)*2)
 	for i, c := range cols {
-		key := strings.ToLower(c)
+		key := LX.NormalizeIdent(c)
 		if _, exists := idx[key]; !exists {
 			idx[key] = i
 		}
@@ -600,7 +600,7 @@ func deriveJoinSchema(left, right DT.Operator, leftTbl, rightTbl string) ([]stri
 		// the first table in the FROM clause.
 		if dot := strings.LastIndex(c, "."); dot >= 0 {
 			bare := c[dot+1:]
-			bkey := strings.ToLower(bare)
+			bkey := LX.NormalizeIdent(bare)
 			if _, exists := idx[bkey]; !exists {
 				idx[bkey] = i
 			}

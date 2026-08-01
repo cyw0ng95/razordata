@@ -110,7 +110,7 @@ func (r *Row) Lookup(name string) (any, bool) {
 	hasUpper := false
 	for _, c := range name {
 		if c >= 'A' && c <= 'Z' {
-			lname = strings.ToLower(name)
+			lname = LX.NormalizeIdent(name)
 			hasUpper = true
 			_ = hasUpper
 			break
@@ -147,7 +147,7 @@ func (r *Row) LookupValue(name string) (Value, bool) {
 	hasUpper := false
 	for _, c := range name {
 		if c >= 'A' && c <= 'Z' {
-			lname = strings.ToLower(name)
+			lname = LX.NormalizeIdent(name)
 			hasUpper = true
 			_ = hasUpper
 			break
@@ -211,7 +211,7 @@ func (r *Row) buildColIndex() {
 		if allLower {
 			r.ColIndex[c] = i
 		} else {
-			r.ColIndex[strings.ToLower(c)] = i
+			r.ColIndex[LX.NormalizeIdent(c)] = i
 		}
 	}
 }

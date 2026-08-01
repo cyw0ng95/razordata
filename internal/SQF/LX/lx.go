@@ -855,12 +855,19 @@ ident := l.input[start:l.pos]
 
 	// REQ002108: pre-lowercase identifiers so the parser doesn't need
 	// to call strings.ToLower on every T_IDENT.
-	return Token{Type: T_IDENT, Lexeme: toLowerIdent(ident), Line: startLine, Col: startCol}
+	return Token{Type: T_IDENT, Lexeme: NormalizeIdent(ident), Line: startLine, Col: startCol}
 }
 
-// toLowerIdent returns a lowercased copy of ident. REQ002108.
-// Uses a stack buffer for small identifiers (<64 bytes) to avoid heap alloc.
-func toLowerIdent(ident string) string {
+// NormalizeIdent is the single canonical identifier-case fold (REQ002306).
+// Unquoted identifiers are case-insensitive and folded to lowercase; quoted
+// identifiers (delimited by double quotes) preserve their original case,
+// matching SQLite semantics. Uses a stack buffer for small identifiers
+// (<64 bytes) to avoid heap alloc. REQ002108 origin.
+func NormalizeIdent(ident string) string {
+	if len(ident) >= 2 && ident[0] == '"' && ident[len(ident)-1] == '"' {
+		// Quoted/delimited identifier: preserve exact case.
+		return ident
+	}
 	// Fast path: already lowercase.
 	allLower := true
 	for i := 0; i < len(ident); i++ {

@@ -55,6 +55,19 @@ func PutParser(p *Parser) {
 	parserPool.Put(p)
 }
 
+// REQ002306: normalizeIdent is the parser-facing alias for the single
+// canonical identifier-case fold. The implementation lives in SQF/LX
+// (LX.normalizeIdent) so the lexer and all upper layers share one fold
+// without an import cycle. Unquoted identifiers are case-insensitive and
+// folded to lowercase; quoted identifiers (delimited by double quotes)
+// preserve their original case, matching SQLite semantics. Centralizing
+// the fold removes the per-file ToUpper/ToLower copies that previously
+// diverged between parse-time and plan-time folding and caused
+// intermittent identifier lookup failures.
+func normalizeIdent(name string) string {
+	return LX.NormalizeIdent(name)
+}
+
 // NewParser creates a new Parser for the given SQL input string.
 // REQ001700: uses GetLexer from the pool to avoid per-query Lexer allocation.
 // REQ001976: returns a pooled Parser struct; callers must call Close()

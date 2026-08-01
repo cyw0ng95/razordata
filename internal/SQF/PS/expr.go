@@ -51,9 +51,10 @@ case LX.T_IDENT, LX.T_EXCLUDED:
 		// REQ002108: lexer already lowercases T_IDENT Lexeme.
 		name := p.current.Lexeme
 		// T_EXCLUDED is a keyword token, not T_IDENT — the lexer
-		// preserves its original case, so lowercase it here.
+		// preserves its original case, so fold it via the shared
+		// identifier normalizer here. REQ002306.
 		if p.current.Type == LX.T_EXCLUDED {
-			name = strings.ToLower(name)
+			name = normalizeIdent(name)
 		}
 		p.advance()
 		// REQ000808: hex string literal X'...'

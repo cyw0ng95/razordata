@@ -275,6 +275,31 @@ func TestLexerMixedCase(t *testing.T) {
 	}
 }
 
+// TestNormalizeIdent verifies REQ002306: the single canonical
+// identifier-case fold. Unquoted identifiers fold to lowercase; quoted
+// (double-quoted) identifiers preserve their original case.
+func TestNormalizeIdent(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"col", "col"},
+		{"COL", "col"},
+		{"ColName", "colname"},
+		{"already_lower", "already_lower"},
+		{`"MixedCase"`, `"MixedCase"`},
+		{`"UPPER"`, `"UPPER"`},
+		{`"with""quote"`, `"with""quote"`},
+		{"a123", "a123"},
+		{"LONG_IDENTIFIER_WITH_MANY_CAPITALS_XYZ", "long_identifier_with_many_capitals_xyz"},
+	}
+	for _, c := range cases {
+		if got := NormalizeIdent(c.in); got != c.want {
+			t.Errorf("NormalizeIdent(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestLexerAllKeywords(t *testing.T) {
 	kwCases := []struct {
 		kw  string
