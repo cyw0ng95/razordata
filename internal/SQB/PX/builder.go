@@ -464,6 +464,12 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *UT.Vacuum:
 		// REQ002211: VACUUM. Native source stage.
 		return decomposeNativeSource(o, st)
+	case *AD.ExplainStmtOp:
+		// REQ002307: EXPLAIN. Native source stage.
+		return decomposeNativeSource(o, st)
+	case *OP.PragmaResult:
+		// REQ002307: PRAGMA. Native source stage.
+		return decomposeNativeSource(o, st)
 	default:
 		return 0, fmt.Errorf("px: unknown operator type %T", op)
 	}
