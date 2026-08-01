@@ -27,9 +27,12 @@ func (s *Stmt) NumInput() int {
 }
 
 func (s *Stmt) Exec(args []driver.Value) (driver.Result, error) {
-	anyArgs := make([]any, len(args))
-	for i, v := range args {
-		anyArgs[i] = toDriverValue(v)
+	// REQ002291: bind through ParamBinder so the prepared-statement
+	// path shares the same coercion + NumInput validation as the
+	// ad-hoc ExecContext path.
+	anyArgs, err := ParamBinder{}.BindPrepared(args, s.NumInput())
+	if err != nil {
+		return nil, err
 	}
 	res, err := s.stmt.Exec(context.Background(), anyArgs...)
 	if err != nil {
@@ -39,9 +42,9 @@ func (s *Stmt) Exec(args []driver.Value) (driver.Result, error) {
 }
 
 func (s *Stmt) Query(args []driver.Value) (driver.Rows, error) {
-	anyArgs := make([]any, len(args))
-	for i, v := range args {
-		anyArgs[i] = toDriverValue(v)
+	anyArgs, err := ParamBinder{}.BindPrepared(args, s.NumInput())
+	if err != nil {
+		return nil, err
 	}
 	apRows, err := s.stmt.Query(context.Background(), anyArgs...)
 	if err != nil {

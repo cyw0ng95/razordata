@@ -30,10 +30,9 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	if c == nil || c.session == nil {
 		return nil, AP.New(AP.KindClosed, "engine closed")
 	}
-	anyArgs := make([]any, len(args))
-	for i, a := range args {
-		anyArgs[i] = a.Value
-	}
+	// REQ002291: route parameter binding through ParamBinder so the
+	// ad-hoc Exec path shares the same coercion as the prepared Stmt path.
+	anyArgs := ParamBinder{}.Bind(args)
 	// REQ001125: route through the session so the per-session
 	// counter for CHANGES() and TOTAL_CHANGES() is maintained.
 	// REQ001419: Session.Exec internally handles TxWriter for active
@@ -46,11 +45,7 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 }
 
 func (c *Conn) Exec(query string, args []driver.Value) (driver.Result, error) {
-	named := make([]driver.NamedValue, len(args))
-	for i, v := range args {
-		named[i] = driver.NamedValue{Ordinal: i + 1, Value: v}
-	}
-	return c.ExecContext(context.Background(), query, named)
+	return c.ExecContext(context.Background(), query, ToNamedValues(args))
 }
 
 func (c *Conn) Begin() (driver.Tx, error) {
