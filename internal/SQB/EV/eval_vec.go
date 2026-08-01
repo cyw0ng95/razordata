@@ -314,29 +314,47 @@ func evalUnaryBatch(e *PS.UnaryExpr, batch *UT.Batch, params []any) []uint16 {
 // (set by VectorizedSeqScan), enabling O(1) lookup. Falls back
 // to a linear scan if the map is not available.
 func ExtractColumnRef(expr PS.Expr, batch *UT.Batch) (UT.Column, bool) {
-	ident, ok := expr.(*PS.Ident)
-	if !ok {
+	// Handle both Ident and QualifiedName (which carries table-qualified names).
+	var name string
+	switch e := expr.(type) {
+	case *PS.Ident:
+		name = e.Name
+	case *PS.QualifiedName:
+		name = e.Name
+	default:
 		return UT.Column{}, false
 	}
 	// Use pre-computed index if available
 	if batch.ColMap() != nil {
-		if idx, found := batch.ColMap()[ident.Name]; found {
+		if idx, found := batch.ColMap()[name]; found {
 			// REQ001684: when column pruning is active the batch may have
 			// fewer logical columns than the full-schema colMap indices.
 			// Verify the resolved column actually carries the requested
 			// name — pool batches retain MaxColumns slots, so the raw
 			// index check alone is insufficient.
 			if idx >= 0 && idx < len(batch.Cols) {
-				if strings.EqualFold(batch.Cols[idx].Name, ident.Name) {
+				if strings.EqualFold(batch.Cols[idx].Name, name) {
 					return batch.Cols[idx], true
+				}
+				// Also try matching the suffix of qualified names (e.g., "bs1.name" matches "name").
+				if parts := strings.Split(batch.Cols[idx].Name, "."); len(parts) > 0 {
+					if strings.EqualFold(parts[len(parts)-1], name) {
+						return batch.Cols[idx], true
+					}
 				}
 			}
 		}
 		// Fallback: linear scan when colMap index is stale or mismatched
 		// (e.g. column pruning reordered the batch layout).
 		for i := range batch.Cols {
-			if strings.EqualFold(batch.Cols[i].Name, ident.Name) {
+			if strings.EqualFold(batch.Cols[i].Name, name) {
 				return batch.Cols[i], true
+			}
+			// Also match suffix of qualified names (e.g., "bs1.name" matches "name").
+			if parts := strings.Split(batch.Cols[i].Name, "."); len(parts) > 0 {
+				if strings.EqualFold(parts[len(parts)-1], name) {
+					return batch.Cols[i], true
+				}
 			}
 		}
 		return UT.Column{}, false
@@ -344,8 +362,14 @@ func ExtractColumnRef(expr PS.Expr, batch *UT.Batch) (UT.Column, bool) {
 	// Fallback: linear scan by column name from "c0", "c1", etc.
 	// (This handles synthetic batches in tests.)
 	for i := range batch.Cols {
-		if batch.Cols[i].Name == ident.Name {
+		if batch.Cols[i].Name == name {
 			return batch.Cols[i], true
+		}
+		// Also match suffix of qualified names.
+		if parts := strings.Split(batch.Cols[i].Name, "."); len(parts) > 0 {
+			if parts[len(parts)-1] == name {
+				return batch.Cols[i], true
+			}
 		}
 	}
 	return UT.Column{}, false
@@ -1215,6 +1239,14 @@ func EvalBatchExpr(expr PS.Expr, batch *UT.Batch, params []any) UT.Column {
 	switch e := expr.(type) {
 	case *PS.Ident:
 		// Column reference: shallow copy of source column.
+		if col, ok := ExtractColumnRef(e, batch); ok {
+			result = col
+		} else {
+			result = UT.Column{Type: LX.T_NULL}
+		}
+
+	case *PS.QualifiedName:
+		// Column reference with table qualifier: shallow copy of source column.
 		if col, ok := ExtractColumnRef(e, batch); ok {
 			result = col
 		} else {

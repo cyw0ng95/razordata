@@ -470,6 +470,9 @@ func decomposeOp(op DT.Operator, st *decomposeState, planner PL.QueryPlanner, sp
 	case *OP.PragmaResult:
 		// REQ002307: PRAGMA. Native source stage.
 		return decomposeNativeSource(o, st)
+	case *OP.IncrementalVacuumResult:
+		// Incremental vacuum result. Native source stage.
+		return decomposeNativeSource(o, st)
 	default:
 		return 0, fmt.Errorf("px: unknown operator type %T", op)
 	}
@@ -1779,6 +1782,8 @@ func exprName(e PS.Expr) string {
 	}
 	switch expr := e.(type) {
 	case *PS.Ident:
+		return expr.Name
+	case *PS.QualifiedName:
 		return expr.Name
 	case *PS.AliasedExpr:
 		return expr.Alias
