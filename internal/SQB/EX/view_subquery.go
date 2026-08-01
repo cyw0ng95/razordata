@@ -91,9 +91,6 @@ func (p *Planner) decorrelateExists(existsExpr *PS.ExistsExpr, outerTable string
 	if innerScan == nil {
 		innerScan = NewIndexOrSeqScan(innerTable, nil, p)
 	}
-	if order := CO.ReorderIndices(innerConjuncts); order != nil {
-		innerConjuncts = CO.OrderSlice(innerConjuncts, order)
-	}
 	for _, c := range innerConjuncts {
 		if c != correlationPred {
 			innerScan = OP.NewFilter(innerScan, c, nil)

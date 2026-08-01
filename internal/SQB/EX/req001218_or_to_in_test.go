@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
-	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
 	LX "github.com/cyw0ng95/razordata/internal/SQF/LX"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
@@ -178,124 +177,6 @@ func TestExtractOrChainEquality_NonLiteral(t *testing.T) {
 	}
 }
 
-// TestJoinPredSel_ORChain_SameColumn: selectivity = 1 - (1 - 1/ndv)^k
-// where k = number of OR equalities on the same column. For ndv=100,
-// k=4: sel = 1 - 0.99^4 ≈ 0.0394.
-func TestJoinPredSel_ORChain_SameColumn(t *testing.T) {
-	p := NewPlanner()
-	p.SetStatsCatalog(newMockStatsCatalog())
-	p.statsCatalog.(*mockStatsCatalog).setStats("t8", "e", ls.ColumnStats{
-		DistinctCount: 100,
-		RowCount:      100,
-	})
-	pred := mkORChain("e", []int64{180, 333, 38, 349})
-	sel := p.joinPredSel(pred, 100)
-	want := 1.0 - pow(0.99, 4)
-	if !approx(sel, want, 1e-6) {
-		t.Fatalf("expected ~%v (1 - 0.99^4), got %v", want, sel)
-	}
-}
-
-// TestJoinPredSel_ORChain_Monotonic: longer chains → higher selectivity.
-// For fixed ndv=1000, k=2/4/8/16 must satisfy sel(k2) < sel(k4) < sel(k8) < sel(k16).
-func TestJoinPredSel_ORChain_Monotonic(t *testing.T) {
-	p := NewPlanner()
-	p.SetStatsCatalog(newMockStatsCatalog())
-	p.statsCatalog.(*mockStatsCatalog).setStats("t", "x", ls.ColumnStats{
-		DistinctCount: 1000,
-		RowCount:      1000,
-	})
-	cases := []int{2, 4, 8, 16}
-	prev := 0.0
-	for _, k := range cases {
-		vals := make([]int64, k)
-		for i := range vals {
-			vals[i] = int64(i + 1)
-		}
-		sel := p.joinPredSel(mkORChain("x", vals), 1000)
-		if sel <= prev {
-			t.Fatalf("selectivity did not increase: k=%d sel=%v prev=%v", k, sel, prev)
-		}
-		prev = sel
-	}
-}
-
-// TestJoinPredSel_ORChain_NoStats falls back to rowCount-based estimate.
-func TestJoinPredSel_ORChain_NoStats(t *testing.T) {
-	p := NewPlanner()
-	pred := mkORChain("e", []int64{1, 2, 3, 4})
-	sel := p.joinPredSel(pred, 1000)
-	if sel <= 0 || sel > 1 {
-		t.Fatalf("expected 0 < sel <= 1, got %v", sel)
-	}
-	// For ndv proxy=1000 (rowCount), 4 equalities:
-	// sel = 1 - (1 - 1/1000)^4 ≈ 0.003996
-	want := 1.0 - pow(0.999, 4)
-	if !approx(sel, want, 1e-6) {
-		t.Fatalf("expected ~%v, got %v", want, sel)
-	}
-}
-
-// TestJoinPredSel_ORChain_MultiColumn: e.g. (a=1 OR a=2 OR b=3).
-// Each column's selectivity is computed independently then multiplied.
-// ndv(a)=1000, ndv(b)=500, rowCount=10000: sa = 1-(1-1/1000)^2 ≈ 0.001999,
-// sb = 1/500 = 0.002. combined = sa * sb ≈ 3.998e-6.
-// Floor at 1/rowCount = 0.0001. Result ≈ 0.0001 (clamped to floor).
-func TestJoinPredSel_ORChain_MultiColumn(t *testing.T) {
-	p := NewPlanner()
-	p.SetStatsCatalog(newMockStatsCatalog())
-	p.statsCatalog.(*mockStatsCatalog).setStats("t", "a", ls.ColumnStats{DistinctCount: 1000, RowCount: 10000})
-	p.statsCatalog.(*mockStatsCatalog).setStats("t", "b", ls.ColumnStats{DistinctCount: 500, RowCount: 10000})
-	pred := &PS.BinaryExpr{
-		Op: LX.T_OR,
-		Left: &PS.BinaryExpr{
-			Op:    LX.T_EQ,
-			Left:  &PS.Ident{Name: "a"},
-			Right: &PS.NumberLiteral{Val: 1},
-		},
-		Right: &PS.BinaryExpr{
-			Op: LX.T_OR,
-			Left: &PS.BinaryExpr{
-				Op:    LX.T_EQ,
-				Left:  &PS.Ident{Name: "a"},
-				Right: &PS.NumberLiteral{Val: 2},
-			},
-			Right: &PS.BinaryExpr{
-				Op:    LX.T_EQ,
-				Left:  &PS.Ident{Name: "b"},
-				Right: &PS.NumberLiteral{Val: 3},
-			},
-		},
-	}
-	sel := p.joinPredSel(pred, 10000)
-	sa := 1.0 - pow(1.0-1.0/1000, 2) // ≈ 0.001999
-	sb := 1.0 / 500                   // 0.002
-	want := sa * sb                  // ≈ 3.998e-6
-	// Floor = 1/rowCount = 0.0001, so result is clamped up.
-	floor := 1.0 / 10000
-	if want < floor {
-		want = floor
-	}
-	if !approx(sel, want, 1e-6) {
-		t.Fatalf("expected ~%v (sa=%v * sb=%v, clamped to floor=%v), got %v", want, sa, sb, floor, sel)
-	}
-}
-
-// TestJoinPredSel_AND_Fallback: T_AND rarely reaches here (split upstream),
-// but the branch should not panic and return a sensible value.
-func TestJoinPredSel_AND_Fallback(t *testing.T) {
-	p := NewPlanner()
-	pred := &PS.BinaryExpr{
-		Op:    LX.T_AND,
-		Left:  &PS.NumberLiteral{Val: 1},
-		Right: &PS.NumberLiteral{Val: 2},
-	}
-	sel := p.joinPredSel(pred, 100)
-	if sel <= 0 || sel > 1 {
-		t.Fatalf("expected 0 < sel <= 1, got %v", sel)
-	}
-}
-
 // TestTryApplyPointLookup_ORChain verifies that the SeqScan point-lookup
 // is set up when the predicate is a same-column OR-chain of equalities.
 // Uses the in-memory DT.Tables path (no Store). REQ001218.
@@ -362,45 +243,4 @@ func TestQueryResult_ORChain_MatchesINList(t *testing.T) {
 			t.Fatalf("row %d: got %d, want %d", i, v, want[i])
 		}
 	}
-}
-
-// mkORChain builds `col=v1 OR col=v2 OR ... OR col=vk`.
-func mkORChain(col string, vals []int64) PS.Expr {
-	if len(vals) == 0 {
-		return nil
-	}
-	if len(vals) == 1 {
-		return &PS.BinaryExpr{
-			Op:    LX.T_EQ,
-			Left:  &PS.Ident{Name: col},
-			Right: &PS.NumberLiteral{Val: vals[0]},
-		}
-	}
-	return &PS.BinaryExpr{
-		Op: LX.T_OR,
-		Left: &PS.BinaryExpr{
-			Op:    LX.T_EQ,
-			Left:  &PS.Ident{Name: col},
-			Right: &PS.NumberLiteral{Val: vals[0]},
-		},
-		Right: mkORChain(col, vals[1:]),
-	}
-}
-
-// pow computes base^exp via repeated multiplication (no math.Pow needed
-// for the small integer exponents used in tests).
-func pow(base float64, exp int) float64 {
-	r := 1.0
-	for i := 0; i < exp; i++ {
-		r *= base
-	}
-	return r
-}
-
-func approx(a, b, eps float64) bool {
-	d := a - b
-	if d < 0 {
-		d = -d
-	}
-	return d < eps
 }

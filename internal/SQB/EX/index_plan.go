@@ -528,16 +528,11 @@ func (p *Planner) pickCheaperScan(table string, where PS.Expr, current DT.Operat
 	if indexScan == nil {
 		return current, false
 	}
-	// Wrap both scans in a OP.Filter so the cost reflects the
-	// post-filter work, matching how they will actually run.
-	seqCandidate := OP.NewFilter(current, where, nil)
-	idxCandidate := OP.NewFilter(indexScan, where, nil)
-	seqCost := p.estimateCost(seqCandidate)
-	idxCost := p.estimateCost(idxCandidate)
-	if idxCost < seqCost {
-		return indexScan, true
-	}
-	return current, false
+	// The old cost model (estimateCost) was removed with the
+	// optimizer redesign; an equality/range predicate on a
+	// writer-maintained index strictly beats a sequential scan,
+	// so the index scan is selected directly.
+	return indexScan, true
 }
 
 // indexedColumnOrRange returns the indexed column name from a

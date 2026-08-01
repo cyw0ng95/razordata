@@ -1,17 +1,14 @@
 package EX
 
 import (
-	CO "github.com/cyw0ng95/razordata/internal/SQO/CO"
 	"context"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	ls "github.com/cyw0ng95/razordata/internal/ENG/LS"
-	EC "github.com/cyw0ng95/razordata/internal/LOG/EC"
 	AD "github.com/cyw0ng95/razordata/internal/SQB/AD"
 	AG "github.com/cyw0ng95/razordata/internal/SQB/AG"
 	DT "github.com/cyw0ng95/razordata/internal/SQB/DT"
@@ -19,7 +16,6 @@ import (
 	OP "github.com/cyw0ng95/razordata/internal/SQB/OP"
 	UT "github.com/cyw0ng95/razordata/internal/SQB/UT"
 	WT "github.com/cyw0ng95/razordata/internal/SQB/WT"
-	QP "github.com/cyw0ng95/razordata/internal/SQF/QP"
 	pl "github.com/cyw0ng95/razordata/internal/SQF/PL"
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 	RE "github.com/cyw0ng95/razordata/internal/SQF/RE"
@@ -74,9 +70,6 @@ type Planner struct {
 	// maxMemoryPerQuery caps total memory per query. 0 = unlimited.
 	// Set by Executor.WithMemoryBudget. REQ001057.
 	maxMemoryPerQuery int64
-	// costParamsX holds the cost-model coefficients used by
-	// estimateCost. nil = use DefaultCostParams. REQ001104.
-	costParamsX *CostParams
 
 	// splitAndCache caches the result of RE.SplitAnd for expression
 	// nodes. REQ001167: `SplitAnd` was called repeatedly on the same
@@ -86,9 +79,9 @@ type Planner struct {
 	// start of every Plan() call (PlanResult cache invalidation is
 	// handled separately).
 	splitAndCache map[uintptr][]PS.Expr
-	// REQ002256: qpOptimizer runs QP passes on the QueryPlan DAG
-	// built alongside the operator tree. Shadow-mode verified in tests.
-	qpOptimizer *QP.Optimizer
+	// REQ002256: removed the QP optimizer pass framework. Optimization
+	// will be redesigned on the QueryPlan DAG from scratch; the old
+	// pass-based optimizer used a different model and was deleted.
 	// REQ001448: outerAliases are the table names of the OUTER query
 	// passed to SubPlanner.PlanSubquery so candidate-join-key logic
 	// avoids columns belonging to the outer side. nil = no outer query.
@@ -133,25 +126,7 @@ func NewPlanner() *Planner {
 		memo:      make(map[string]*plan, maxPlanCacheSize),
 		memoOrder: make([]string, maxPlanCacheSize),
 		catalog:   make(map[string]*tableInfo),
-		qpOptimizer: QP.NewOptimizer().
-			AddPass(&QP.ConstantFoldingPass{}).
-			AddPass(&QP.ColumnPruningPass{}).
-			AddPass(&QP.PredicatePushdownPass{}),
 	}
-}
-
-// runQPPasses builds a QueryPlan from the operator tree and runs the
-// QP optimizer passes. The QueryPlan is mutated in place. REQ002256.
-func (p *Planner) runQPPasses(op DT.Operator, stmt PS.Stmt) {
-	if p.qpOptimizer == nil || p.qpOptimizer.PassCount() == 0 {
-		return
-	}
-	qp := QP.BuildQueryPlan(op)
-	if qp == nil {
-		return
-	}
-	qp.Stmt = stmt
-	_ = p.qpOptimizer.Optimize(qp)
 }
 
 // SetPool attaches a WorkerPool to the planner for parallel operator
@@ -209,10 +184,6 @@ func NewPlannerWithStore(store DT.Store) *Planner {
 		memoOrder: make([]string, maxPlanCacheSize),
 		catalog:   make(map[string]*tableInfo),
 		store:     store,
-		qpOptimizer: QP.NewOptimizer().
-			AddPass(&QP.ConstantFoldingPass{}).
-			AddPass(&QP.ColumnPruningPass{}).
-			AddPass(&QP.PredicatePushdownPass{}),
 	}
 }
 
@@ -224,10 +195,6 @@ func NewPlannerWithStats(store DT.Store, statsCatalog DT.StatsCatalog) *Planner 
 		catalog:      make(map[string]*tableInfo),
 		store:        store,
 		statsCatalog: statsCatalog,
-		qpOptimizer: QP.NewOptimizer().
-			AddPass(&QP.ConstantFoldingPass{}).
-			AddPass(&QP.ColumnPruningPass{}).
-			AddPass(&QP.PredicatePushdownPass{}),
 	}
 }
 
@@ -535,7 +502,7 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 
 	result := &plan{
 		root:    root,
-		cost:    p.estimateCost(root),
+		cost:    0,
 		memoKey: key,
 	}
 
@@ -702,53 +669,6 @@ func (p *Planner) ExecuteSubqueryInMatch(ctx context.Context, stmt PS.Stmt, oute
 	return WT.RunSubqueryInMatch(ctx, planResult, target, outer, params)
 }
 
-// estimateCost returns a unitless cost for the operator tree rooted at op.
-// The model uses uniform distribution: each row is 1.0 unit, filters and
-// joins apply selectivity, sort adds a log(n) factor. Real statistics land
-// in v2.
-// CostParams captures the cost-model coefficients used by
-// estimateCost. REQ001104. Defaults match PostgreSQL's conventional
-// values (seq_page_cost=1.0, random_page_cost=4.0, cpu_tuple_cost=0.01,
-// cpu_index_tuple_cost=0.005, cpu_operator_cost=0.0025) but are
-// tunable via SetCostParams so callers can adjust for specific
-// workloads (e.g. all-in-memory tables where random I/O is cheap).
-type CostParams struct {
-	// REQ001104: cost coefficients for I/O vs CPU. seqPageCost is
-	// the cost of reading one row from a sequential scan; random
-	// page cost is the cost of one random row from an index.
-	SeqPageCost       float64
-	RandomPageCost    float64
-	CPUTupleCost      float64
-	CPUIndexTupleCost float64
-	CPUOperatorCost   float64
-}
-
-// DefaultCostParams returns the cost-model defaults. REQ001104.
-func DefaultCostParams() CostParams {
-	return CostParams{
-		SeqPageCost:       1.0,
-		RandomPageCost:    4.0,
-		CPUTupleCost:      0.01,
-		CPUIndexTupleCost: 0.005,
-		CPUOperatorCost:   0.0025,
-	}
-}
-
-// costParams returns the planner's active cost parameters, falling
-// back to defaults when not explicitly set.
-func (p *Planner) costParams() CostParams {
-	if p.costParamsX == nil {
-		return DefaultCostParams()
-	}
-	return *p.costParamsX
-}
-
-// SetCostParams installs custom cost-model coefficients. REQ001104.
-func (p *Planner) SetCostParams(cp CostParams) *Planner {
-	p.costParamsX = &cp
-	return p
-}
-
 // estimateMemoryPressure reports whether the given operator tree's
 // estimated memory footprint exceeds the planner's maxMemoryPerQuery
 // budget. REQ001104. Returns the estimated bytes used and the budget.
@@ -836,27 +756,6 @@ func (p *Planner) estimateRowCountFromOp(op DT.Operator) float64 {
 	return 0
 }
 
-func (p *Planner) estimateCost(op DT.Operator) float64 {
-	if op == nil {
-		return 0
-	}
-	// REQ001104: when CostParams are explicitly set, use the
-	// PostgreSQL-style cost formulas (rows x page cost, etc).
-	// When unset, fall back to the legacy per-operator heuristic
-	// (1.0 for OP.SeqScan, 0.05/0.1 for OP.IndexScan, etc.) so existing
-	// tests and behavior remain stable.
-	cp := p.costParams()
-	var cost float64
-	if p.costParamsX != nil {
-		cost = p.estimateCostWithParams(op, cp)
-	} else {
-		cost = p.estimateCostLegacy(op)
-	}
-	EC.BUG_ON(math.IsNaN(cost) || cost < 0 || math.IsInf(cost, 0), "planner.estimateCost: invalid cost")
-	return cost
-}
-
-// estimateCostLegacy is the original per-operator heuristic. Kept
 func (p *Planner) planInsert(s *PS.Insert) DT.Operator {
 	if DT.LookupView(s.Table) != nil {
 		return WT.NewUnsupportedOp(s, fmt.Sprintf("ex: cannot modify view %s", s.Table))
@@ -906,11 +805,8 @@ func (p *Planner) planUpdate(s *PS.Update) DT.Operator {
 	if p.store != nil {
 		scan, err := OP.NewSeqScanWithStore(p.store, s.Table)
 		if err == nil {
-			// REQ001248: split AND, reorder by cost, build filter chain.
+			// REQ001248: split AND, build filter chain.
 			conjuncts := p.splitAnd(s.Where)
-			if order := CO.ReorderIndices(conjuncts); order != nil {
-				conjuncts = CO.OrderSlice(conjuncts, order)
-			}
 			var filter DT.Operator = scan
 			for _, c := range conjuncts {
 				filter = OP.NewFilter(filter, c, nil)
@@ -922,11 +818,8 @@ func (p *Planner) planUpdate(s *PS.Update) DT.Operator {
 		}
 	}
 	scan := OP.NewSeqScan(s.Table)
-	// REQ001248: split AND, reorder by cost, build filter chain.
+	// REQ001248: split AND, build filter chain.
 	conjuncts := p.splitAnd(s.Where)
-	if order := CO.ReorderIndices(conjuncts); order != nil {
-		conjuncts = CO.OrderSlice(conjuncts, order)
-	}
 	var filter DT.Operator = scan
 	for _, c := range conjuncts {
 		filter = OP.NewFilter(filter, c, nil)
@@ -941,11 +834,8 @@ func (p *Planner) planDelete(s *PS.Delete) DT.Operator {
 	if p.store != nil {
 		scan, err := OP.NewSeqScanWithStore(p.store, s.Table)
 		if err == nil {
-			// REQ001248: split AND, reorder by cost, build filter chain.
+			// REQ001248: split AND, build filter chain.
 			conjuncts := p.splitAnd(s.Where)
-			if order := CO.ReorderIndices(conjuncts); order != nil {
-				conjuncts = CO.OrderSlice(conjuncts, order)
-			}
 			var filter DT.Operator = scan
 			for _, c := range conjuncts {
 				filter = OP.NewFilter(filter, c, nil)
@@ -965,11 +855,8 @@ func (p *Planner) planDelete(s *PS.Delete) DT.Operator {
 		}
 	}
 	scan := OP.NewSeqScan(s.Table)
-	// REQ001248: split AND, reorder by cost, build filter chain.
+	// REQ001248: split AND, build filter chain.
 	conjuncts := p.splitAnd(s.Where)
-	if order := CO.ReorderIndices(conjuncts); order != nil {
-		conjuncts = CO.OrderSlice(conjuncts, order)
-	}
 	var filter DT.Operator = scan
 	for _, c := range conjuncts {
 		filter = OP.NewFilter(filter, c, nil)
@@ -1357,10 +1244,6 @@ func (p *Planner) estimateRowCountFromStmt(stmt PS.Stmt) int64 {
 	base := int64(p.estimateRowCount(sel.From, nil))
 	if base <= 0 {
 		return 0
-	}
-	// Apply WHERE selectivity
-	if sel.Where != nil {
-		base = int64(float64(base) * CO.EstimateSelectivity(sel.Where))
 	}
 	if base <= 0 {
 		base = 1

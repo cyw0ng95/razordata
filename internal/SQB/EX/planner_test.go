@@ -183,16 +183,6 @@ func TestMemo_CacheHitOnConstantFoldedQueries(t *testing.T) {
 	}
 }
 
-func TestPlannerEstimateCost(t *testing.T) {
-	p :=
-		NewPlanner()
-	plan := &plan{cost: 0}
-	cost := p.estimateCost(plan.root)
-	if cost != 0 {
-		t.Errorf("expected cost 0, got %v", cost)
-	}
-}
-
 func TestPlannerAggregate(t *testing.T) {
 	p :=
 		NewPlanner()

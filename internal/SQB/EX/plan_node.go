@@ -93,15 +93,7 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 		if v.Predicate() != nil {
 			node.Detail = "WHERE " + RE.FormatExpr(v.Predicate())
 		}
-		var ts *AD.TableStats
-		if planner != nil && v.Child() != nil {
-			if seq, ok := v.Child().(*OP.SeqScan); ok {
-				ts = planner.getTableStats(seq.Table())
-			} else if idx, ok := v.Child().(*OP.IndexScan); ok {
-				ts = planner.getTableStats(idx.Table())
-			}
-		}
-		node.Cost = EstimateFilterCost(v, ts)
+		node.Cost = 0.5
 
 	case *OP.FilterProject:
 		node.Detail = "PROJECT+WHERE"
@@ -137,7 +129,7 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 			}
 			node.Detail = "PROJECT " + strings.Join(parts, ", ")
 		}
-		node.Cost = EstimateProjectCost(v)
+		node.Cost = 1.0
 
 	case *OP.Sort:
 		node.Detail = "ORDER BY"
@@ -152,15 +144,7 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 			}
 			node.Detail = "ORDER BY " + strings.Join(parts, ", ")
 		}
-		var ts *AD.TableStats
-		if planner != nil && v.Child() != nil {
-			if seq, ok := v.Child().(*OP.SeqScan); ok {
-				ts = planner.getTableStats(seq.Table())
-			} else if idx, ok := v.Child().(*OP.IndexScan); ok {
-				ts = planner.getTableStats(idx.Table())
-			}
-		}
-		node.Cost = EstimateSortCost(v, ts)
+		node.Cost = 1.0
 
 	case *OP.Limit:
 		node.Detail = "LIMIT"
@@ -170,11 +154,11 @@ func buildPlanNodeTree(op DT.Operator, planner *Planner) *AD.PlanNode {
 
 	case *OP.Distinct:
 		node.Detail = "DISTINCT"
-		node.Cost = EstimateDistinctCost(v, nil)
+		node.Cost = 1.0
 
 	case *AG.Aggregate:
 		node.Detail = "AGGREGATE"
-		node.Cost = EstimateAggregateCost(v, nil)
+		node.Cost = 1.0
 		// REQ001294: extract aggregate function names and GROUP BY columns.
 		if aggs := v.Aggs(); len(aggs) > 0 {
 			var names []string

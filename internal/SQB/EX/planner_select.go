@@ -223,9 +223,6 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 		// REQ001248: reorder predicates by ascending cost so cheap
 		// predicates short-circuit before expensive ones.
 		if firstPreds := pushedPredicates[s.From]; len(firstPreds) > 0 {
-			if order := CO.ReorderIndices(firstPreds); order != nil {
-				firstPreds = CO.OrderSlice(firstPreds, order)
-			}
 			for _, pred := range firstPreds {
 				current = OP.NewFilter(current, pred, nil)
 				tryApplyPointLookup(scan, pred)
@@ -306,15 +303,8 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 		// Use a pointer-based set of replaced ExistsExpr nodes so we
 		// don't skip non-decorrelated EXISTS (bare-name correlations).
 		if len(crossTablePredicates) > 0 {
-			// REQ001248: reorder by ascending cost so cheap
-			// predicates short-circuit before expensive ones.
-			if order := CO.ReorderIndices(crossTablePredicates); order != nil {
-				crossTablePredicates = CO.OrderSlice(crossTablePredicates, order)
-			}
-			// Build pointer-based skip sets after reordering (indices
-			// no longer match extractedPreds). extractedPreds used
-			// indices into the original crossTablePredicates slice
-			// before reordering; now use the expressions themselves.
+			// Build pointer-based skip sets. extractedPreds holds
+			// indices into the original crossTablePredicates slice.
 			// REQ001672: reuse scratch map to avoid per-plan alloc.
 			extractedPtrs := p.extractedPtrsScratch
 			if extractedPtrs == nil {
@@ -343,10 +333,6 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 			// No predicate pushdown — apply full WHERE as before.
 			// REQ001235: skip EXISTS conjuncts already decorrelated.
 			conjuncts := p.splitAnd(whereExpr)
-			// REQ001248: reorder by ascending cost.
-			if order := CO.ReorderIndices(conjuncts); order != nil {
-				conjuncts = CO.OrderSlice(conjuncts, order)
-			}
 			// Reorder changes indices; rebuild a pointer-based set
 			// for replaced existsExpr nodes that survives reordering.
 			// existsReplaced was keyed by index in the original
@@ -399,12 +385,9 @@ func (p *Planner) planSelect(s *PS.Select) DT.Operator {
 		}
 	}
 
-	// REQ001450: run SQO optimizer passes (column pruning, predicate
-	// pushdown, limit pushdown). Wraps the operator tree into an
-	// OC.Plan, runs the pass chain, and unwraps the result.
-	// REQ002256: run QP optimizer passes on the QueryPlan built alongside
-	// the operator tree. Shadow-mode verified in TestShadowMode.
-	p.runQPPasses(current, s)
+	// REQ002256: the QP optimizer pass framework was removed. Query
+	// optimization will be redesigned from scratch on the QueryPlan DAG.
+	// The old pass-based optimizer used a different model and was deleted.
 
 	return current
 }
@@ -603,36 +586,11 @@ func (p *Planner) planSelectSqliteMaster(s *PS.Select) DT.Operator {
 	return scan
 }
 
-// resolveAliasesAndFold resolves column aliases, folds constants, and
-// eliminates common subexpressions in the WHERE clause.
-// REQ000981: extracted from planSelect.
+// resolveAliasesAndFold resolves column aliases in the WHERE clause.
+// REQ000981: extracted from planSelect. The constant-folding and CSE
+// steps (REQ001074/REQ001075) were removed with the old optimizer
+// (REQ002256) and will be redesigned on the QueryPlan DAG.
 func (p *Planner) resolveAliasesAndFold(whereExpr PS.Expr) PS.Expr {
-	if whereExpr == nil {
-		return nil
-	}
-	// REQ001074: constant folding — evaluate constant expressions at plan time
-	// and simplify tautologies/contradictions.
-	whereExpr = foldConstants(whereExpr)
-	// If folding produced a constant FALSE, the entire WHERE is a
-	// contradiction — no rows will match.
-	if whereExpr != nil {
-		if isFalse(whereExpr) {
-			whereExpr = &PS.BinaryExpr{
-				Left:  &PS.NumberLiteral{Val: int64(0)},
-				Op:    LX.T_EQ,
-				Right: &PS.NumberLiteral{Val: int64(1)},
-			}
-		} else if isTrue(whereExpr) && isConstantExpr(whereExpr) {
-			// REQ001074: constant TRUE tautology — remove WHERE entirely.
-			whereExpr = nil
-		}
-	}
-	// REQ001075: common subexpression elimination — remove duplicate
-	// conjuncts from the WHERE clause. Only when whereExpr is still
-	// non-nil and not a constant.
-	if whereExpr != nil {
-		whereExpr = eliminateCommonSubexpressions(whereExpr)
-	}
 	return whereExpr
 }
 
@@ -910,7 +868,7 @@ func (p *Planner) planConstantOnJoin(current, rightScan DT.Operator, leftTbl, ri
 	if j.On == nil {
 		return nil
 	}
-	folded := foldConstants(j.On)
+	folded := j.On
 	if !isConstantExpr(folded) {
 		return nil
 	}
@@ -1163,8 +1121,25 @@ func (p *Planner) planLimitOffset(s *PS.Select, current DT.Operator) DT.Operator
 	return current
 }
 
-// planSelectJoins handles join planning: N3 join ordering, bushy join tree
-// construction, and join operator creation. REQ000981: extracted from planSelect.
+// joinTableInfo holds a table name and its associated JoinClause.
+// REQ002256: the N3 join-ordering algorithm was removed with the old
+// optimizer; the struct is retained for FROM-order join construction.
+type joinTableInfo struct {
+	name string
+	join PS.JoinClause
+}
+
+// extractTableColumn returns the table and column of an expression
+// that is an Ident or QualifiedName. For bare Idents (implicit
+// comma-join columns like "d6"), resolves the table via the SLT
+// naming convention (d6 => t6.d) so groupBushyJoins can detect
+// cross-table equi-join dependencies. REQ001113.
+func extractTableColumn(e PS.Expr) (string, string) {
+	return CO.ExtractTableColumn(e, findTableInSchemas)
+}
+
+// planSelectJoins handles join planning: join tree construction and
+// join operator creation. REQ000981: extracted from planSelect.
 func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushedPredicates map[string][]PS.Expr, crossTablePredicates []PS.Expr, extractedPreds map[int]bool) DT.Operator {
 	joinInfos := make([]joinTableInfo, 0, len(s.Joins))
 	joinClauses := make([]PS.JoinClause, 0, len(s.Joins))
@@ -1242,18 +1217,13 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 		joinInfos = append(joinInfos, joinTableInfo{name: j.Right, join: j})
 		joinClauses = append(joinClauses, j)
 	}
-	costPredicates := crossTablePredicates
-	if costPredicates == nil && s.Where != nil {
-		costPredicates = p.splitAnd(s.Where)
-	}
-	const reorderJoinsLimit = 12
-	joinOrder := []string(nil)
-	if len(joinInfos) <= 4 {
-		joinOrder = p.exhaustiveJoinOrder(s.From, joinInfos, costPredicates)
-	} else if len(joinInfos) <= reorderJoinsLimit {
-		joinOrder = p.n3JoinOrderingMultiStart(s.From, joinInfos, costPredicates, pushedPredicates)
-	} else {
-		joinOrder, _ = p.n3JoinOrdering(s.From, joinInfos, costPredicates, pushedPredicates)
+	// REQ002256: cost-based join ordering (exhaustive search + NGQP
+	// heuristic) was removed with the old optimizer. Joins now run in
+	// FROM clause order; ordering will be redesigned on the QueryPlan
+	// DAG.
+	joinOrder := []string{s.From}
+	for _, ji := range joinInfos {
+		joinOrder = append(joinOrder, ji.name)
 	}
 	var projectedCols []string
 	if refCols := collectReferencedColumns(s); refCols != nil {
@@ -1352,11 +1322,6 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 				}
 			}
 			if basePreds := pushedPredicates[baseTable]; len(basePreds) > 0 {
-				// REQ001248: reorder by ascending cost so cheap
-				// predicates short-circuit before expensive ones.
-				if order := CO.ReorderIndices(basePreds); order != nil {
-					basePreds = CO.OrderSlice(basePreds, order)
-				}
 				for _, pred := range basePreds {
 					tryApplyPointLookup(baseOp, pred)
 					baseOp = OP.NewFilter(baseOp, pred, nil)
@@ -1428,10 +1393,6 @@ func (p *Planner) planSelectJoins(s *PS.Select, filteredScan DT.Operator, pushed
 				}
 			}
 			if rightPreds := pushedPredicates[j.Right]; len(rightPreds) > 0 {
-				// REQ001248: reorder by ascending cost.
-				if order := CO.ReorderIndices(rightPreds); order != nil {
-					rightPreds = CO.OrderSlice(rightPreds, order)
-				}
 				for _, pred := range rightPreds {
 					tryApplyPointLookup(rightScan, pred)
 					rightScan = OP.NewFilter(rightScan, pred, nil)

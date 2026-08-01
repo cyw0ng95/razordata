@@ -10,6 +10,37 @@ import (
 	PS "github.com/cyw0ng95/razordata/internal/SQF/PS"
 )
 
+// mockStatsCatalog is an in-memory DT.StatsCatalog for tests.
+type mockStatsCatalog struct {
+	stats map[string]map[string]ls.ColumnStats
+}
+
+func (m *mockStatsCatalog) ColumnStatsByName(tableName, colName string) *ls.ColumnStats {
+	if m == nil || m.stats == nil {
+		return nil
+	}
+	tbl, ok := m.stats[tableName]
+	if !ok {
+		return nil
+	}
+	s, ok := tbl[colName]
+	if !ok {
+		return nil
+	}
+	return &s
+}
+
+func newMockStatsCatalog() *mockStatsCatalog {
+	return &mockStatsCatalog{stats: make(map[string]map[string]ls.ColumnStats)}
+}
+
+func (m *mockStatsCatalog) setStats(table, col string, s ls.ColumnStats) {
+	if m.stats[table] == nil {
+		m.stats[table] = make(map[string]ls.ColumnStats)
+	}
+	m.stats[table][col] = s
+}
+
 // TestStatsPropagation_JoinEquality verifies REQ001252: when
 // column stats for the build side of an equi-join are known,
 // a derived range filter is pushed onto the probe side BEFORE
