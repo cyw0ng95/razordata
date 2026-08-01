@@ -486,7 +486,7 @@ func (e *Executor) initPipelineBuilderEnabled() {
 		// call here prevents per-execution mutation of the cached plan tree.
 		return UT.NewBatchToRowAdapter(PX.NewRowOperatorAsProducer(root))
 	}
-	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize, PX.NewOptimizer())
+	e.pipelineBuilder = PX.NewPipelineBuilder(cache, e.planner, specialize)
 }
 
 // specHasNoLegacyStages reports whether a PipelineSpec contains

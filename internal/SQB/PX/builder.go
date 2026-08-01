@@ -34,7 +34,6 @@ type PipelineBuilder struct {
 	cache      *PipelineCache
 	planner    PL.QueryPlanner
 	specialize SpecializeFunc
-	optimizer  *Optimizer
 }
 
 // ClearCache clears any entries in the builder's PipelineCache. Safe to
@@ -47,14 +46,12 @@ func (b *PipelineBuilder) ClearCache() {
 }
 
 // NewPipelineBuilder creates a builder with the given cache,
-// planner interface, specialization function, and physical optimizer.
-// Pass nil for optimizer to disable optimization passes.
-func NewPipelineBuilder(cache *PipelineCache, planner PL.QueryPlanner, specialize SpecializeFunc, optimizer *Optimizer) *PipelineBuilder {
+// planner interface, and specialization function.
+func NewPipelineBuilder(cache *PipelineCache, planner PL.QueryPlanner, specialize SpecializeFunc) *PipelineBuilder {
 	return &PipelineBuilder{
 		cache:      cache,
 		planner:    planner,
 		specialize: specialize,
-		optimizer:  optimizer,
 	}
 }
 
@@ -206,12 +203,6 @@ func (b *PipelineBuilder) specializePlan(plan *PL.PlanResult, sql, memoKey strin
 		Cost:        plan.Cost,
 		MemoKey:     memoKey,
 		SQLText:     sql,
-	}
-
-	if b.optimizer != nil {
-		if err := b.optimizer.Optimize(spec); err != nil {
-			return nil, fmt.Errorf("px: optimize: %w", err)
-		}
 	}
 
 	return spec, nil
