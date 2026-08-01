@@ -1148,6 +1148,7 @@ type compoundOp interface {
 	LeftChild() DT.Operator
 	RightChild() DT.Operator
 	CompoundOpType() PS.CompoundOp
+	CompoundOrderBy() []PS.OrderItem
 }
 
 func decomposeCompound(c DT.Operator, st *decomposeState, planner PL.QueryPlanner, specialize SpecializeFunc) (int, error) {
@@ -1168,6 +1169,41 @@ func decomposeCompound(c DT.Operator, st *decomposeState, planner PL.QueryPlanne
 	idx := st.addStage(&CompoundStageSpec{Op: comp.CompoundOpType()}, leftOut)
 	st.addEdge(idx, leftIdx, LeftChild)
 	st.addEdge(idx, rightIdx, RightChild)
+
+	// REQ002307: wrap in SortStage when ORDER BY is present on the
+	// compound operator (e.g. SELECT x FROM t1 UNION SELECT x FROM t2 ORDER BY x).
+	orderBy := comp.CompoundOrderBy()
+	if len(orderBy) > 0 {
+		sortCols := make([]int, 0, len(orderBy))
+		desc := make([]bool, len(orderBy))
+		for i, o := range orderBy {
+			desc[i] = o.Desc
+			idx := -1
+			switch e := o.Expr.(type) {
+			case *PS.Ident:
+				idx = leftOut.findCol(e.Name)
+				if idx == -1 && e.SlotIdx >= 0 {
+					idx = e.SlotIdx
+				}
+			}
+			if idx == -1 {
+				// Try finding by expression name
+				name := exprName(o.Expr)
+				idx = leftOut.findCol(name)
+			}
+			if idx == -1 {
+				// Fallback: use column index 0 when unresolvable
+				idx = 0
+			}
+			sortCols = append(sortCols, idx)
+		}
+		sortIdx := st.addStage(&SortStageSpec{
+			SortCols: sortCols,
+			Desc:     desc,
+		}, leftOut)
+		st.addEdge(sortIdx, idx, SingleChild)
+		return sortIdx, nil
+	}
 	return idx, nil
 }
 

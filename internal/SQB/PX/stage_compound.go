@@ -53,7 +53,16 @@ func (s *CompoundStage) SetChild(side ChildSide, child Stage) {
 
 // PropagateExecContext stores per-execution context. REQ002148.
 func (s *CompoundStage) PropagateExecContext(ec *DT.ExecContext) {
-	_ = ec
+	if s.childLeft != nil {
+		if ep, ok := s.childLeft.(ExecContextPropagator); ok {
+			ep.PropagateExecContext(ec)
+		}
+	}
+	if s.childRight != nil {
+		if ep, ok := s.childRight.(ExecContextPropagator); ok {
+			ep.PropagateExecContext(ec)
+		}
+	}
 }
 
 func (s *CompoundStage) PropagateParams(args []any, buf *[]any) {}
