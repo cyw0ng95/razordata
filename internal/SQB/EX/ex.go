@@ -365,6 +365,7 @@ func NewExecutor() *Executor {
 		attachedDBs:    make(map[string]string),
 	}
 	e.planner.SetPool(e.pool)
+	e.planner.SetAttachMgr(e)
 	OP.WarmFilterBatchPool(4)
 	OP.WarmProjectDataPool(4) // REQ002022: warm project data buffers
 	e.initPipelineBuilder()
@@ -396,6 +397,7 @@ func NewExecutorWithEngine(store DT.Store) *Executor {
 		attachedDBs:    make(map[string]string),
 	}
 	e.planner.SetPool(e.pool)
+	e.planner.SetAttachMgr(e)
 	OP.WarmFilterBatchPool(4)
 	OP.WarmProjectDataPool(4) // REQ002022: warm project data buffers
 	e.initPipelineBuilder()

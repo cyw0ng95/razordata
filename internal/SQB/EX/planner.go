@@ -58,6 +58,9 @@ type Planner struct {
 	memoSize  int // number of valid entries in memoOrder
 	catalog   map[string]*tableInfo
 	store     DT.Store
+	// attachMgr handles ATTACH/DETACH DATABASE operations. Set by the
+	// Executor which implements DBAttachManager. REQ002310.
+	attachMgr DT.DBAttachManager
 	// statsCatalog provides access to column statistics for
 	// histogram-based selectivity estimation. REQ000085.
 	statsCatalog pl.StatsCatalog
@@ -154,6 +157,9 @@ func (p *Planner) runQPPasses(op DT.Operator, stmt PS.Stmt) {
 // SetPool attaches a WorkerPool to the planner for parallel operator
 // execution. Nil means serial-only. REQ001044.
 func (p *Planner) SetPool(pool pl.WorkerPool) { p.pool = pool }
+
+// SetAttachMgr sets the DBAttachManager for ATTACH/DETACH operations.
+func (p *Planner) SetAttachMgr(mgr DT.DBAttachManager) { p.attachMgr = mgr }
 
 // Pool returns the attached WorkerPool (may be nil). REQ001044.
 func (p *Planner) Pool() pl.WorkerPool { return p.pool }
@@ -496,6 +502,22 @@ func (p *Planner) Plan(stmt PS.Stmt) (*pl.PlanResult, error) {
 		root = WT.NewReindex(s)
 	case *PS.CreateVirtualTableStmt:
 		root = WT.NewUnsupportedOp(s, "ex: virtual table module not supported in v1: "+s.Module)
+	case *PS.AttachStmt:
+		if p.attachMgr != nil {
+			path, err := extractAttachPath(s.Expr)
+			if err != nil {
+				return nil, err
+			}
+			root = WT.NewAttachOp(p.attachMgr, s.Name, path)
+		} else {
+			root = WT.NewUnsupportedOp(s, "ex: ATTACH not supported without engine")
+		}
+	case *PS.DetachStmt:
+		if p.attachMgr != nil {
+			root = WT.NewDetachOp(p.attachMgr, s.Name)
+		} else {
+			root = WT.NewUnsupportedOp(s, "ex: DETACH not supported without engine")
+		}
 	case *PS.BeginTX:
 		root = AD.NewNoop()
 	case *PS.CommitTX:
